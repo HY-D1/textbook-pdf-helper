@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 ocr = [
   "ocrmypdf>=16.0",
+  "tqdm>=4.66",
 ]
 server = [
   "fastapi>=0.110",

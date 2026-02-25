@@ -56,6 +56,37 @@ check_venv() {
     fi
 }
 
+# Function to check OCR system dependencies
+check_ocr_deps() {
+    local missing=()
+    
+    if ! command -v tesseract &> /dev/null; then
+        missing+=("tesseract")
+    fi
+    
+    if ! command -v gs &> /dev/null && ! command -v gswin64c &> /dev/null; then
+        missing+=("ghostscript")
+    fi
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        print_warning "OCR system dependencies missing: ${missing[*]}"
+        echo ""
+        echo "To use OCR features, install:"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            echo "  brew install tesseract ghostscript"
+        elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            echo "  sudo apt-get install tesseract-ocr ghostscript"
+        else
+            echo "  - Tesseract: https://github.com/UB-Mannheim/tesseract/wiki"
+            echo "  - Ghostscript: https://www.ghostscript.com/download/gsdnld.html"
+        fi
+        echo ""
+        read -p "Continue without OCR? (Y/n): " confirm
+        [[ "$confirm" =~ ^[Nn]$ ]] && exit 1
+        OCR_MODE="skip"
+    fi
+}
+
 # Function to get PDF name without extension
 get_pdf_basename() {
     local pdf_path="$1"
@@ -489,6 +520,9 @@ main() {
     
     # Check virtual environment
     check_venv
+    
+    # Check OCR dependencies
+    check_ocr_deps
     
     # Welcome message
     print_header "ALGL PDF Helper v$(python3 -c "from algl_pdf_helper import __version__; print(__version__)" 2>/dev/null || echo "0.1.0")"

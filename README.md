@@ -20,19 +20,42 @@ Helper project for **ALGL SQL-Adapt** that turns PDFs (including scanned PDFs) i
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+
+# Basic install (no OCR)
+pip install -e .
+
+# With OCR support (recommended)
+pip install -e '.[ocr]'
+
+# With all optional features
 pip install -e '.[server,ocr,test]'
 ```
 
-### OCR dependencies (system)
+### OCR Dependencies
 
-- `tesseract`
-- `ghostscript`
+For OCR support, you need both **Python packages** and **system binaries**:
 
-macOS (Homebrew):
+#### Python OCR Packages (auto-installed with `[ocr]`)
+- `ocrmypdf>=16.0` - OCR pipeline for PDFs
+- `tqdm>=4.66` - Progress bars for batch processing
 
+#### System OCR Binaries (must install separately)
+- `tesseract` - OCR engine (required by ocrmypdf)
+- `ghostscript` - PDF processing (required by ocrmypdf)
+
+**macOS (Homebrew):**
 ```bash
 brew install tesseract ghostscript
 ```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install tesseract-ocr ghostscript
+```
+
+**Windows:**
+- Install Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+- Install Ghostscript: https://www.ghostscript.com/download/gsdnld.html
 
 ## CLI usage
 
