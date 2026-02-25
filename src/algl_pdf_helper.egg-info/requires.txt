@@ -1,0 +1,16 @@
+pydantic>=2.6
+typer>=0.12
+pymupdf>=1.23
+pyyaml>=6.0
+
+[ocr]
+ocrmypdf>=16.0
+tqdm>=4.66
+
+[server]
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+
+[test]
+pytest>=8.0

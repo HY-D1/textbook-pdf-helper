@@ -50,9 +50,19 @@ check_venv() {
             print_warning "Virtual environment not found. Creating one..."
             python3 -m venv "$SCRIPT_DIR/.venv"
             source "$SCRIPT_DIR/.venv/bin/activate"
-            print_info "Installing dependencies..."
-            pip install -q -e "$SCRIPT_DIR"
         fi
+    fi
+    
+    # Always ensure package is installed
+    if ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
+        print_info "Installing algl-pdf-helper package..."
+        pip install -q -e "$SCRIPT_DIR"
+    fi
+    
+    # Verify installation
+    if ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
+        print_error "Failed to install algl-pdf-helper package"
+        exit 1
     fi
 }
 
@@ -90,7 +100,10 @@ check_ocr_deps() {
 # Function to get PDF name without extension
 get_pdf_basename() {
     local pdf_path="$1"
-    basename "$pdf_path" .pdf | basename - .PDF
+    local basename
+    basename=$(basename "$pdf_path")
+    # Remove .pdf or .PDF extension
+    echo "${basename%.pdf}"
 }
 
 # Function to sanitize folder name
