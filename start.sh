@@ -297,10 +297,14 @@ build_args() {
 
 # Function to ensure venv is active
 ensure_venv() {
-    if [[ -z "${VIRTUAL_ENV}" ]] || ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
-        if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
-            source "$SCRIPT_DIR/.venv/bin/activate"
-        fi
+    if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
+        source "$SCRIPT_DIR/.venv/bin/activate"
+    fi
+    
+    # Verify module is accessible
+    if ! "$SCRIPT_DIR/.venv/bin/python" -c "import algl_pdf_helper" 2>/dev/null; then
+        print_info "Installing package in venv..."
+        "$SCRIPT_DIR/.venv/bin/pip" install -q -e "$SCRIPT_DIR"
     fi
 }
 
@@ -343,15 +347,10 @@ process_pdf() {
     print_info "Command: algl-pdf index $pdf_path --out $output_dir $cmd_args"
     echo ""
     
-    # Run processing - use full path to ensure we use venv version
-    local algl_pdf_cmd
-    if [[ -n "$VIRTUAL_ENV" ]] && [[ -f "$VIRTUAL_ENV/bin/algl-pdf" ]]; then
-        algl_pdf_cmd="$VIRTUAL_ENV/bin/algl-pdf"
-    else
-        algl_pdf_cmd="algl-pdf"
-    fi
+    # Run processing using venv Python directly to ensure module is found
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
     
-    if "$algl_pdf_cmd" index "$pdf_path" --out "$output_dir" $cmd_args; then
+    if "$venv_python" -m algl_pdf_helper index "$pdf_path" --out "$output_dir" $cmd_args; then
         print_success "Processing complete!"
         print_info "Output location: $output_dir"
         

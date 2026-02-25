@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 src/algl_pdf_helper/__init__.py
+src/algl_pdf_helper/__main__.py
 src/algl_pdf_helper/chunker.py
 src/algl_pdf_helper/clean.py
 src/algl_pdf_helper/cli.py
