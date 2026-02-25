@@ -9,3 +9,9 @@ __pycache__/
 build/
 dist/
 .out/
+
+# Processing folders (keep structure, ignore contents)
+/raw_pdf/*
+!/raw_pdf/.gitkeep
+/read_use/*
+!/read_use/.gitkeep
