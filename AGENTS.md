@@ -5,13 +5,14 @@
 `algl-pdf-helper` is a Python CLI tool and optional HTTP service that processes PDFs (including scanned documents) and converts them into a structured `PdfIndexDocument` format compatible with the ALGL SQL-Adapt project's client-side retrieval system.
 
 The pipeline performs:
-1. Optional OCR for scanned PDFs using `ocrmypdf` + Tesseract
-2. Per-page text extraction using PyMuPDF
-3. Text cleaning and normalization
-4. Word-window chunking (default: 180 words, 30-word overlap)
-5. Lightweight 24-dimensional hash-based embeddings per chunk
-6. Output of JSON artifacts (`manifest.json`, `chunks.json`, `index.json`)
-7. **NEW:** Concept-based learning material generation from `concepts.yaml` config
+1. **Automatic quality detection** - Checks if text extraction is readable
+2. **Auto-OCR fallback** - Retries with OCR if quality is poor (scanned PDFs)
+3. Per-page text extraction using PyMuPDF
+4. Text cleaning and normalization
+5. Word-window chunking (default: 180 words, 30-word overlap)
+6. Lightweight 24-dimensional hash-based embeddings per chunk
+7. Output of JSON artifacts (`manifest.json`, `chunks.json`, `index.json`)
+8. Concept-based learning material generation from `concepts.yaml` config
 
 ## Technology Stack
 
@@ -57,8 +58,9 @@ The pipeline performs:
     ├── conftest.py         # pytest configuration (adds src to path)
     ├── test_chunker.py     # Tests for chunking logic
     ├── test_embedding_parity.py  # Tests for embedding determinism
-    ├── test_concept_mapper.py    # NEW: Tests for concept mapping
-    └── test_markdown_generator.py # NEW: Tests for markdown generation
+    ├── test_concept_mapper.py    # Tests for concept mapping
+    ├── test_markdown_generator.py # Tests for markdown generation
+    └── test_quality_check.py      # Tests for text quality detection
 ```
 
 ## Code Organization
@@ -68,7 +70,7 @@ The pipeline performs:
 | Module | Purpose |
 |--------|---------|
 | `models.py` | Pydantic models: `PdfSourceDoc`, `PdfIndexChunk`, `PdfIndexDocument`, `PdfIndexManifest`, `IndexBuildOptions`, `ConceptInfo`, `ConceptManifest`, `ConceptSection` |
-| `extract.py` | PDF text extraction via PyMuPDF, SHA256 hashing, OCR handling via ocrmypdf, temp file cleanup |
+| `extract.py` | PDF text extraction via PyMuPDF, SHA256 hashing, OCR handling via ocrmypdf, quality detection, temp file cleanup |
 | `clean.py` | Text normalization (whitespace, null bytes), heuristic header/footer removal |
 | `chunker.py` | Sliding word-window chunker with configurable overlap; chunk IDs: `{docId}:p{page}:c{chunkIndex}` |
 | `embedding.py` | Tokenization, hash-based vectorization, L2 normalization; produces deterministic embeddings |
@@ -83,7 +85,11 @@ The pipeline performs:
 ```
 Input PDF(s)
     ↓
-extract.py: OCR (if needed) → PyMuPDF text extraction
+extract.py: PyMuPDF text extraction
+    ↓
+Quality Check: Is text readable?
+    ├─ NO → Auto-OCR retry
+    └─ YES → Continue
     ↓
 clean.py: normalize text → strip headers/footers
     ↓
@@ -130,6 +136,9 @@ algl-pdf index ./my.pdf --out ./out/pdf-index --use-aliases
 
 # Specify concept config explicitly
 algl-pdf index ./my.pdf --out ./out/pdf-index --concepts-config ./my-concepts.yaml
+
+# Check extraction quality without processing
+algl-pdf check-quality ./my.pdf
 ```
 
 ### Server Usage
@@ -173,6 +182,7 @@ pytest
   - `test_embedding_parity.py`: Verifies deterministic embedding output matches reference vector
   - `test_concept_mapper.py`: Tests concept config loading, manifest building, chunk mapping
   - `test_markdown_generator.py`: Tests markdown generation, page links, README generation
+  - `test_quality_check.py`: Tests text quality detection, gibberish pattern detection
 - **Import Pattern**: `from algl_pdf_helper.module import function`
 
 ## Output Format Specification
