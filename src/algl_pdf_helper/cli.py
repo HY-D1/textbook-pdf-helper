@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import typer
 
+from .extract import check_extraction_quality, extract_pages_fitz
 from .indexer import build_index
 from .models import IndexBuildOptions
 
@@ -57,6 +59,31 @@ def index(
         concepts_dir = out / "concepts"
         if concepts_dir.exists():
             typer.echo(f"Concept markdowns: {concepts_dir}")
+
+
+@app.command()
+def check_quality(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to check"),
+):
+    """Check text extraction quality of a PDF without processing."""
+    typer.echo(f"Checking quality of: {pdf_path.name}")
+    typer.echo("")
+    
+    pages = extract_pages_fitz(pdf_path)
+    quality = check_extraction_quality(pages)
+    
+    typer.echo(f"Pages with text: {quality['page_count']}")
+    typer.echo(f"Total characters: {quality['total_chars']:,}")
+    typer.echo(f"Readable ratio: {quality['readable_ratio']:.1%}")
+    typer.echo(f"Gibberish ratio: {quality['gibberish_ratio']:.1%}")
+    typer.echo("")
+    
+    if quality['is_quality_good']:
+        typer.echo("✅ Quality is GOOD - no OCR needed")
+    else:
+        typer.echo(f"⚠️  Quality is POOR - OCR recommended")
+        if quality['reason']:
+            typer.echo(f"   Reason: {quality['reason']}")
 
 
 @app.command()

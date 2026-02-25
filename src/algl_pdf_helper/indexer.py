@@ -8,7 +8,13 @@ from pathlib import Path
 from .chunker import chunk_page_words
 from .clean import normalize_text, strip_repeated_headers_footers
 from .embedding import build_hash_embedding
-from .extract import extract_pages_fitz, maybe_ocr_pdf, sha256_file, cleanup_temp_pdf
+from .extract import (
+    check_extraction_quality,
+    cleanup_temp_pdf,
+    extract_pages_fitz,
+    maybe_ocr_pdf,
+    sha256_file,
+)
 from .concept_mapper import (
     build_concept_manifest,
     find_concepts_config,
@@ -109,7 +115,10 @@ def build_index(
     for pdf_path in pdfs:
         did_ocr = False
         pdf_to_use = pdf_path
+        quality_info = None
+        
         try:
+            # Step 1: Try without OCR first (unless force OCR)
             pdf_to_use, did_ocr = maybe_ocr_pdf(
                 pdf_path,
                 force=ocr,
@@ -127,6 +136,36 @@ def build_index(
                 doc_id = f"doc-{sha[:12]}"
 
             pages = extract_pages_fitz(pdf_to_use)
+            
+            # Step 2: Check quality of extracted text
+            quality_info = check_extraction_quality(pages)
+            
+            # Step 3: If quality is poor and we didn't OCR yet, retry with OCR
+            if not quality_info["is_quality_good"] and not did_ocr and not ocr:
+                import warnings
+                warnings.warn(
+                    f"Low quality extraction for '{filename}': {quality_info['reason']}. "
+                    f"Retrying with OCR..."
+                )
+                
+                # Clean up temp if we created one
+                if pdf_to_use != pdf_path:
+                    cleanup_temp_pdf(pdf_to_use)
+                
+                # Force OCR
+                pdf_to_use, did_ocr = maybe_ocr_pdf(
+                    pdf_path,
+                    force=True,
+                    auto=False,
+                )
+                
+                # Re-extract with OCR
+                pages = extract_pages_fitz(pdf_to_use)
+                quality_info = check_extraction_quality(pages)
+                
+                if quality_info["is_quality_good"]:
+                    warnings.warn(f"OCR improved quality for '{filename}'!")
+            
             if not pages:
                 raise RuntimeError(
                     f"No text extracted from '{filename}'. "

@@ -344,12 +344,27 @@ process_pdf() {
     local cmd_args
     cmd_args=$(build_args)
     
+    # First check quality
+    print_info "Checking extraction quality..."
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    local quality_output
+    quality_output=$("$venv_python" -m algl_pdf_helper check-quality "$pdf_path" 2>&1)
+    
+    # Check if OCR is recommended
+    if echo "$quality_output" | grep -q "OCR recommended"; then
+        print_warning "Low quality text detected - OCR will be used automatically"
+        # Force OCR mode temporarily for this PDF
+        local saved_ocr_mode="${OCR_MODE:-auto}"
+        OCR_MODE="force"
+        cmd_args=$(build_args)
+        OCR_MODE="$saved_ocr_mode"
+    fi
+    
+    echo ""
     print_info "Command: algl-pdf index $pdf_path --out $output_dir $cmd_args"
     echo ""
     
     # Run processing using venv Python directly to ensure module is found
-    local venv_python="$SCRIPT_DIR/.venv/bin/python"
-    
     if "$venv_python" -m algl_pdf_helper index "$pdf_path" --out "$output_dir" $cmd_args; then
         print_success "Processing complete!"
         print_info "Output location: $output_dir"
