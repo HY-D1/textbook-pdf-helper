@@ -100,17 +100,31 @@ check_ocr_deps() {
 # Function to get PDF name without extension
 get_pdf_basename() {
     local pdf_path="$1"
-    local basename
-    basename=$(basename "$pdf_path")
-    # Remove .pdf or .PDF extension
-    echo "${basename%.pdf}"
+    local name
+    name=$(basename "$pdf_path")
+    # Remove .pdf or .PDF extension (case insensitive)
+    name="${name%.pdf}"
+    name="${name%.PDF}"
+    name="${name%.Pdf}"
+    name="${name%.pDf}"
+    echo "$name"
 }
 
 # Function to sanitize folder name
 sanitize_folder_name() {
     local name="$1"
+    # Fallback if empty
+    if [[ -z "$name" ]]; then
+        name="unnamed-pdf"
+    fi
     # Replace spaces and special chars with hyphens, lowercase
-    echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//'
+    local sanitized
+    sanitized=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
+    # Fallback if sanitization resulted in empty string
+    if [[ -z "$sanitized" ]]; then
+        sanitized="pdf-$(date +%s)"
+    fi
+    echo "$sanitized"
 }
 
 # Function to list available PDFs
@@ -289,6 +303,12 @@ process_pdf() {
     local folder_name
     folder_name=$(sanitize_folder_name "$pdf_name")
     local output_dir="$READ_USE_DIR/$folder_name"
+    
+    # Debug output
+    if [[ -z "$pdf_name" ]] || [[ "$pdf_name" == "-" ]]; then
+        print_error "Could not extract valid PDF name from: $pdf_path"
+        return 1
+    fi
     
     print_header "Processing: $pdf_name"
     
