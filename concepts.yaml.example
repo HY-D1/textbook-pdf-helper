@@ -1,0 +1,151 @@
+# Example concepts.yaml configuration for SQL textbook
+# Copy this file and customize for your PDF:
+#   cp concepts.yaml.example concepts.yaml
+#
+# Then run: algl-pdf index ./your-textbook.pdf --out ./out
+
+concepts:
+  # Basic SQL concepts
+  select-basic:
+    title: "SELECT Statement Basics"
+    definition: "Retrieves data from one or more tables. The most fundamental SQL statement for querying data."
+    difficulty: beginner
+    estimatedReadTime: 5
+    sections:
+      definition: [45]        # Page 45 contains definition
+      examples: [45, 46]      # Pages 45-46 have examples
+      commonMistakes: [47]    # Page 47 discusses mistakes
+    relatedConcepts: [where-clause, order-by]
+    tags: [sql, query, dql]
+
+  where-clause:
+    title: "WHERE Clause"
+    definition: "Filters rows based on specified conditions before grouping or returning results."
+    difficulty: beginner
+    estimatedReadTime: 7
+    sections:
+      definition: [50]
+      syntax: [50]
+      examples: [50, 51]
+      commonMistakes: [52]
+    relatedConcepts: [select-basic, logical-operators]
+    tags: [sql, filtering, conditions]
+
+  order-by:
+    title: "ORDER BY Clause"
+    definition: "Sorts the result set by one or more columns in ascending or descending order."
+    difficulty: beginner
+    estimatedReadTime: 4
+    sections:
+      definition: [55]
+      examples: [55, 56]
+      tips: [56]
+    relatedConcepts: [select-basic]
+    tags: [sql, sorting]
+
+  # Intermediate concepts
+  joins-intro:
+    title: "Introduction to JOINs"
+    definition: "Combines rows from two or more tables based on related columns."
+    difficulty: intermediate
+    estimatedReadTime: 10
+    sections:
+      definition: [70, 71]
+      explanation: [71, 72]
+      examples: [72, 73, 74]
+      commonMistakes: [75]
+    relatedConcepts: [inner-join, outer-join]
+    tags: [sql, joins, tables]
+
+  inner-join:
+    title: "INNER JOIN"
+    definition: "Returns only rows with matching values in both tables."
+    difficulty: intermediate
+    estimatedReadTime: 8
+    sections:
+      definition: [78]
+      syntax: [78]
+      examples: [78, 79]
+    relatedConcepts: [joins-intro, outer-join]
+    tags: [sql, joins]
+
+  outer-join:
+    title: "OUTER JOIN"
+    definition: "Returns all rows from one table and matching rows from another, filling NULLs where no match exists."
+    difficulty: intermediate
+    estimatedReadTime: 10
+    sections:
+      definition: [82]
+      explanation: [82, 83]
+      examples: [83, 84]
+      commonMistakes: [85]
+    relatedConcepts: [joins-intro, inner-join]
+    tags: [sql, joins, left-join, right-join]
+
+  # Advanced concepts
+  subqueries:
+    title: "Subqueries and Nested Queries"
+    definition: "A query nested inside another query, used to return data for outer query conditions."
+    difficulty: advanced
+    estimatedReadTime: 15
+    sections:
+      definition: [100]
+      explanation: [100, 101]
+      examples: [101, 102, 103]
+      commonMistakes: [104]
+      practice: [105]
+    relatedConcepts: [select-basic, correlated-subquery]
+    tags: [sql, subquery, nested-query]
+
+  aggregate-functions:
+    title: "Aggregate Functions"
+    definition: "Functions that perform calculation on a set of values and return a single value (COUNT, SUM, AVG, etc.)."
+    difficulty: intermediate
+    estimatedReadTime: 12
+    sections:
+      definition: [90]
+      syntax: [90]
+      examples: [90, 91]
+      commonMistakes: [92]
+    relatedConcepts: [group-by, having-clause]
+    tags: [sql, aggregation, functions]
+
+  group-by:
+    title: "GROUP BY Clause"
+    definition: "Groups rows sharing a property so aggregate functions can be applied to each group."
+    difficulty: intermediate
+    estimatedReadTime: 10
+    sections:
+      definition: [95]
+      explanation: [95, 96]
+      examples: [96]
+      commonMistakes: [97]
+    relatedConcepts: [aggregate-functions, having-clause]
+    tags: [sql, grouping, aggregation]
+
+# Configuration notes:
+# 
+# 1. Page numbers refer to the actual page numbers in the PDF
+# 2. Each section maps to one or more page numbers:
+#    - Single page: 45
+#    - Multiple pages: [45, 46, 47]
+#    - The system will find all chunks on those pages
+#
+# 3. Sections can be any of these (or custom):
+#    - definition: Concept definition
+#    - explanation: Detailed explanation
+#    - examples: Code examples
+#    - commonMistakes: Pitfalls to avoid
+#    - syntax: Syntax reference
+#    - notes: Additional notes
+#    - tips: Best practices
+#    - practice: Practice exercises
+#
+# 4. Difficulty levels: beginner, intermediate, advanced
+#
+# 5. The concept ID (e.g., "select-basic") is used for:
+#    - File names (select-basic.md)
+#    - URL paths (/concepts/select-basic)
+#    - Cross-references between concepts
+#
+# 6. Tags are arbitrary strings for filtering/categorization

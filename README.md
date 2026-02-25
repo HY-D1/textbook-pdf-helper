@@ -54,6 +54,36 @@ algl-pdf index ./scan.pdf --out ./out/pdf-index --ocr
 algl-pdf index ./pdfs --out ./out/pdf-index
 ```
 
+### Generate concept-based learning materials (NEW)
+
+Create a `concepts.yaml` file to define concepts and their page ranges (see `concepts.yaml.example`),
+then run:
+
+```bash
+algl-pdf index ./SQL_Textbook.pdf --out ./out/pdf-index --use-aliases
+```
+
+This generates:
+
+```
+out/pdf-index/
+├── manifest.json           # Index metadata
+├── chunks.json            # Raw chunks with embeddings
+├── index.json             # Full document
+├── concept-manifest.json  # NEW: Concept metadata and chunk mappings
+└── concepts/              # NEW: Readable markdown files
+    ├── README.md          # Index of all concepts
+    ├── select-basic.md    # Individual concept content
+    ├── where-clause.md
+    └── ...
+```
+
+Concept files include:
+- Structured content (definition, examples, common mistakes)
+- Page references for source citation
+- Difficulty levels and estimated read times
+- Links to related concepts
+
 ## Server usage (optional)
 
 ```bash

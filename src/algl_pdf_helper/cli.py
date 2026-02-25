@@ -24,6 +24,10 @@ def index(
     overlap_words: int = typer.Option(30, help="Overlapping words"),
     embedding_dim: int = typer.Option(24, help="Hash embedding dimension"),
     strip_headers: bool = typer.Option(True, help="Heuristically strip headers/footers"),
+    concepts_config: Path | None = typer.Option(
+        None,
+        help="Path to concepts.yaml config (auto-detected if not specified)",
+    ),
 ):
     opts = IndexBuildOptions(
         chunkWords=chunk_words,
@@ -38,10 +42,21 @@ def index(
         auto_ocr=auto_ocr,
         use_aliases=use_aliases,
         strip_headers=strip_headers,
+        concepts_config=concepts_config,
     )
     typer.echo(f"Wrote PDF index to: {out}")
     typer.echo(f"Index ID: {doc.indexId}")
     typer.echo(f"Docs: {doc.docCount}  Chunks: {doc.chunkCount}")
+    
+    # Check if concept files were generated
+    concept_manifest_path = out / "concept-manifest.json"
+    if concept_manifest_path.exists():
+        import json
+        manifest = json.loads(concept_manifest_path.read_text())
+        typer.echo(f"Concepts: {manifest.get('conceptCount', 0)}  (concept-manifest.json)")
+        concepts_dir = out / "concepts"
+        if concepts_dir.exists():
+            typer.echo(f"Concept markdowns: {concepts_dir}")
 
 
 @app.command()

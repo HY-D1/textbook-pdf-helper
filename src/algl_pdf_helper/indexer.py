@@ -9,7 +9,18 @@ from .chunker import chunk_page_words
 from .clean import normalize_text, strip_repeated_headers_footers
 from .embedding import build_hash_embedding
 from .extract import extract_pages_fitz, maybe_ocr_pdf, sha256_file, cleanup_temp_pdf
+from .concept_mapper import (
+    build_concept_manifest,
+    find_concepts_config,
+    load_concepts_config,
+    save_concept_manifest,
+)
+from .markdown_generator import (
+    generate_all_concept_markdowns,
+    generate_index_readme,
+)
 from .models import (
+    ConceptManifest,
     IndexBuildOptions,
     PdfIndexChunk,
     PdfIndexDocument,
@@ -83,6 +94,7 @@ def build_index(
     auto_ocr: bool = True,
     use_aliases: bool = False,
     strip_headers: bool = True,
+    concepts_config: Path | None = None,
 ) -> PdfIndexDocument:
     options.validate_pair()
 
@@ -222,5 +234,52 @@ def build_index(
         json.dumps(document.model_dump(), indent=2) + "\n",
         encoding="utf-8",
     )
+
+    # Generate concept manifest and markdown files if config exists
+    concept_manifest: ConceptManifest | None = None
+    
+    # Find concepts config
+    config_path = concepts_config
+    if config_path is None:
+        config_path = find_concepts_config(input_path)
+    
+    if config_path and config_path.exists():
+        try:
+            concepts_cfg = load_concepts_config(config_path)
+            
+            # Use first source doc as primary
+            primary_doc_id = source_docs[0].docId if source_docs else ""
+            
+            concept_manifest = build_concept_manifest(
+                concepts_config=concepts_cfg,
+                chunks=chunks,
+                source_doc_id=primary_doc_id,
+                created_at=created_at,
+            )
+            
+            # Save concept manifest
+            save_concept_manifest(
+                concept_manifest,
+                out_dir / "concept-manifest.json",
+            )
+            
+            # Generate markdown files
+            concepts_dir = out_dir / "concepts"
+            generate_all_concept_markdowns(
+                concept_manifest,
+                chunks,
+                concepts_dir,
+            )
+            
+            # Generate README index
+            generate_index_readme(
+                concept_manifest,
+                concepts_dir / "README.md",
+            )
+            
+        except Exception as e:
+            # Log warning but don't fail the whole index build
+            import warnings
+            warnings.warn(f"Failed to generate concepts: {e}")
 
     return document

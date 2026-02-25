@@ -3,6 +3,34 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class ConceptSection(BaseModel):
+    """Sections within a concept (definition, examples, etc.)."""
+    chunkIds: list[str] = Field(default_factory=list)
+    pageNumbers: list[int] = Field(default_factory=list)
+
+
+class ConceptInfo(BaseModel):
+    """A single concept with metadata and chunk references."""
+    id: str
+    title: str
+    definition: str = ""
+    difficulty: str = "beginner"  # beginner, intermediate, advanced
+    estimatedReadTime: int = 5  # minutes
+    pageReferences: list[int] = Field(default_factory=list)
+    sections: dict[str, ConceptSection] = Field(default_factory=dict)
+    relatedConcepts: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class ConceptManifest(BaseModel):
+    """Manifest of all concepts extracted from PDF(s)."""
+    schemaVersion: str = Field(default="concept-manifest-v1")
+    sourceDocId: str = ""  # Primary document these concepts come from
+    createdAt: str = ""
+    conceptCount: int = 0
+    concepts: dict[str, ConceptInfo] = Field(default_factory=dict)
+
+
 class PdfSourceDoc(BaseModel):
     docId: str
     filename: str
