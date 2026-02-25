@@ -157,8 +157,9 @@ show_main_menu() {
     echo "3) 🔄 Re-process Existing PDF"
     echo "4) 📋 List Raw PDFs"
     echo "5) 📂 Open Output Folder"
-    echo "6) ⚙️  Advanced Options"
-    echo "7) 🚪 Exit"
+    echo "6) 📤 Export to SQL-Adapt"
+    echo "7) ⚙️  Advanced Options"
+    echo "8) 🚪 Exit"
     echo ""
 }
 
@@ -579,6 +580,65 @@ open_output_folder() {
     fi
 }
 
+# Function to export to SQL-Adapt
+export_to_sqladapt_menu() {
+    print_header "Export to SQL-Adapt"
+    
+    # Find processed PDFs with concept manifests
+    local folders=()
+    while IFS= read -r -d '' folder; do
+        if [[ -f "$folder/concept-manifest.json" ]]; then
+            folders+=("$folder")
+        fi
+    done < <(find "$READ_USE_DIR" -maxdepth 1 -type d ! -path "$READ_USE_DIR" -print0 2>/dev/null | sort -z)
+    
+    if [[ ${#folders[@]} -eq 0 ]]; then
+        print_error "No processed PDFs with concept manifests found"
+        print_info "Process a PDF with a concepts.yaml file first"
+        return 1
+    fi
+    
+    echo "Available for export:"
+    local i=1
+    for folder in "${folders[@]}"; do
+        local folder_name
+        folder_name=$(basename "$folder")
+        local concept_count
+        concept_count=$(find "$folder/concepts" -name "*.md" 2>/dev/null | wc -l)
+        printf "  %2d) %-30s (%s concepts)\n" "$i" "$folder_name" "$concept_count"
+        ((i++))
+    done
+    
+    echo ""
+    echo "  0) Go Back"
+    echo ""
+    
+    read -p "Select PDF to export [0-${#folders[@]}]: " choice
+    
+    if [[ "$choice" == "0" ]]; then
+        return 0
+    fi
+    
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#folders[@]} )); then
+        local folder="${folders[$((choice-1))]}"
+        local folder_name
+        folder_name=$(basename "$folder")
+        
+        print_info "Exporting $folder_name to SQL-Adapt..."
+        
+        local venv_python="$SCRIPT_DIR/.venv/bin/python"
+        if "$venv_python" -m algl_pdf_helper export "$folder"; then
+            print_success "Export complete!"
+            print_info "Output: /Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static/"
+        else
+            print_error "Export failed!"
+        fi
+        
+        echo ""
+        read -p "Press Enter to continue..."
+    fi
+}
+
 # Main loop
 main() {
     # Check/create directories
@@ -597,7 +657,7 @@ main() {
     
     while true; do
         show_main_menu
-        read -p "Select option [1-7]: " choice
+        read -p "Select option [1-8]: " choice
         
         case $choice in
             1)
@@ -627,9 +687,12 @@ main() {
                 sleep 1
                 ;;
             6)
-                show_options_menu
+                export_to_sqladapt_menu
                 ;;
             7)
+                show_options_menu
+                ;;
+            8)
                 print_info "Goodbye!"
                 exit 0
                 ;;

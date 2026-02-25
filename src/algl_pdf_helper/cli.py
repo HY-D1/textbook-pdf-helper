@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from .export_sqladapt import DEFAULT_OUTPUT_DIR, export_to_sqladapt
 from .extract import check_extraction_quality, extract_pages_fitz
 from .indexer import build_index
 from .models import IndexBuildOptions
@@ -84,6 +85,36 @@ def check_quality(
         typer.echo(f"⚠️  Quality is POOR - OCR recommended")
         if quality['reason']:
             typer.echo(f"   Reason: {quality['reason']}")
+
+
+@app.command()
+def export(
+    input_dir: Path = typer.Argument(..., exists=True, help="Input directory with processed PDF (contains concept-manifest.json)"),
+    output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+):
+    """Export processed PDF to SQL-Adapt compatible format."""
+    typer.echo(f"Exporting from: {input_dir}")
+    typer.echo(f"Output to: {output_dir}")
+    typer.echo("")
+    
+    try:
+        result = export_to_sqladapt(input_dir, output_dir)
+        
+        typer.echo("✅ Export complete!")
+        typer.echo(f"   Concept map: {result['concept_map']}")
+        typer.echo(f"   Concepts: {result['concept_count']}")
+        typer.echo(f"   Concepts directory: {result['concepts_dir']}")
+        
+    except FileNotFoundError as e:
+        typer.echo(f"❌ Error: {e}")
+        typer.echo("")
+        typer.echo("Make sure the input directory contains:")
+        typer.echo("  - concept-manifest.json")
+        typer.echo("  - chunks.json")
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"❌ Export failed: {e}")
+        raise typer.Exit(1)
 
 
 @app.command()

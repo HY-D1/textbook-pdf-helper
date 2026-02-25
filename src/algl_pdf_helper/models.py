@@ -31,6 +31,25 @@ class ConceptManifest(BaseModel):
     concepts: dict[str, ConceptInfo] = Field(default_factory=dict)
 
 
+class ConceptMapEntry(BaseModel):
+    """Entry for concept-map.json (SQL-Adapt format)."""
+    title: str
+    definition: str
+    difficulty: str = "beginner"
+    pageNumbers: list[int] = Field(default_factory=list)
+    chunkIds: dict[str, list[str]] = Field(default_factory=dict)
+    relatedConcepts: list[str] = Field(default_factory=list)
+    practiceProblemIds: list[str] = Field(default_factory=list)
+
+
+class ConceptMap(BaseModel):
+    """Concept map for SQL-Adapt integration."""
+    version: str = Field(default="1.0.0")
+    generatedAt: str = ""
+    sourceDocId: str = ""
+    concepts: dict[str, ConceptMapEntry] = Field(default_factory=dict)
+
+
 class PdfSourceDoc(BaseModel):
     docId: str
     filename: str
