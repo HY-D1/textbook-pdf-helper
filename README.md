@@ -107,6 +107,37 @@ Concept files include:
 - Difficulty levels and estimated read times
 - Links to related concepts
 
+### Interactive Processing with `./start.sh` (NEW)
+
+Use the menu-driven script for easier PDF processing:
+
+```bash
+./start.sh
+```
+
+Features:
+- 📄 Process single or all PDFs
+- 🔄 Re-process existing PDFs
+- 📋 List PDFs with status
+- ⚙️ Configure OCR, chunk size, aliases
+
+Place PDFs in `raw_pdf/` folder, outputs go to `read_use/<pdf-name>/`.
+
+### OCR for Scanned PDFs
+
+For PDFs that are images/scans without selectable text, enable OCR:
+
+```bash
+# Command line
+algl-pdf index ./scanned.pdf --out ./out --ocr --use-aliases
+
+# Or use the interactive script
+./start.sh
+# → 6) Advanced Options → Toggle OCR mode → Process All PDFs
+```
+
+**Note:** OCR requires system dependencies (`tesseract` and `ghostscript`).
+
 ## Server usage (optional)
 
 ```bash
