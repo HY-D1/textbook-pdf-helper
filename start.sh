@@ -3,7 +3,7 @@
 # ALGL PDF Helper - Interactive Processing Script
 # Usage: ./start.sh
 
-set -e
+# Don't use set -e as it interferes with error handling in loops
 
 # Colors for output
 RED='\033[0;31m'
@@ -295,6 +295,15 @@ build_args() {
     echo "$args"
 }
 
+# Function to ensure venv is active
+ensure_venv() {
+    if [[ -z "${VIRTUAL_ENV}" ]] || ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
+        if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
+            source "$SCRIPT_DIR/.venv/bin/activate"
+        fi
+    fi
+}
+
 # Function to process a single PDF
 process_pdf() {
     local pdf_path="$1"
@@ -309,6 +318,9 @@ process_pdf() {
         print_error "Could not extract valid PDF name from: $pdf_path"
         return 1
     fi
+    
+    # Ensure venv is active before each PDF
+    ensure_venv
     
     print_header "Processing: $pdf_name"
     
@@ -331,8 +343,15 @@ process_pdf() {
     print_info "Command: algl-pdf index $pdf_path --out $output_dir $cmd_args"
     echo ""
     
-    # Run processing
-    if algl-pdf index "$pdf_path" --out "$output_dir" $cmd_args; then
+    # Run processing - use full path to ensure we use venv version
+    local algl_pdf_cmd
+    if [[ -n "$VIRTUAL_ENV" ]] && [[ -f "$VIRTUAL_ENV/bin/algl-pdf" ]]; then
+        algl_pdf_cmd="$VIRTUAL_ENV/bin/algl-pdf"
+    else
+        algl_pdf_cmd="algl-pdf"
+    fi
+    
+    if "$algl_pdf_cmd" index "$pdf_path" --out "$output_dir" $cmd_args; then
         print_success "Processing complete!"
         print_info "Output location: $output_dir"
         
