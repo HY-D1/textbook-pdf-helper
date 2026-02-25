@@ -8,6 +8,7 @@ src/algl_pdf_helper/clean.py
 src/algl_pdf_helper/cli.py
 src/algl_pdf_helper/concept_mapper.py
 src/algl_pdf_helper/embedding.py
+src/algl_pdf_helper/export_sqladapt.py
 src/algl_pdf_helper/extract.py
 src/algl_pdf_helper/indexer.py
 src/algl_pdf_helper/markdown_generator.py

@@ -42,28 +42,28 @@ print_header() {
 
 # Function to check if virtual environment is activated
 check_venv() {
-    if [[ -z "${VIRTUAL_ENV}" ]]; then
-        if [[ -d "$SCRIPT_DIR/.venv" ]]; then
-            print_info "Activating virtual environment..."
-            source "$SCRIPT_DIR/.venv/bin/activate"
-        else
-            print_warning "Virtual environment not found. Creating one..."
-            python3 -m venv "$SCRIPT_DIR/.venv"
-            source "$SCRIPT_DIR/.venv/bin/activate"
-        fi
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    local venv_pip="$SCRIPT_DIR/.venv/bin/pip"
+    
+    # Create venv if it doesn't exist
+    if [[ ! -d "$SCRIPT_DIR/.venv" ]]; then
+        print_warning "Virtual environment not found. Creating one..."
+        python3 -m venv "$SCRIPT_DIR/.venv"
     fi
     
-    # Always ensure package is installed
-    if ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
+    # Ensure package is installed using venv python directly
+    if ! "$venv_python" -c "import algl_pdf_helper" 2>/dev/null; then
         print_info "Installing algl-pdf-helper package..."
-        pip install -q -e "$SCRIPT_DIR"
+        "$venv_pip" install -e "$SCRIPT_DIR" 2>&1 | tail -5
     fi
     
     # Verify installation
-    if ! python3 -c "import algl_pdf_helper" 2>/dev/null; then
+    if ! "$venv_python" -c "import algl_pdf_helper" 2>/dev/null; then
         print_error "Failed to install algl-pdf-helper package"
         exit 1
     fi
+    
+    print_success "Package installed successfully"
 }
 
 # Function to check OCR system dependencies
@@ -298,14 +298,13 @@ build_args() {
 
 # Function to ensure venv is active
 ensure_venv() {
-    if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
-        source "$SCRIPT_DIR/.venv/bin/activate"
-    fi
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    local venv_pip="$SCRIPT_DIR/.venv/bin/pip"
     
-    # Verify module is accessible
-    if ! "$SCRIPT_DIR/.venv/bin/python" -c "import algl_pdf_helper" 2>/dev/null; then
+    # Verify module is accessible, install if not
+    if ! "$venv_python" -c "import algl_pdf_helper" 2>/dev/null; then
         print_info "Installing package in venv..."
-        "$SCRIPT_DIR/.venv/bin/pip" install -q -e "$SCRIPT_DIR"
+        "$venv_pip" install -e "$SCRIPT_DIR" 2>&1 | tail -5
     fi
 }
 

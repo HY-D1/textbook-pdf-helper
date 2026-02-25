@@ -143,9 +143,29 @@ Features:
 - 📄 Process single or all PDFs
 - 🔄 Re-process existing PDFs
 - 📋 List PDFs with status
+- 📤 Export to SQL-Adapt format
 - ⚙️ Configure OCR, chunk size, aliases
 
 Place PDFs in `raw_pdf/` folder, outputs go to `read_use/<pdf-name>/`.
+
+### Export to SQL-Adapt (NEW)
+
+Export processed PDFs to the main SQL-Adapt application:
+
+```bash
+# Command line
+algl-pdf export ./read_use/sql-textbook
+
+# Or use the interactive script
+./start.sh
+# → 6) 📤 Export to SQL-Adapt
+```
+
+This generates SQL-Adapt compatible files:
+- `concept-map.json` - Concept metadata and chunk mappings
+- `concepts/*.md` - Formatted markdown files for each concept
+
+Output location: `adaptive-instructional-artifacts/apps/web/public/textbook-static/`
 
 ### OCR for Scanned PDFs
 
