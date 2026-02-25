@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algl-pdf-helper"
+version = "0.1.0"
+description = "Helper service/CLI to OCR + extract + index PDFs for the ALGL SQL-Adapt project."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ALGL" }]
+
+dependencies = [
+  "pydantic>=2.6",
+  "typer>=0.12",
+  "pymupdf>=1.23",
+]
+
+[project.optional-dependencies]
+ocr = [
+  "ocrmypdf>=16.0",
+]
+server = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "python-multipart>=0.0.9",
+]
+test = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+algl-pdf = "algl_pdf_helper.cli:app"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class PdfSourceDoc(BaseModel):
+    docId: str
+    filename: str
+    sha256: str
+    pageCount: int
+
+
+class PdfIndexChunk(BaseModel):
+    chunkId: str
+    docId: str
+    page: int
+    text: str
+    embedding: list[float] | None = None
+
+
+class PdfIndexDocument(BaseModel):
+    indexId: str
+    sourceName: str
+    createdAt: str
+    schemaVersion: str
+    chunkerVersion: str
+    embeddingModelId: str
+    sourceDocs: list[PdfSourceDoc]
+    docCount: int
+    chunkCount: int
+    chunks: list[PdfIndexChunk]
+
+
+class PdfIndexManifest(BaseModel):
+    indexId: str
+    createdAt: str
+    schemaVersion: str
+    chunkerVersion: str
+    embeddingModelId: str
+    sourceDocs: list[PdfSourceDoc]
+    docCount: int
+    chunkCount: int
+
+
+class IndexBuildOptions(BaseModel):
+    schemaVersion: str = Field(default="pdf-index-schema-v2")
+    chunkerVersion: str = Field(default="word-window-180-overlap-30-v1")
+    embeddingModelId: str = Field(default="hash-embedding-v1")
+    chunkWords: int = Field(default=180, ge=20, le=2000)
+    overlapWords: int = Field(default=30, ge=0, le=1999)
+    embeddingDim: int = Field(default=24, ge=4, le=4096)
+
+    def validate_pair(self) -> None:
+        if self.overlapWords >= self.chunkWords:
+            raise ValueError("overlapWords must be smaller than chunkWords")
