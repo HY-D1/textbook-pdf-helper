@@ -15,3 +15,8 @@ dist/
 !/raw_pdf/.gitkeep
 /read_use/*
 !/read_use/.gitkeep
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
