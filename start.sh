@@ -817,10 +817,11 @@ export_educational_to_sqladapt_menu() {
     done
     
     echo ""
+    echo "  A) Export All PDFs (Batch)"
     echo "  0) Go Back"
     echo ""
     
-    read -p "Select PDF to export [0-${#pdfs[@]}]: " choice
+    read -p "Select PDF to export [0-${#pdfs[@]}/A]: " choice
     
     if [[ "$choice" == "0" ]]; then
         return 0
@@ -909,6 +910,96 @@ export_educational_to_sqladapt_menu() {
             print_info "For Kimi (cheapest):"
             echo "  1. Get API key: https://platform.moonshot.cn/"
             echo "  2. Set: export KIMI_API_KEY='sk-your-key'"
+        fi
+        
+        echo ""
+        read -p "Press Enter to continue..."
+    fi
+    
+    # Export All (Batch)
+    if [[ "$choice" =~ ^[Aa]$ ]]; then
+        print_header "Batch Export All PDFs (Educational)"
+        
+        # Choose LLM provider
+        local llm_provider="kimi"
+        
+        if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
+            llm_provider="kimi"
+        elif [[ -n "$OPENAI_API_KEY" ]]; then
+            llm_provider="openai"
+        fi
+        
+        # If both keys available, let user choose
+        if [[ -n "$KIMI_API_KEY" ]] && [[ -n "$OPENAI_API_KEY" ]]; then
+            echo ""
+            echo "Select LLM Provider:"
+            echo "  1) Kimi (Moonshot) - ¥0.066/concept ⭐ Cheapest"
+            echo "  2) OpenAI (GPT-4o-mini) - ¥1.100/concept"
+            echo ""
+            read -p "Select [1-2, default=1]: " provider_choice
+            
+            if [[ "$provider_choice" == "2" ]]; then
+                llm_provider="openai"
+            else
+                llm_provider="kimi"
+            fi
+            echo ""
+        fi
+        
+        # Estimate total cost
+        local num_pdfs=${#pdfs[@]}
+        local est_cost_per_pdf="2.00"
+        if [[ "$llm_provider" == "openai" ]]; then
+            est_cost_per_pdf="33.00"
+        fi
+        
+        echo ""
+        echo "📦 Batch Export Summary:"
+        echo "  PDFs to process: $num_pdfs"
+        echo "  LLM Provider: $llm_provider"
+        echo "  Estimated cost: ~¥$(echo "$est_cost_per_pdf * $num_pdfs" | bc) RMB"
+        echo "  Output: $sqladapt_dir"
+        echo ""
+        
+        read -p "Continue with batch export? [Y/n]: " confirm
+        if [[ "$confirm" =~ ^[Nn]$ ]]; then
+            return 0
+        fi
+        echo ""
+        
+        # Process each PDF
+        local success_count=0
+        local fail_count=0
+        
+        for pdf_path in "${pdfs[@]}"; do
+            local pdf_name
+            pdf_name=$(get_pdf_basename "$pdf_path")
+            
+            print_header "Processing: $pdf_name"
+            
+            export EDUCATIONAL_LLM_PROVIDER="$llm_provider"
+            
+            if "$venv_python" -m algl_pdf_helper export-edu "$pdf_path" --output-dir "$sqladapt_dir"; then
+                print_success "Exported: $pdf_name"
+                ((success_count++))
+            else
+                print_error "Failed: $pdf_name"
+                ((fail_count++))
+            fi
+            echo ""
+        done
+        
+        # Summary
+        print_header "Batch Export Complete"
+        print_success "Successful: $success_count"
+        if [[ $fail_count -gt 0 ]]; then
+            print_error "Failed: $fail_count"
+        fi
+        
+        if [[ -f "$sqladapt_dir/concept-map.json" ]]; then
+            local total_concepts
+            total_concepts=$(grep -c '"title"' "$sqladapt_dir/concept-map.json" 2>/dev/null || echo "0")
+            print_info "Total concepts in export: $total_concepts"
         fi
         
         echo ""
