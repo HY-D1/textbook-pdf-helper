@@ -761,19 +761,36 @@ export_educational_to_sqladapt_menu() {
     fi
     
     if [[ "$has_openai" == "true" ]]; then
-        echo "  ✅ OpenAI (LLM enhancement): Available"
-        if [[ -n "$OPENAI_API_KEY" ]]; then
-            echo "  ✅ OPENAI_API_KEY: Set"
-        else
-            echo "  ⚠️  OPENAI_API_KEY: Not set"
-            echo "      Set with: export OPENAI_API_KEY='your-key'"
-        fi
+        echo "  ✅ OpenAI SDK: Available"
     else
-        echo "  ⚠️  OpenAI (LLM enhancement): Not installed"
+        echo "  ⚠️  OpenAI SDK: Not installed"
         echo "      Install: pip install openai"
     fi
     
+    # Check API keys
+    if [[ -n "$OPENAI_API_KEY" ]]; then
+        echo "  ✅ OPENAI_API_KEY: Set"
+    fi
+    
+    if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
+        echo "  ✅ KIMI_API_KEY: Set"
+    fi
+    
+    # Show cost comparison
     echo ""
+    echo "💰 Cost Comparison (per concept, RMB):"
+    echo "  Kimi (moonshot-v1-8k):  ¥0.066  ⭐ Cheapest"
+    echo "  OpenAI (gpt-4o-mini):   ¥1.100  (~17x more)"
+    echo ""
+    
+    if [[ -z "$KIMI_API_KEY" ]] && [[ -z "$MOONSHOT_API_KEY" ]] && [[ -z "$OPENAI_API_KEY" ]]; then
+        print_warning "No LLM API key set!"
+        echo ""
+        echo "Recommend: Use Kimi (cheapest, China-based)"
+        echo "  1. Get key: https://platform.moonshot.cn/"
+        echo "  2. Set key: export KIMI_API_KEY='sk-your-key'"
+        echo ""
+    fi
     
     # List raw PDFs (can process directly without pre-processing)
     local pdfs=()
@@ -816,21 +833,63 @@ export_educational_to_sqladapt_menu() {
         
         print_header "Exporting Educational Notes: $pdf_name"
         
-        print_info "This will:"
-        echo "  1. Extract PDF content using Marker (high quality)"
-        echo "  2. Generate educational notes with LLM"
-        echo "  3. Export to SQL-Adapt format"
-        echo ""
+        # Choose LLM provider
+        local llm_provider="kimi"
+        local llm_key_set=false
         
-        # Check if we should use LLM
-        local use_llm_flag=""
-        if [[ -z "$OPENAI_API_KEY" ]]; then
-            print_warning "OPENAI_API_KEY not set. Will generate basic notes without LLM."
+        if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
+            llm_key_set=true
+            llm_provider="kimi"
+        elif [[ -n "$OPENAI_API_KEY" ]]; then
+            llm_key_set=true
+            llm_provider="openai"
+        fi
+        
+        # If both keys available, let user choose
+        if [[ -n "$KIMI_API_KEY" ]] && [[ -n "$OPENAI_API_KEY" ]]; then
+            echo ""
+            echo "Select LLM Provider:"
+            echo "  1) Kimi (Moonshot) - ¥0.066/concept ⭐ Cheapest"
+            echo "  2) OpenAI (GPT-4o-mini) - ¥1.100/concept"
+            echo ""
+            read -p "Select [1-2, default=1]: " provider_choice
+            
+            if [[ "$provider_choice" == "2" ]]; then
+                llm_provider="openai"
+            else
+                llm_provider="kimi"
+            fi
             echo ""
         fi
         
+        # Show cost estimate
+        echo "💰 Estimated Cost:"
+        if [[ "$llm_provider" == "kimi" ]]; then
+            echo "  Kimi (moonshot-v1-8k): ~¥2.00 for 30 concepts"
+            echo "  (~¥0.07 per concept)"
+        else
+            echo "  OpenAI (gpt-4o-mini): ~¥33.00 for 30 concepts"
+            echo "  (~¥1.10 per concept)"
+        fi
+        echo ""
+        
+        print_info "This will:"
+        echo "  1. Extract PDF content using Marker (high quality)"
+        echo "  2. Generate educational notes with $llm_provider LLM"
+        echo "  3. Export to SQL-Adapt format"
+        echo ""
+        
+        read -p "Continue? [Y/n]: " confirm
+        if [[ "$confirm" =~ ^[Nn]$ ]]; then
+            return 0
+        fi
+        echo ""
+        
         print_info "Command: algl-pdf export-edu $pdf_path --output-dir $sqladapt_dir"
         echo ""
+        
+        # Set provider environment variable for the command
+        export EDUCATIONAL_LLM_PROVIDER="$llm_provider"
         
         if "$venv_python" -m algl_pdf_helper export-edu "$pdf_path" --output-dir "$sqladapt_dir"; then
             print_success "Educational export complete!"
@@ -846,6 +905,10 @@ export_educational_to_sqladapt_menu() {
             print_error "Export failed!"
             print_info "Check that dependencies are installed:"
             echo "  pip install marker-pdf openai"
+            echo ""
+            print_info "For Kimi (cheapest):"
+            echo "  1. Get API key: https://platform.moonshot.cn/"
+            echo "  2. Set: export KIMI_API_KEY='sk-your-key'"
         fi
         
         echo ""

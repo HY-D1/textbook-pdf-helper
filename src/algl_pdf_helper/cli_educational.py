@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from .educational_pipeline import EducationalNoteGenerator
+from .educational_pipeline import EducationalNoteGenerator, LLMProvider
 
 app = typer.Typer(help="Generate educational notes from PDFs")
 
@@ -28,21 +28,68 @@ def generate(
     ),
     use_llm: bool = typer.Option(
         True,
-        help="Use LLM to enhance notes (requires OPENAI_API_KEY)",
+        help="Use LLM to enhance notes (requires API key)",
+    ),
+    llm_provider: str = typer.Option(
+        "openai",
+        help="LLM provider: openai or kimi",
+    ),
+    estimate_cost: bool = typer.Option(
+        False,
+        help="Show cost estimate only (don't generate)",
     ),
 ):
     """Generate educational notes from PDF."""
+    
+    # Show cost estimate first
+    if estimate_cost or not use_llm:
+        generator = EducationalNoteGenerator(llm_provider=llm_provider)
+        cost = generator.estimate_cost(num_concepts=30)  # Estimate for 30 concepts
+        
+        typer.echo("\n💰 Cost Estimate")
+        typer.echo("=" * 50)
+        typer.echo(f"Provider: {cost['provider']}")
+        typer.echo(f"Model: {cost['model']}")
+        typer.echo(f"Concepts: {cost['concepts']}")
+        typer.echo(f"\nTokens:")
+        typer.echo(f"  Input:  {cost['tokens']['input']:,}")
+        typer.echo(f"  Output: {cost['tokens']['output']:,}")
+        typer.echo(f"\nEstimated Cost (RMB):")
+        typer.echo(f"  Input:  ¥{cost['cost_rmb']['input']}")
+        typer.echo(f"  Output: ¥{cost['cost_rmb']['output']}")
+        typer.echo(f"  Total:  ¥{cost['cost_rmb']['total']}")
+        typer.echo(f"\nPer concept: ¥{cost['cost_per_concept_rmb']}")
+        
+        if estimate_cost:
+            typer.echo("\n" + "=" * 50)
+            EducationalNoteGenerator.print_cost_comparison()
+            return
+        
+        typer.echo("")
+        confirm = typer.prompt("Continue with generation? [y/n]", default="y")
+        if confirm.lower() != "y":
+            typer.echo("Cancelled.")
+            raise typer.Exit(0)
+        typer.echo("")
+    
     typer.echo(f"📚 Processing: {pdf_path}")
     typer.echo(f"📁 Output: {output_dir}")
+    typer.echo(f"🤖 LLM Provider: {llm_provider}")
     typer.echo()
     
     # Initialize generator
     generator = EducationalNoteGenerator(
         use_marker=use_marker,
+        llm_provider=llm_provider,
     )
     
     if use_llm and not generator.llm_available:
-        typer.echo("⚠️  Warning: LLM not available (set OPENAI_API_KEY)")
+        typer.echo("⚠️  Warning: LLM not available")
+        if llm_provider == LLMProvider.KIMI:
+            typer.echo("   Set KIMI_API_KEY or MOONSHOT_API_KEY environment variable")
+            typer.echo("   Get key: https://platform.moonshot.cn/")
+        else:
+            typer.echo("   Set OPENAI_API_KEY environment variable")
         typer.echo("   Will generate basic notes without LLM enhancement")
         typer.echo()
     
@@ -61,6 +108,14 @@ def generate(
         typer.echo("📄 Generated files:")
         for key, path in result["outputs"].items():
             typer.echo(f"   {key}: {path}")
+        
+        # Show cost if LLM was used
+        if result["stats"].get("llm_enhanced"):
+            num_concepts = result["stats"].get("concepts_generated", 0)
+            if num_concepts > 0:
+                cost = generator.estimate_cost(num_concepts)
+                typer.echo()
+                typer.echo(f"💰 Actual Cost: ¥{cost['cost_rmb']['total']} RMB")
         
         # Show preview
         if "study_guide" in result["outputs"]:
@@ -105,25 +160,40 @@ def status():
     
     # Check OpenAI
     if OPENAI_AVAILABLE:
-        typer.echo("✅ OpenAI (LLM enhancement): Available")
+        typer.echo("✅ OpenAI SDK: Available")
         
         import os
         if os.getenv("OPENAI_API_KEY"):
             typer.echo("✅ OPENAI_API_KEY: Set")
         else:
             typer.echo("⚠️  OPENAI_API_KEY: Not set")
-            typer.echo("   Set with: export OPENAI_API_KEY='your-key'")
     else:
-        typer.echo("❌ OpenAI (LLM enhancement): Not installed")
+        typer.echo("❌ OpenAI SDK: Not installed")
         typer.echo("   Install: pip install openai")
+    
+    # Check Kimi
+    import os
+    if os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY"):
+        typer.echo("✅ KIMI_API_KEY/MOONSHOT_API_KEY: Set")
+    else:
+        typer.echo("⚠️  KIMI_API_KEY/MOONSHOT_API_KEY: Not set")
+        typer.echo("   Get key: https://platform.moonshot.cn/")
     
     typer.echo()
     typer.echo("💡 Recommendation:")
-    if not MARKER_AVAILABLE or not OPENAI_AVAILABLE:
+    if not MARKER_AVAILABLE:
         typer.echo("   Install all dependencies for best results:")
         typer.echo("   pip install marker-pdf openai")
     else:
-        typer.echo("   All dependencies ready! Use 'generate' command.")
+        typer.echo("   For cheapest costs, use Kimi:")
+        typer.echo("   export KIMI_API_KEY='your-key'")
+        typer.echo("   algl-pdf edu generate book.pdf --llm-provider kimi")
+
+
+@app.command()
+def cost():
+    """Show cost comparison between LLM providers."""
+    EducationalNoteGenerator.print_cost_comparison()
 
 
 if __name__ == "__main__":

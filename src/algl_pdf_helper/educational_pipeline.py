@@ -37,27 +37,79 @@ except ImportError:
 from .models import ConceptInfo, ConceptManifest
 
 
+class LLMProvider:
+    """Supported LLM providers."""
+    OPENAI = "openai"
+    KIMI = "kimi"  # Moonshot AI
+
+
 class EducationalNoteGenerator:
     """
     Generates student-ready educational notes from PDF content.
     
     This class handles the complete pipeline:
     PDF extraction → Content structuring → LLM enhancement → SQL-Adapt format
+    
+    Supports multiple LLM providers:
+    - OpenAI (GPT-4, GPT-4o-mini)
+    - Kimi/Moonshot AI (Kimi Chat 8K/32K/128K)
     """
     
     def __init__(
         self,
         openai_api_key: str | None = None,
+        kimi_api_key: str | None = None,
+        llm_provider: str = LLMProvider.OPENAI,
         use_marker: bool = True,
     ):
         self.use_marker = use_marker and MARKER_AVAILABLE
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-        self.llm_available = OPENAI_AVAILABLE and bool(self.openai_api_key)
+        self.llm_provider = llm_provider.lower()
         
-        if self.llm_available:
+        # Initialize OpenAI
+        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self.openai_available = OPENAI_AVAILABLE and bool(self.openai_api_key)
+        self.openai_client = None
+        if self.openai_available:
             self.openai_client = openai.OpenAI(api_key=self.openai_api_key)
-        else:
-            self.openai_client = None
+        
+        # Initialize Kimi (Moonshot AI)
+        self.kimi_api_key = kimi_api_key or os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")
+        self.kimi_available = bool(self.kimi_api_key)
+        self.kimi_client = None
+        if self.kimi_available:
+            # Kimi uses OpenAI-compatible API
+            self.kimi_client = openai.OpenAI(
+                api_key=self.kimi_api_key,
+                base_url="https://api.moonshot.cn/v1",
+            )
+        
+        # Set active client based on provider
+        self.llm_available = False
+        self.active_client = None
+        self.active_model = None
+        
+        if self.llm_provider == LLMProvider.KIMI and self.kimi_available:
+            self.llm_available = True
+            self.active_client = self.kimi_client
+            self.active_model = "moonshot-v1-8k"  # Default: 8K context, cheapest
+        elif self.openai_available:
+            self.llm_available = True
+            self.active_client = self.openai_client
+            self.active_model = "gpt-4o-mini"  # Default: cost-effective
+            self.llm_provider = LLMProvider.OPENAI
+        
+        # Cost tracking (per 1K tokens in RMB)
+        self.cost_config = {
+            LLMProvider.OPENAI: {
+                "gpt-4o-mini": {"input": 0.11, "output": 0.44},  # ~$0.015/$0.06
+                "gpt-4o": {"input": 2.75, "output": 11.0},  # ~$0.375/$1.50
+            },
+            LLMProvider.KIMI: {
+                "moonshot-v1-8k": {"input": 0.012, "output": 0.012},
+                "moonshot-v1-32k": {"input": 0.024, "output": 0.024},
+                "moonshot-v1-128k": {"input": 0.12, "output": 0.12},
+            },
+        }
     
     def process_pdf(
         self,
@@ -431,8 +483,9 @@ Respond ONLY with valid JSON in this format:
 }}
 """
             
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Fast and cost-effective
+            # Use active client (OpenAI or Kimi)
+            response = self.active_client.chat.completions.create(
+                model=self.active_model,
                 messages=[
                     {"role": "system", "content": "You are an expert educator who creates clear, engaging learning materials."},
                     {"role": "user", "content": prompt},
@@ -675,6 +728,85 @@ Respond ONLY with valid JSON in this format:
         
         words = len(total_text.split())
         return max(1, round(words / 200))  # 200 WPM reading speed
+    
+    def estimate_cost(self, num_concepts: int) -> dict[str, Any]:
+        """
+        Estimate cost for generating educational notes.
+        
+        Returns cost breakdown in Chinese Yuan (RMB).
+        """
+        # Average tokens per concept
+        input_tokens_per_concept = 4000   # Raw text + prompt
+        output_tokens_per_concept = 1500  # Generated notes
+        
+        total_input = input_tokens_per_concept * num_concepts
+        total_output = output_tokens_per_concept * num_concepts
+        
+        # Get pricing for active model
+        provider_costs = self.cost_config.get(self.llm_provider, {})
+        model_costs = provider_costs.get(self.active_model, {"input": 0, "output": 0})
+        
+        input_cost = (total_input / 1000) * model_costs["input"]
+        output_cost = (total_output / 1000) * model_costs["output"]
+        total_cost = input_cost + output_cost
+        
+        return {
+            "provider": self.llm_provider,
+            "model": self.active_model,
+            "concepts": num_concepts,
+            "tokens": {
+                "input": total_input,
+                "output": total_output,
+                "total": total_input + total_output,
+            },
+            "cost_rmb": {
+                "input": round(input_cost, 3),
+                "output": round(output_cost, 3),
+                "total": round(total_cost, 3),
+            },
+            "cost_per_concept_rmb": round(total_cost / num_concepts, 3),
+        }
+    
+    @staticmethod
+    def print_cost_comparison():
+        """Print cost comparison table for all providers."""
+        print("\n💰 LLM Cost Comparison (per concept, in Chinese Yuan/RMB)")
+        print("=" * 70)
+        print(f"{'Provider':<12} {'Model':<25} {'Input':<10} {'Output':<10} {'Total':<10}")
+        print("-" * 70)
+        
+        # Estimated tokens per concept
+        input_tokens = 4000
+        output_tokens = 1500
+        
+        comparisons = [
+            ("OpenAI", "gpt-4o-mini", 0.11, 0.44),
+            ("OpenAI", "gpt-4o", 2.75, 11.0),
+            ("Kimi", "moonshot-v1-8k", 0.012, 0.012),
+            ("Kimi", "moonshot-v1-32k", 0.024, 0.024),
+            ("Kimi", "moonshot-v1-128k", 0.12, 0.12),
+        ]
+        
+        for provider, model, input_rate, output_rate in comparisons:
+            input_cost = (input_tokens / 1000) * input_rate
+            output_cost = (output_tokens / 1000) * output_rate
+            total_cost = input_cost + output_cost
+            
+            print(f"{provider:<12} {model:<25} ¥{input_cost:<9.3f} ¥{output_cost:<9.3f} ¥{total_cost:<9.3f}")
+        
+        print("-" * 70)
+        print("\n📊 Example: 30-concept textbook")
+        print("-" * 70)
+        for provider, model, input_rate, output_rate in comparisons:
+            input_cost = (input_tokens / 1000) * input_rate * 30
+            output_cost = (output_tokens / 1000) * output_rate * 30
+            total_cost = input_cost + output_cost
+            
+            marker = "⭐ " if "kimi" in model else "   "
+            print(f"{marker}{provider} {model}: ¥{total_cost:.2f} RMB")
+        
+        print("\n💡 Kimi (Moonshot AI) is ~10x cheaper than OpenAI GPT-4o-mini!")
+        print("   Get API key: https://platform.moonshot.cn/")
 
 
 # CLI interface
