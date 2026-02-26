@@ -54,7 +54,7 @@ check_venv() {
     # Ensure package is installed using venv python directly
     if ! "$venv_python" -c "import algl_pdf_helper" 2>/dev/null; then
         print_info "Installing algl-pdf-helper package..."
-        "$venv_pip" install -e "$SCRIPT_DIR" 2>&1 | tail -5
+        "$venv_pip" install "$SCRIPT_DIR" 2>&1 | tail -5
     fi
     
     # Verify installation
@@ -304,7 +304,7 @@ ensure_venv() {
     # Verify module is accessible, install if not
     if ! "$venv_python" -c "import algl_pdf_helper" 2>/dev/null; then
         print_info "Installing package in venv..."
-        "$venv_pip" install -e "$SCRIPT_DIR" 2>&1 | tail -5
+        "$venv_pip" install "$SCRIPT_DIR" 2>&1 | tail -5
     fi
 }
 
@@ -361,7 +361,7 @@ process_pdf() {
     fi
     
     echo ""
-    print_info "Command: algl-pdf index $pdf_path --out $output_dir $cmd_args"
+    print_info "Command: $venv_python -m algl_pdf_helper index $pdf_path --out $output_dir $cmd_args"
     echo ""
     
     # Run processing using venv Python directly to ensure module is found
@@ -625,8 +625,8 @@ export_to_sqladapt_menu() {
         
         print_info "Exporting $folder_name to SQL-Adapt..."
         
-        local venv_python="$SCRIPT_DIR/.venv/bin/python"
-        if "$venv_python" -m algl_pdf_helper export "$folder"; then
+        local venv_python_export="$SCRIPT_DIR/.venv/bin/python"
+        if "$venv_python_export" -m algl_pdf_helper export "$folder"; then
             print_success "Export complete!"
             print_info "Output: /Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static/"
         else
