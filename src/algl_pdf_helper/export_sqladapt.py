@@ -216,9 +216,48 @@ No specific mistakes documented in textbook.
     return markdown
 
 
+def merge_concept_maps(
+    existing_map: dict,
+    new_map: ConceptMap,
+    source_doc_id: str,
+) -> dict:
+    """Merge new concept map into existing one."""
+    # Use namespaced concept IDs to avoid conflicts
+    merged_concepts = existing_map.get("concepts", {}).copy()
+    
+    for cid, concept_entry in new_map.concepts.items():
+        # Namespace the concept ID with source doc
+        namespaced_id = f"{source_doc_id}/{cid}"
+        
+        # Convert ConceptMapEntry to dict
+        merged_concepts[namespaced_id] = {
+            "title": concept_entry.title,
+            "definition": concept_entry.definition,
+            "difficulty": concept_entry.difficulty,
+            "pageNumbers": concept_entry.pageNumbers,
+            "chunkIds": concept_entry.chunkIds,
+            "relatedConcepts": [
+                f"{source_doc_id}/{rid}" if "/" not in rid else rid
+                for rid in concept_entry.relatedConcepts
+            ],
+            "practiceProblemIds": concept_entry.practiceProblemIds,
+            "sourceDocId": source_doc_id,
+        }
+    
+    return {
+        "version": "1.0.0",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "sourceDocIds": list(set(
+            existing_map.get("sourceDocIds", []) + [source_doc_id]
+        )),
+        "concepts": merged_concepts,
+    }
+
+
 def export_to_sqladapt(
     input_dir: Path,
     output_dir: Path | None = None,
+    merge: bool = True,
 ) -> dict[str, Any]:
     """
     Export PDF index to SQL-Adapt compatible format.
@@ -226,6 +265,7 @@ def export_to_sqladapt(
     Args:
         input_dir: Directory containing processed PDF output (concept-manifest.json, chunks.json)
         output_dir: SQL-Adapt output directory (defaults to DEFAULT_OUTPUT_DIR)
+        merge: If True, merge with existing concept map instead of overwriting
         
     Returns:
         Summary of exported files
@@ -251,26 +291,92 @@ def export_to_sqladapt(
     manifest = load_concept_manifest(manifest_file)
     chunks = load_chunks(chunks_file)
     
-    # Generate concept map
+    # Generate concept map for this PDF
     concept_map = convert_to_concept_map(manifest)
     
-    # Save concept map
+    # Load or create merged concept map
     concept_map_file = output_dir / "concept-map.json"
-    with open(concept_map_file, "w", encoding="utf-8") as f:
-        json.dump(concept_map.model_dump(), f, indent=2)
     
-    # Generate markdown files
+    if merge and concept_map_file.exists():
+        # Load existing and merge
+        with open(concept_map_file, "r", encoding="utf-8") as f:
+            existing_map = json.load(f)
+        
+        merged_map = merge_concept_maps(existing_map, concept_map, manifest.sourceDocId)
+        final_concept_count = len(merged_map["concepts"])
+        is_new_pdf = manifest.sourceDocId not in existing_map.get("sourceDocIds", [])
+    else:
+        # Create new or overwrite
+        merged_map = {
+            "version": "1.0.0",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sourceDocIds": [manifest.sourceDocId],
+            "concepts": {},
+        }
+        for cid, concept_entry in concept_map.concepts.items():
+            namespaced_id = f"{manifest.sourceDocId}/{cid}"
+            merged_map["concepts"][namespaced_id] = {
+                "title": concept_entry.title,
+                "definition": concept_entry.definition,
+                "difficulty": concept_entry.difficulty,
+                "pageNumbers": concept_entry.pageNumbers,
+                "chunkIds": concept_entry.chunkIds,
+                "relatedConcepts": [
+                    f"{manifest.sourceDocId}/{rid}" for rid in concept_entry.relatedConcepts
+                ],
+                "practiceProblemIds": concept_entry.practiceProblemIds,
+                "sourceDocId": manifest.sourceDocId,
+            }
+        final_concept_count = len(merged_map["concepts"])
+        is_new_pdf = True
+    
+    # Save merged concept map
+    with open(concept_map_file, "w", encoding="utf-8") as f:
+        json.dump(merged_map, f, indent=2)
+    
+    # Generate markdown files (namespaced)
     generated_files = []
+    updated_files = []
     for cid, concept in manifest.concepts.items():
+        namespaced_id = f"{manifest.sourceDocId}/{cid}"
         markdown = generate_sqladapt_markdown(concept, chunks, manifest.sourceDocId)
-        md_file = concepts_dir / f"{cid}.md"
+        md_file = concepts_dir / f"{namespaced_id}.md"
+        md_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Check if file exists (for reporting)
+        if md_file.exists():
+            updated_files.append(str(md_file))
+        else:
+            generated_files.append(str(md_file))
+            
         with open(md_file, "w", encoding="utf-8") as f:
             f.write(markdown)
-        generated_files.append(str(md_file))
+    
+    # Save chunks metadata (for reference)
+    chunks_meta_file = output_dir / "chunks-metadata.json"
+    chunks_metadata = {}
+    
+    if merge and chunks_meta_file.exists():
+        with open(chunks_meta_file, "r", encoding="utf-8") as f:
+            chunks_metadata = json.load(f)
+    
+    # Add this PDF's chunks metadata
+    chunks_metadata[manifest.sourceDocId] = {
+        "totalChunks": len(chunks),
+        "sourceFile": manifest.sourceDocId,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    with open(chunks_meta_file, "w", encoding="utf-8") as f:
+        json.dump(chunks_metadata, f, indent=2)
     
     return {
         "concept_map": str(concept_map_file),
         "concepts_dir": str(concepts_dir),
         "generated_files": generated_files,
+        "updated_files": updated_files,
         "concept_count": len(manifest.concepts),
+        "total_concepts": final_concept_count,
+        "is_new_pdf": is_new_pdf,
+        "source_doc_id": manifest.sourceDocId,
     }

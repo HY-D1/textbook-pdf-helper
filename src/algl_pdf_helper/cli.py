@@ -91,18 +91,31 @@ def check_quality(
 def export(
     input_dir: Path = typer.Argument(..., exists=True, help="Input directory with processed PDF (contains concept-manifest.json)"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+    merge: bool = typer.Option(True, help="Merge with existing exports instead of overwriting"),
 ):
     """Export processed PDF to SQL-Adapt compatible format."""
     typer.echo(f"Exporting from: {input_dir}")
     typer.echo(f"Output to: {output_dir}")
+    typer.echo(f"Mode: {'Merge' if merge else 'Overwrite'}")
     typer.echo("")
     
     try:
-        result = export_to_sqladapt(input_dir, output_dir)
+        result = export_to_sqladapt(input_dir, output_dir, merge=merge)
         
-        typer.echo("✅ Export complete!")
+        if result.get('is_new_pdf'):
+            typer.echo(f"✅ Added new PDF: {result['source_doc_id']}")
+        else:
+            typer.echo(f"✅ Updated PDF: {result['source_doc_id']}")
+        
+        typer.echo(f"   Concepts from this PDF: {result['concept_count']}")
+        typer.echo(f"   Total concepts in export: {result['total_concepts']}")
+        
+        if result.get('generated_files'):
+            typer.echo(f"   New files: {len(result['generated_files'])}")
+        if result.get('updated_files'):
+            typer.echo(f"   Updated files: {len(result['updated_files'])}")
+            
         typer.echo(f"   Concept map: {result['concept_map']}")
-        typer.echo(f"   Concepts: {result['concept_count']}")
         typer.echo(f"   Concepts directory: {result['concepts_dir']}")
         
     except FileNotFoundError as e:

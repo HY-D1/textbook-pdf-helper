@@ -583,11 +583,36 @@ open_output_folder() {
 export_to_sqladapt_menu() {
     print_header "Export to SQL-Adapt"
     
+    # Show current export status
+    local sqladapt_dir="/Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static"
+    local current_concepts=0
+    local current_pdfs=0
+    
+    if [[ -f "$sqladapt_dir/concept-map.json" ]]; then
+        current_concepts=$(grep -o '"sourceDocId"' "$sqladapt_dir/concept-map.json" 2>/dev/null | wc -l)
+        current_pdfs=$(grep -o '"sourceDocIds"' "$sqladapt_dir/concept-map.json" 2>/dev/null | wc -l)
+        print_info "Current export status:"
+        echo "  📚 PDFs exported: $current_pdfs"
+        echo "  📖 Total concepts: $current_concepts"
+        echo ""
+    fi
+    
     # Find processed PDFs with concept manifests
     local folders=()
+    local exported_pdfs=()
+    
     while IFS= read -r -d '' folder; do
         if [[ -f "$folder/concept-manifest.json" ]]; then
+            local folder_name
+            folder_name=$(basename "$folder")
             folders+=("$folder")
+            
+            # Check if already exported
+            if [[ -d "$sqladapt_dir/concepts/$folder_name" ]]; then
+                exported_pdfs+=("✓")
+            else
+                exported_pdfs+=(" ")
+            fi
         fi
     done < <(find "$READ_USE_DIR" -maxdepth 1 -type d ! -path "$READ_USE_DIR" -print0 2>/dev/null | sort -z)
     
@@ -598,26 +623,62 @@ export_to_sqladapt_menu() {
     fi
     
     echo "Available for export:"
+    echo "  (✓ = already exported, will be updated)"
+    echo ""
+    
     local i=1
-    for folder in "${folders[@]}"; do
+    for idx in "${!folders[@]}"; do
+        local folder="${folders[$idx]}"
         local folder_name
         folder_name=$(basename "$folder")
         local concept_count
         concept_count=$(find "$folder/concepts" -name "*.md" 2>/dev/null | wc -l)
-        printf "  %2d) %-30s (%s concepts)\n" "$i" "$folder_name" "$concept_count"
+        local status="${exported_pdfs[$idx]}"
+        printf "  %2d) [%s] %-30s (%s concepts)\n" "$i" "$status" "$folder_name" "$concept_count"
         ((i++))
     done
     
     echo ""
+    echo "  A) Export/Update All"
     echo "  0) Go Back"
     echo ""
     
-    read -p "Select PDF to export [0-${#folders[@]}]: " choice
+    read -p "Select PDF to export [0-${#folders[@]}/A]: " choice
     
     if [[ "$choice" == "0" ]]; then
         return 0
     fi
     
+    # Export all
+    if [[ "$choice" =~ ^[Aa]$ ]]; then
+        for folder in "${folders[@]}"; do
+            local folder_name
+            folder_name=$(basename "$folder")
+            
+            print_header "Exporting: $folder_name"
+            
+            local venv_python_export="$SCRIPT_DIR/.venv/bin/python"
+            if "$venv_python_export" -m algl_pdf_helper export "$folder"; then
+                print_success "Exported: $folder_name"
+            else
+                print_error "Failed: $folder_name"
+            fi
+            echo ""
+        done
+        
+        print_header "Export Summary"
+        print_info "Output: $sqladapt_dir"
+        if [[ -f "$sqladapt_dir/concept-map.json" ]]; then
+            local total_concepts
+            total_concepts=$(grep -c '"title"' "$sqladapt_dir/concept-map.json" 2>/dev/null || echo "0")
+            print_info "Total concepts exported: $total_concepts"
+        fi
+        echo ""
+        read -p "Press Enter to continue..."
+        return 0
+    fi
+    
+    # Export single
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#folders[@]} )); then
         local folder="${folders[$((choice-1))]}"
         local folder_name
@@ -628,7 +689,14 @@ export_to_sqladapt_menu() {
         local venv_python_export="$SCRIPT_DIR/.venv/bin/python"
         if "$venv_python_export" -m algl_pdf_helper export "$folder"; then
             print_success "Export complete!"
-            print_info "Output: /Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static/"
+            print_info "Output: $sqladapt_dir"
+            
+            # Show current status
+            if [[ -f "$sqladapt_dir/concept-map.json" ]]; then
+                local total_concepts
+                total_concepts=$(grep -c '"title"' "$sqladapt_dir/concept-map.json" 2>/dev/null || echo "0")
+                print_info "Total concepts in export: $total_concepts"
+            fi
         else
             print_error "Export failed!"
         fi
