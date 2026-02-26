@@ -97,6 +97,32 @@ check_ocr_deps() {
     fi
 }
 
+# Function to check educational pipeline dependencies
+check_edu_deps() {
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    local missing_deps=()
+    
+    if ! "$venv_python" -c "import marker" 2>/dev/null; then
+        missing_deps+=("marker-pdf")
+    fi
+    
+    if ! "$venv_python" -c "import openai" 2>/dev/null; then
+        missing_deps+=("openai")
+    fi
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo ""
+        print_info "Optional: For educational note generation (option 7), install:"
+        echo "  pip install ${missing_deps[*]}"
+        echo ""
+        echo "Educational notes feature:"
+        echo "  ✅ High-quality PDF extraction (Marker)"
+        echo "  ✅ LLM-enhanced learning content (OpenAI)"
+        echo "  ✅ Student-ready study materials"
+        echo ""
+    fi
+}
+
 # Function to get PDF name without extension
 get_pdf_basename() {
     local pdf_path="$1"
@@ -157,9 +183,10 @@ show_main_menu() {
     echo "3) 🔄 Re-process Existing PDF"
     echo "4) 📋 List Raw PDFs"
     echo "5) 📂 Open Output Folder"
-    echo "6) 📤 Export to SQL-Adapt"
-    echo "7) ⚙️  Advanced Options"
-    echo "8) 🚪 Exit"
+    echo "6) 📤 Export to SQL-Adapt (Standard)"
+    echo "7) 🎓 Export to SQL-Adapt (Educational)"
+    echo "8) ⚙️  Advanced Options"
+    echo "9) 🚪 Exit"
     echo ""
 }
 
@@ -706,6 +733,126 @@ export_to_sqladapt_menu() {
     fi
 }
 
+# Function to export educational notes to SQL-Adapt
+export_educational_to_sqladapt_menu() {
+    print_header "Export Educational Notes to SQL-Adapt"
+    
+    local sqladapt_dir="/Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static"
+    
+    # Check dependencies
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    local has_marker=false
+    local has_openai=false
+    
+    if "$venv_python" -c "import marker" 2>/dev/null; then
+        has_marker=true
+    fi
+    
+    if "$venv_python" -c "import openai" 2>/dev/null; then
+        has_openai=true
+    fi
+    
+    print_info "Pipeline Status:"
+    if [[ "$has_marker" == "true" ]]; then
+        echo "  ✅ Marker (PDF extraction): Available"
+    else
+        echo "  ⚠️  Marker (PDF extraction): Not installed"
+        echo "      Install: pip install marker-pdf"
+    fi
+    
+    if [[ "$has_openai" == "true" ]]; then
+        echo "  ✅ OpenAI (LLM enhancement): Available"
+        if [[ -n "$OPENAI_API_KEY" ]]; then
+            echo "  ✅ OPENAI_API_KEY: Set"
+        else
+            echo "  ⚠️  OPENAI_API_KEY: Not set"
+            echo "      Set with: export OPENAI_API_KEY='your-key'"
+        fi
+    else
+        echo "  ⚠️  OpenAI (LLM enhancement): Not installed"
+        echo "      Install: pip install openai"
+    fi
+    
+    echo ""
+    
+    # List raw PDFs (can process directly without pre-processing)
+    local pdfs=()
+    while IFS= read -r -d '' pdf; do
+        pdfs+=("$pdf")
+    done < <(find "$RAW_PDF_DIR" -maxdepth 1 -type f \( -iname "*.pdf" \) -print0 2>/dev/null | sort -z)
+    
+    if [[ ${#pdfs[@]} -eq 0 ]]; then
+        print_error "No PDFs found in $RAW_PDF_DIR"
+        return 1
+    fi
+    
+    print_info "Available PDFs for educational export:"
+    echo ""
+    
+    local i=1
+    for pdf in "${pdfs[@]}"; do
+        local basename
+        basename=$(get_pdf_basename "$pdf")
+        local size
+        size=$(du -h "$pdf" 2>/dev/null | cut -f1 || echo "?")
+        printf "  %2d) %-40s (%s)\n" "$i" "$basename" "$size"
+        ((i++))
+    done
+    
+    echo ""
+    echo "  0) Go Back"
+    echo ""
+    
+    read -p "Select PDF to export [0-${#pdfs[@]}]: " choice
+    
+    if [[ "$choice" == "0" ]]; then
+        return 0
+    fi
+    
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pdfs[@]} )); then
+        local pdf_path="${pdfs[$((choice-1))]}"
+        local pdf_name
+        pdf_name=$(get_pdf_basename "$pdf_path")
+        
+        print_header "Exporting Educational Notes: $pdf_name"
+        
+        print_info "This will:"
+        echo "  1. Extract PDF content using Marker (high quality)"
+        echo "  2. Generate educational notes with LLM"
+        echo "  3. Export to SQL-Adapt format"
+        echo ""
+        
+        # Check if we should use LLM
+        local use_llm_flag=""
+        if [[ -z "$OPENAI_API_KEY" ]]; then
+            print_warning "OPENAI_API_KEY not set. Will generate basic notes without LLM."
+            echo ""
+        fi
+        
+        print_info "Command: algl-pdf export-edu $pdf_path --output-dir $sqladapt_dir"
+        echo ""
+        
+        if "$venv_python" -m algl_pdf_helper export-edu "$pdf_path" --output-dir "$sqladapt_dir"; then
+            print_success "Educational export complete!"
+            print_info "Output: $sqladapt_dir"
+            
+            # Show generated files
+            if [[ -d "$sqladapt_dir" ]]; then
+                echo ""
+                echo "Generated files:"
+                ls -1 "$sqladapt_dir" | grep "$(echo "$pdf_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')" | head -10 | sed 's/^/  - /'
+            fi
+        else
+            print_error "Export failed!"
+            print_info "Check that dependencies are installed:"
+            echo "  pip install marker-pdf openai"
+        fi
+        
+        echo ""
+        read -p "Press Enter to continue..."
+    fi
+}
+
 # Main loop
 main() {
     # Check/create directories
@@ -717,6 +864,9 @@ main() {
     # Check OCR dependencies
     check_ocr_deps
     
+    # Check educational pipeline dependencies (optional)
+    check_edu_deps
+    
     # Welcome message
     print_header "ALGL PDF Helper v$(python3 -c "from algl_pdf_helper import __version__; print(__version__)" 2>/dev/null || echo "0.1.0")"
     print_info "Raw PDF folder:  $RAW_PDF_DIR"
@@ -724,7 +874,7 @@ main() {
     
     while true; do
         show_main_menu
-        read -p "Select option [1-8]: " choice
+        read -p "Select option [1-9]: " choice
         
         case $choice in
             1)
@@ -757,9 +907,12 @@ main() {
                 export_to_sqladapt_menu
                 ;;
             7)
-                show_options_menu
+                export_educational_to_sqladapt_menu
                 ;;
             8)
+                show_options_menu
+                ;;
+            9)
                 print_info "Goodbye!"
                 exit 0
                 ;;
