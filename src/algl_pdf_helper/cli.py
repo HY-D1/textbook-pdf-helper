@@ -12,6 +12,10 @@ from .models import IndexBuildOptions
 
 app = typer.Typer(add_completion=False)
 
+# Import educational CLI
+from .cli_educational import app as educational_app
+app.add_typer(educational_app, name="edu", help="Educational note generation")
+
 
 @app.command()
 def index(
@@ -128,6 +132,63 @@ def export(
     except Exception as e:
         typer.echo(f"❌ Export failed: {e}")
         raise typer.Exit(1)
+
+
+@app.command()
+def export_edu(
+    pdf_path: Path = typer.Argument(..., exists=True, help="Path to PDF file"),
+    output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+):
+    """Export PDF to SQL-Adapt with educational note generation."""
+    from .educational_pipeline import EducationalNoteGenerator
+    
+    typer.echo(f"📚 Generating educational notes from: {pdf_path}")
+    typer.echo(f"📁 Exporting to: {output_dir}")
+    typer.echo()
+    
+    # Initialize generator
+    generator = EducationalNoteGenerator()
+    
+    typer.echo(f"Configuration:")
+    typer.echo(f"  Marker extraction: {generator.use_marker}")
+    typer.echo(f"  LLM enhancement: {generator.llm_available}")
+    typer.echo()
+    
+    # Create temp output for educational pipeline
+    temp_output = output_dir / "_temp_edu"
+    temp_output.mkdir(parents=True, exist_ok=True)
+    
+    # Generate educational notes
+    result = generator.process_pdf(pdf_path, output_dir=temp_output)
+    
+    if not result["success"]:
+        typer.echo("❌ Educational note generation failed:")
+        for error in result["errors"]:
+            typer.echo(f"   - {error}")
+        raise typer.Exit(1)
+    
+    typer.echo("✅ Educational notes generated!")
+    typer.echo()
+    typer.echo("📊 Stats:")
+    for key, value in result["stats"].items():
+        typer.echo(f"   {key}: {value}")
+    
+    # Now export to SQL-Adapt format
+    sqladapt_file = temp_output / f"{result['stats'].get('doc_id', 'unknown')}-sqladapt.json"
+    
+    if sqladapt_file.exists():
+        typer.echo()
+        typer.echo(f"✅ SQL-Adapt format ready: {sqladapt_file}")
+        
+        # Copy to final destination
+        import shutil
+        final_file = output_dir / sqladapt_file.name
+        shutil.copy2(sqladapt_file, final_file)
+        typer.echo(f"   Copied to: {final_file}")
+    
+    if result["outputs"].get("study_guide"):
+        typer.echo()
+        typer.echo(f"📖 Study guide: {result['outputs']['study_guide']}")
 
 
 @app.command()
