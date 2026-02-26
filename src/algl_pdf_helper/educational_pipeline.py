@@ -116,6 +116,7 @@ class EducationalNoteGenerator:
         pdf_path: Path,
         concepts_config: dict[str, Any] | None = None,
         output_dir: Path | None = None,
+        progress_callback: callable | None = None,
     ) -> dict[str, Any]:
         """
         Process PDF into educational notes and SQL-Adapt format.
@@ -124,6 +125,7 @@ class EducationalNoteGenerator:
             pdf_path: Path to PDF file
             concepts_config: Optional concept mapping configuration
             output_dir: Where to save outputs
+            progress_callback: Optional callback function(step, current, total, message)
             
         Returns:
             Dictionary with paths to generated files and metadata
@@ -138,29 +140,46 @@ class EducationalNoteGenerator:
             "stats": {},
         }
         
+        def _progress(step: str, current: int, total: int, message: str = ""):
+            if progress_callback:
+                progress_callback(step, current, total, message)
+        
         try:
             # Step 1: Extract PDF content
-            extraction_result = self._extract_pdf_content(pdf_path)
+            _progress("extract", 0, 100, "Starting PDF extraction...")
+            extraction_result = self._extract_pdf_content(pdf_path, _progress)
             if not extraction_result["success"]:
                 result["errors"].extend(extraction_result["errors"])
                 return result
+            _progress("extract", 100, 100, f"Extracted {extraction_result.get('page_count', 0)} pages")
             
             # Step 2: Structure content by sections/concepts
+            _progress("structure", 0, 100, "Structuring content...")
             structured_content = self._structure_content(
                 extraction_result["content"],
                 concepts_config,
             )
+            num_concepts = len(structured_content.get("concepts", {}))
+            _progress("structure", 100, 100, f"Found {num_concepts} concepts")
             
             # Step 3: Generate educational notes
-            educational_notes = self._generate_educational_notes(structured_content)
+            _progress("enhance", 0, 100, f"Generating educational notes for {num_concepts} concepts...")
+            educational_notes = self._generate_educational_notes(
+                structured_content, 
+                progress_callback=_progress
+            )
+            _progress("enhance", 100, 100, "Educational notes complete")
             
             # Step 4: Create SQL-Adapt compatible output
+            _progress("format", 50, 100, "Creating SQL-Adapt format...")
             sqladapt_output = self._create_sqladapt_format(
                 educational_notes,
                 pdf_path,
             )
+            _progress("format", 100, 100, "SQL-Adapt format ready")
             
             # Step 5: Save outputs
+            _progress("save", 0, 100, "Saving output files...")
             if output_dir:
                 output_paths = self._save_outputs(
                     output_dir,
@@ -169,6 +188,7 @@ class EducationalNoteGenerator:
                     sqladapt_output,
                 )
                 result["outputs"] = output_paths
+            _progress("save", 100, 100, "All files saved")
             
             result["success"] = True
             result["stats"] = {
@@ -186,7 +206,11 @@ class EducationalNoteGenerator:
         
         return result
     
-    def _extract_pdf_content(self, pdf_path: Path) -> dict[str, Any]:
+    def _extract_pdf_content(
+        self, 
+        pdf_path: Path,
+        progress_callback: callable | None = None,
+    ) -> dict[str, Any]:
         """Extract content from PDF using best available method."""
         result = {
             "success": False,
@@ -195,14 +219,24 @@ class EducationalNoteGenerator:
             "method": "none",
         }
         
+        def _update_progress(percent: int, message: str = ""):
+            if progress_callback:
+                progress_callback("extract", percent, 100, message)
+        
         # Try Marker first (best quality)
         if self.use_marker:
             try:
+                _update_progress(10, "Loading Marker models...")
                 converter = PdfConverter(artifact_dict=create_model_dict())
+                
+                _update_progress(30, "Extracting text and layout...")
                 rendered = converter(str(pdf_path))
+                
+                _update_progress(70, "Processing extracted content...")
                 markdown, _, images = text_from_rendered(rendered)
                 
                 # Parse into pages
+                _update_progress(85, "Parsing pages...")
                 pages = self._parse_markdown_pages(markdown, rendered)
                 
                 result["content"] = {
@@ -410,11 +444,28 @@ class EducationalNoteGenerator:
         
         return structured
     
-    def _generate_educational_notes(self, structured_content: dict) -> dict[str, Any]:
+    def _generate_educational_notes(
+        self, 
+        structured_content: dict,
+        progress_callback: callable | None = None,
+    ) -> dict[str, Any]:
         """Generate educational notes from structured content."""
         notes = {"concepts": {}}
         
-        for concept_id, concept_data in structured_content.get("concepts", {}).items():
+        concepts = list(structured_content.get("concepts", {}).items())
+        total = len(concepts)
+        
+        for idx, (concept_id, concept_data) in enumerate(concepts, 1):
+            # Update progress
+            percent = int((idx / total) * 100) if total > 0 else 100
+            if progress_callback:
+                progress_callback(
+                    "enhance", 
+                    percent, 
+                    100, 
+                    f"Processing concept {idx}/{total}: {concept_data.get('title', concept_id)}"
+                )
+            
             # Get raw text for this concept
             raw_text = concept_data.get("sections", {}).get("content", {}).get("text", "")
             if not raw_text:

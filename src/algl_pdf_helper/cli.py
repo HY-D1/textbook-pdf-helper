@@ -138,16 +138,19 @@ def export(
 def export_edu(
     pdf_path: Path = typer.Argument(..., exists=True, help="Path to PDF file"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+    llm_provider: str = typer.Option("kimi", help="LLM provider: openai or kimi"),
 ):
     """Export PDF to SQL-Adapt with educational note generation."""
     from .educational_pipeline import EducationalNoteGenerator
+    from tqdm import tqdm
     
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
     typer.echo(f"📁 Exporting to: {output_dir}")
+    typer.echo(f"🤖 LLM Provider: {llm_provider}")
     typer.echo()
     
     # Initialize generator
-    generator = EducationalNoteGenerator()
+    generator = EducationalNoteGenerator(llm_provider=llm_provider)
     
     typer.echo(f"Configuration:")
     typer.echo(f"  Marker extraction: {generator.use_marker}")
@@ -158,8 +161,57 @@ def export_edu(
     temp_output = output_dir / "_temp_edu"
     temp_output.mkdir(parents=True, exist_ok=True)
     
-    # Generate educational notes
-    result = generator.process_pdf(pdf_path, output_dir=temp_output)
+    # Create progress callback
+    current_bar = None
+    current_step = None
+    
+    def progress_callback(step: str, current: int, total: int, message: str = ""):
+        nonlocal current_bar, current_step
+        
+        # Close previous bar if step changed
+        if step != current_step and current_bar is not None:
+            current_bar.close()
+            current_bar = None
+        
+        # Create new bar for new step
+        if current_bar is None or step != current_step:
+            current_step = step
+            step_names = {
+                "extract": "📄 PDF Extraction",
+                "structure": "🔍 Content Analysis", 
+                "enhance": "🎓 Generating Educational Notes",
+                "format": "📋 Formatting Output",
+                "save": "💾 Saving Files",
+            }
+            current_bar = tqdm(
+                total=total,
+                desc=step_names.get(step, step),
+                bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}",
+                ncols=80,
+            )
+        
+        # Update progress
+        current_bar.n = current
+        if message:
+            current_bar.set_postfix_str(message[:50])
+        current_bar.refresh()
+        
+        # Close if complete
+        if current >= total:
+            current_bar.close()
+            current_bar = None
+    
+    # Generate educational notes with progress
+    try:
+        result = generator.process_pdf(
+            pdf_path, 
+            output_dir=temp_output,
+            progress_callback=progress_callback,
+        )
+    finally:
+        if current_bar is not None:
+            current_bar.close()
+        typer.echo()
     
     if not result["success"]:
         typer.echo("❌ Educational note generation failed:")
@@ -172,6 +224,14 @@ def export_edu(
     typer.echo("📊 Stats:")
     for key, value in result["stats"].items():
         typer.echo(f"   {key}: {value}")
+    
+    # Show cost if LLM was used
+    if result["stats"].get("llm_enhanced"):
+        num_concepts = result["stats"].get("concepts_generated", 0)
+        if num_concepts > 0:
+            cost = generator.estimate_cost(num_concepts)
+            typer.echo()
+            typer.echo(f"💰 Actual Cost: ¥{cost['cost_rmb']['total']} RMB")
     
     # Now export to SQL-Adapt format
     sqladapt_file = temp_output / f"{result['stats'].get('doc_id', 'unknown')}-sqladapt.json"

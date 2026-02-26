@@ -9,10 +9,56 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from tqdm import tqdm
 
 from .educational_pipeline import EducationalNoteGenerator, LLMProvider
 
 app = typer.Typer(help="Generate educational notes from PDFs")
+
+
+def create_progress_bar():
+    """Create a progress bar callback."""
+    current_bar = None
+    current_step = None
+    
+    def progress_callback(step: str, current: int, total: int, message: str = ""):
+        nonlocal current_bar, current_step
+        
+        # Close previous bar if step changed
+        if step != current_step and current_bar is not None:
+            current_bar.close()
+            current_bar = None
+        
+        # Create new bar for new step
+        if current_bar is None or step != current_step:
+            current_step = step
+            step_names = {
+                "extract": "📄 PDF Extraction",
+                "structure": "🔍 Content Analysis", 
+                "enhance": "🎓 Generating Educational Notes",
+                "format": "📋 Formatting Output",
+                "save": "💾 Saving Files",
+            }
+            bar_format = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}"
+            current_bar = tqdm(
+                total=total,
+                desc=step_names.get(step, step),
+                bar_format=bar_format,
+                ncols=80,
+            )
+        
+        # Update progress
+        current_bar.n = current
+        if message:
+            current_bar.set_postfix_str(message[:50])
+        current_bar.refresh()
+        
+        # Close if complete
+        if current >= total:
+            current_bar.close()
+            current_bar = None
+    
+    return progress_callback
 
 
 @app.command()
@@ -93,8 +139,19 @@ def generate(
         typer.echo("   Will generate basic notes without LLM enhancement")
         typer.echo()
     
-    # Process PDF
-    result = generator.process_pdf(pdf_path, output_dir=output_dir)
+    # Create progress callback
+    progress_cb = create_progress_bar()
+    
+    # Process PDF with progress
+    try:
+        result = generator.process_pdf(
+            pdf_path, 
+            output_dir=output_dir,
+            progress_callback=progress_cb,
+        )
+    finally:
+        # Ensure progress bar is closed
+        typer.echo()
     
     # Display results
     if result["success"]:
