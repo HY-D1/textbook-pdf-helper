@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 
@@ -138,7 +139,21 @@ def export(
 def export_edu(
     pdf_path: Path = typer.Argument(..., exists=True, help="Path to PDF file"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
-    llm_provider: str = typer.Option("kimi", help="LLM provider: openai or kimi"),
+    llm_provider: str = typer.Option("kimi", help="LLM provider: openai, kimi, or ollama"),
+    use_marker: bool = typer.Option(
+        True, 
+        "--use-marker/--no-use-marker",
+        help="Use Marker for PDF extraction (disable for large PDFs to save memory)",
+    ),
+    ollama_model: str = typer.Option(
+        "llama3.2:3b",
+        help="Ollama model to use (for local LLM): llama3.2:3b, qwen2.5:7b, phi4, mistral:7b, gemma2:9b",
+    ),
+    skip_llm: bool = typer.Option(
+        False,
+        "--skip-llm",
+        help="Skip LLM enhancement (faster but lower quality output)",
+    ),
 ):
     """Export PDF to SQL-Adapt with educational note generation."""
     from .educational_pipeline import EducationalNoteGenerator
@@ -147,19 +162,46 @@ def export_edu(
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
     typer.echo(f"📁 Exporting to: {output_dir}")
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
+    if llm_provider.lower() == "ollama":
+        typer.echo(f"🦙 Ollama Model: {ollama_model}")
     typer.echo()
     
+    # Check file size for info
+    pdf_size_mb = pdf_path.stat().st_size / (1024 * 1024)
+    
+    if pdf_size_mb > 50:
+        typer.echo(f"ℹ️  Large PDF detected ({pdf_size_mb:.1f}MB)")
+        typer.echo(f"   Auto-split will be used if needed.")
+        typer.echo()
+    
     # Initialize generator
-    generator = EducationalNoteGenerator(llm_provider=llm_provider)
+    generator = EducationalNoteGenerator(
+        llm_provider=llm_provider, 
+        use_marker=use_marker,
+        ollama_model=ollama_model,
+        skip_llm=skip_llm,
+    )
     
     typer.echo(f"Configuration:")
     typer.echo(f"  Marker extraction: {generator.use_marker}")
-    typer.echo(f"  LLM enhancement: {generator.llm_available}")
-    typer.echo()
     
-    # Create temp output for educational pipeline
-    temp_output = output_dir / "_temp_edu"
-    temp_output.mkdir(parents=True, exist_ok=True)
+    if skip_llm:
+        typer.echo(f"  LLM enhancement: ⏭️  SKIPPED (fast mode)")
+        typer.echo(f"   ⚠️  Output will be basic text extraction only!")
+    else:
+        typer.echo(f"  LLM enhancement: {generator.llm_status_message}")
+        
+        if not generator.llm_available:
+            typer.echo()
+            typer.echo("❌ ERROR: No LLM configured!")
+            typer.echo("   For high-quality educational notes, you MUST configure an LLM:")
+            typer.echo("   - Kimi: export KIMI_API_KEY='your-key'")
+            typer.echo("   - OpenAI: export OPENAI_API_KEY='your-key'")
+            typer.echo("   - Ollama: ollama pull qwen2.5-coder:7b && ollama serve")
+            typer.echo()
+            typer.echo("   Or use --skip-llm for basic extraction (NOT recommended)")
+            raise typer.Exit(1)
+    typer.echo()
     
     # Create progress callback
     current_bar = None
@@ -205,7 +247,7 @@ def export_edu(
     try:
         result = generator.process_pdf(
             pdf_path, 
-            output_dir=temp_output,
+            output_dir=output_dir,
             progress_callback=progress_callback,
         )
     finally:
@@ -233,22 +275,33 @@ def export_edu(
             typer.echo()
             typer.echo(f"💰 Actual Cost: ¥{cost['cost_rmb']['total']} RMB")
     
-    # Now export to SQL-Adapt format
-    sqladapt_file = temp_output / f"{result['stats'].get('doc_id', 'unknown')}-sqladapt.json"
+    # Show generated files
+    typer.echo()
+    typer.echo("📁 Generated files:")
     
-    if sqladapt_file.exists():
-        typer.echo()
-        typer.echo(f"✅ SQL-Adapt format ready: {sqladapt_file}")
-        
-        # Copy to final destination
-        import shutil
-        final_file = output_dir / sqladapt_file.name
-        shutil.copy2(sqladapt_file, final_file)
-        typer.echo(f"   Copied to: {final_file}")
+    # Get doc_id from result
+    doc_id = result["stats"].get("doc_id", "unknown")
     
+    # Standard SQL-Adapt format outputs (REQUIRED)
+    if (output_dir / "concept-map.json").exists():
+        typer.echo(f"   📋 concept-map.json (main index)")
+    
+    # Check for concepts in textbook subdirectory
+    concepts_subdir = output_dir / "concepts" / doc_id
+    if concepts_subdir.exists():
+        concept_count = len(list(concepts_subdir.glob("*.md")))
+        typer.echo(f"   📚 concepts/{doc_id}/ ({concept_count} concept files)")
+        typer.echo(f"   📖 concepts/{doc_id}/README.md")
+    
+    # Diagnostic/Internal files
+    if (output_dir / "concept-manifest.json").exists():
+        typer.echo(f"   🔧 concept-manifest.json (internal)")
+    if result["outputs"].get("extraction"):
+        typer.echo(f"   🔍 {doc_id}-extraction.json (diagnostic)")
+    if result["outputs"].get("sqladapt"):
+        typer.echo(f"   📄 {doc_id}-sqladapt.json (diagnostic)")
     if result["outputs"].get("study_guide"):
-        typer.echo()
-        typer.echo(f"📖 Study guide: {result['outputs']['study_guide']}")
+        typer.echo(f"   📖 {doc_id}-study-guide.md (combined)")
 
 
 @app.command()

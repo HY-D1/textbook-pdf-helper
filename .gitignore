@@ -20,3 +20,13 @@ dist/
 *.egg-info/
 build/
 dist/
+.env
+*.key
+.env.local
+
+# Temporary files
+.process_pid
+*.log
+
+# Run scripts (temporary)
+run_*.sh

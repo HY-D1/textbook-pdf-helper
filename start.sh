@@ -837,6 +837,7 @@ export_educational_to_sqladapt_menu() {
         # Choose LLM provider
         local llm_provider="kimi"
         local llm_key_set=false
+        local ollama_model=""
         
         if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
             llm_key_set=true
@@ -846,38 +847,157 @@ export_educational_to_sqladapt_menu() {
             llm_provider="openai"
         fi
         
-        # If both keys available, let user choose
-        if [[ -n "$KIMI_API_KEY" ]] && [[ -n "$OPENAI_API_KEY" ]]; then
-            echo ""
-            echo "Select LLM Provider:"
-            echo "  1) Kimi (Moonshot) - ¥0.066/concept ⭐ Cheapest"
-            echo "  2) OpenAI (GPT-4o-mini) - ¥1.100/concept"
-            echo ""
-            read -p "Select [1-2, default=1]: " provider_choice
-            
-            if [[ "$provider_choice" == "2" ]]; then
-                llm_provider="openai"
-            else
-                llm_provider="kimi"
+        # Check if Ollama is available
+        local ollama_available=false
+        if command -v ollama &> /dev/null; then
+            if curl -s http://localhost:11434/api/tags &> /dev/null; then
+                ollama_available=true
             fi
-            echo ""
         fi
         
-        # Show cost estimate
-        echo "💰 Estimated Cost:"
-        if [[ "$llm_provider" == "kimi" ]]; then
-            echo "  Kimi (moonshot-v1-8k): ~¥2.00 for 30 concepts"
-            echo "  (~¥0.07 per concept)"
-        else
-            echo "  OpenAI (gpt-4o-mini): ~¥33.00 for 30 concepts"
-            echo "  (~¥1.10 per concept)"
+        # Show provider selection menu
+        echo ""
+        echo "Select LLM Provider:"
+        if [[ "$ollama_available" == true ]]; then
+            echo "  0) Ollama (Local - Free, Private) 🦙"
+        fi
+        if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
+            echo "  1) Kimi (Moonshot) - ¥0.066/concept ⭐ Cheapest"
+        fi
+        if [[ -n "$OPENAI_API_KEY" ]]; then
+            echo "  2) OpenAI (GPT-4o-mini) - ¥1.100/concept"
+        fi
+        if [[ "$llm_key_set" == false && "$ollama_available" == false ]]; then
+            echo "  (No API keys set, please set KIMI_API_KEY or OPENAI_API_KEY)"
+            echo "  Or install Ollama for free local LLM: https://ollama.com"
         fi
         echo ""
         
+        local provider_choice
+        if [[ "$ollama_available" == true ]]; then
+            read -p "Select [0-2, default=0]: " provider_choice
+            if [[ -z "$provider_choice" ]]; then
+                provider_choice="0"
+            fi
+        else
+            read -p "Select [1-2, default=1]: " provider_choice
+            if [[ -z "$provider_choice" ]]; then
+                provider_choice="1"
+            fi
+        fi
+        
+        # Handle selection
+        if [[ "$provider_choice" == "0" && "$ollama_available" == true ]]; then
+            llm_provider="ollama"
+            echo ""
+            echo "🦙 Available Ollama Models:"
+            
+            # Get actual installed models
+            local model_list=()
+            local model_idx=1
+            while IFS= read -r model_name; do
+                if [[ -n "$model_name" ]]; then
+                    # Get model size
+                    local model_size=$(curl -s http://localhost:11434/api/tags | \
+                        python3 -c "import sys, json; data=json.load(sys.stdin); \
+                        m=[x for x in data.get('models',[]) if x.get('name')=='$model_name']; \
+                        print(f'{m[0].get(\"size\",0)/(1024**3):.1f}GB' if m else 'unknown')" 2>/dev/null)
+                    
+                    # Mark recommendation
+                    local marker=""
+                    if [[ "$model_name" == *"qwen2.5-coder:7b"* ]]; then
+                        marker=" ⭐ RECOMMENDED"
+                    elif [[ "$model_name" == *"phi4"* ]] || [[ "$model_name" == *"qwen2.5"* ]]; then
+                        marker=" ✅ Good"
+                    fi
+                    
+                    echo "  $model_idx) $model_name (~$model_size)$marker"
+                    model_list+=("$model_name")
+                    ((model_idx++))
+                fi
+            done < <(curl -s http://localhost:11434/api/tags | \
+                python3 -c "import sys, json; [print(m.get('name','')) for m in json.load(sys.stdin).get('models',[])]" 2>/dev/null)
+            
+            echo ""
+            read -p "Select model [1-${#model_list[@]}, default=1]: " model_choice
+            
+            # Validate selection
+            if [[ "$model_choice" =~ ^[0-9]+$ ]] && (( model_choice >= 1 && model_choice <= ${#model_list[@]} )); then
+                ollama_model="${model_list[$((model_choice-1))]}"
+            else
+                # Default to coder model if available, otherwise first
+                ollama_model="${model_list[0]}"
+                for m in "${model_list[@]}"; do
+                    if [[ "$m" == *"coder"* ]] || [[ "$m" == *"7b"* ]]; then
+                        ollama_model="$m"
+                        break
+                    fi
+                done
+            fi
+            
+            echo ""
+            echo "✅ Selected: $ollama_model"
+            echo "💰 Cost: FREE (running locally)"
+            
+        elif [[ "$provider_choice" == "2" && -n "$OPENAI_API_KEY" ]]; then
+            llm_provider="openai"
+            echo ""
+            echo "💰 Estimated Cost:"
+            echo "  OpenAI (gpt-4o-mini): ~¥33.00 for 30 concepts"
+            echo "  (~¥1.10 per concept)"
+        else
+            # Default to kimi with model selection
+            llm_provider="kimi"
+            echo ""
+            echo "Select Kimi Model:"
+            echo "  1) moonshot-v1-8k - ¥0.012/1K tokens (Fast, Cheap)"
+            echo "  2) moonshot-v1-32k - ¥0.024/1K tokens (Medium context)"
+            echo "  3) moonshot-v1-128k - ¥0.12/1K tokens (Long context)"
+            echo "  4) kimi-k2-5 - ¥0.05/1K tokens ⭐ (Best quality for education)"
+            echo ""
+            read -p "Select model [1-4, default=1]: " kimi_model_choice
+            
+            case $kimi_model_choice in
+                2) export KIMI_MODEL="moonshot-v1-32k"
+                   echo "  Selected: moonshot-v1-32k"
+                   ;;
+                3) export KIMI_MODEL="moonshot-v1-128k"
+                   echo "  Selected: moonshot-v1-128k"
+                   ;;
+                4) export KIMI_MODEL="kimi-k2-5"
+                   echo "  Selected: kimi-k2-5 (Best for education!)"
+                   ;;
+                *) export KIMI_MODEL="moonshot-v1-8k"
+                   echo "  Selected: moonshot-v1-8k (Default)"
+                   ;;
+            esac
+            
+            echo ""
+            echo "💰 Estimated Cost:"
+            if [[ "$KIMI_MODEL" == "kimi-k2-5" ]]; then
+                echo "  Kimi K2.5: ~¥8-12 for 30 concepts (Best quality)"
+                echo "  (~¥0.30 per concept)"
+            else
+                echo "  Kimi ($KIMI_MODEL): ~¥2.00 for 30 concepts"
+                echo "  (~¥0.07 per concept)"
+            fi
+        fi
+        echo ""
+        
+        # Check PDF size for large file warning
+        local pdf_size_mb
+        pdf_size_mb=$(stat -f%z "$pdf_path" 2>/dev/null | awk '{print int($1/1024/1024)}' || echo "0")
+        
         print_info "This will:"
-        echo "  1. Extract PDF content using Marker (high quality)"
+        echo "  1. Auto-detect text type and extract (embedded text → fast, scanned → Marker)"
+        if [[ $pdf_size_mb -gt 50 ]]; then
+            echo "     (Large PDF: ${pdf_size_mb}MB, will use chunked processing if needed)"
+        fi
         echo "  2. Generate educational notes with $llm_provider LLM"
-        echo "  3. Export to SQL-Adapt format"
+        echo "  3. Export to SQL-Adapt standard format:"
+        echo "     - concept-map.json (main concept index)"
+        echo "     - concepts/$pdf_name/*.md (individual concept files)"
+        echo "     - concepts/$pdf_name/README.md (index)"
         echo ""
         
         read -p "Continue? [Y/n]: " confirm
@@ -886,21 +1006,59 @@ export_educational_to_sqladapt_menu() {
         fi
         echo ""
         
-        print_info "Command: algl-pdf export-edu $pdf_path --output-dir $sqladapt_dir"
+        # Build command
+        local cmd_args=("$pdf_path" --output-dir "$sqladapt_dir" --llm-provider "$llm_provider")
+        if [[ -n "$ollama_model" ]]; then
+            cmd_args+=(--ollama-model "$ollama_model")
+            print_info "Command: algl-pdf export-edu $pdf_path --output-dir $sqladapt_dir --llm-provider ollama --ollama-model $ollama_model"
+        else
+            print_info "Command: algl-pdf export-edu $pdf_path --output-dir $sqladapt_dir --llm-provider $llm_provider"
+        fi
         echo ""
         
         # Set provider environment variable for the command
         export EDUCATIONAL_LLM_PROVIDER="$llm_provider"
         
-        if "$venv_python" -m algl_pdf_helper export-edu "$pdf_path" --output-dir "$sqladapt_dir"; then
+        # Pass through LLM configuration
+        if [[ -n "$KIMI_API_KEY" ]]; then
+            export KIMI_API_KEY
+        fi
+        if [[ -n "$KIMI_MODEL" ]]; then
+            export KIMI_MODEL
+        fi
+        if [[ -n "$OPENAI_API_KEY" ]]; then
+            export OPENAI_API_KEY
+        fi
+        
+        # Set memory limits to prevent OOM kills on large PDFs
+        export SURYA_MAX_WORKERS="${SURYA_MAX_WORKERS:-1}"
+        export MARKER_MAX_WORKERS="${MARKER_MAX_WORKERS:-1}"
+        export TORCH_DEVICE="${TORCH_DEVICE:-cpu}"
+        
+        if "$venv_python" -m algl_pdf_helper export-edu "${cmd_args[@]}"; then
             print_success "Educational export complete!"
             print_info "Output: $sqladapt_dir"
+            
+            # Get doc_id from pdf_name
+            local doc_id
+            doc_id=$(echo "$pdf_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')
             
             # Show generated files
             if [[ -d "$sqladapt_dir" ]]; then
                 echo ""
-                echo "Generated files:"
-                ls -1 "$sqladapt_dir" | grep "$(echo "$pdf_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')" | head -10 | sed 's/^/  - /'
+                echo "SQL-Adapt Standard Format:"
+                if [[ -f "$sqladapt_dir/concept-map.json" ]]; then
+                    echo "  📋 concept-map.json (main index)"
+                fi
+                if [[ -d "$sqladapt_dir/concepts/$doc_id" ]]; then
+                    local concept_count
+                    concept_count=$(ls -1 "$sqladapt_dir/concepts/$doc_id"/*.md 2>/dev/null | wc -l)
+                    echo "  📚 concepts/$doc_id/ ($concept_count concept files)"
+                    echo "  📖 concepts/$doc_id/README.md"
+                fi
+                echo ""
+                echo "Additional files:"
+                ls -1 "$sqladapt_dir" | grep -E "^$doc_id" | head -5 | sed 's/^/  - /'
             fi
         else
             print_error "Export failed!"
@@ -908,7 +1066,7 @@ export_educational_to_sqladapt_menu() {
             echo "  pip install marker-pdf openai"
             echo ""
             print_info "For Kimi (cheapest):"
-            echo "  1. Get API key: https://platform.moonshot.cn/"
+            echo "  1. Get key: https://platform.moonshot.cn/"
             echo "  2. Set: export KIMI_API_KEY='sk-your-key'"
         fi
         
@@ -920,47 +1078,160 @@ export_educational_to_sqladapt_menu() {
     if [[ "$choice" =~ ^[Aa]$ ]]; then
         print_header "Batch Export All PDFs (Educational)"
         
+        # Check if Ollama is available
+        local ollama_available=false
+        if command -v ollama &> /dev/null; then
+            if curl -s http://localhost:11434/api/tags &> /dev/null; then
+                ollama_available=true
+            fi
+        fi
+        
         # Choose LLM provider
         local llm_provider="kimi"
+        local ollama_model=""
         
         if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
             llm_provider="kimi"
         elif [[ -n "$OPENAI_API_KEY" ]]; then
             llm_provider="openai"
+        elif [[ "$ollama_available" == true ]]; then
+            llm_provider="ollama"
         fi
         
-        # If both keys available, let user choose
-        if [[ -n "$KIMI_API_KEY" ]] && [[ -n "$OPENAI_API_KEY" ]]; then
-            echo ""
-            echo "Select LLM Provider:"
+        # Show provider selection menu
+        echo ""
+        echo "Select LLM Provider:"
+        if [[ "$ollama_available" == true ]]; then
+            echo "  0) Ollama (Local - Free, Private) 🦙"
+        fi
+        if [[ -n "$KIMI_API_KEY" ]] || [[ -n "$MOONSHOT_API_KEY" ]]; then
             echo "  1) Kimi (Moonshot) - ¥0.066/concept ⭐ Cheapest"
+        fi
+        if [[ -n "$OPENAI_API_KEY" ]]; then
             echo "  2) OpenAI (GPT-4o-mini) - ¥1.100/concept"
-            echo ""
-            read -p "Select [1-2, default=1]: " provider_choice
-            
-            if [[ "$provider_choice" == "2" ]]; then
-                llm_provider="openai"
-            else
-                llm_provider="kimi"
+        fi
+        echo ""
+        
+        local provider_choice
+        if [[ "$ollama_available" == true ]]; then
+            read -p "Select [0-2, default=0]: " provider_choice
+            if [[ -z "$provider_choice" ]]; then
+                provider_choice="0"
             fi
+        else
+            read -p "Select [1-2, default=1]: " provider_choice
+            if [[ -z "$provider_choice" ]]; then
+                provider_choice="1"
+            fi
+        fi
+        
+        # Handle selection
+        if [[ "$provider_choice" == "0" && "$ollama_available" == true ]]; then
+            llm_provider="ollama"
             echo ""
+            echo "🦙 Available Ollama Models:"
+            
+            # Get actual installed models
+            local model_list=()
+            local model_idx=1
+            while IFS= read -r model_name; do
+                if [[ -n "$model_name" ]]; then
+                    # Get model size
+                    local model_size=$(curl -s http://localhost:11434/api/tags | \
+                        python3 -c "import sys, json; data=json.load(sys.stdin); \
+                        m=[x for x in data.get('models',[]) if x.get('name')=='$model_name']; \
+                        print(f'{m[0].get(\"size\",0)/(1024**3):.1f}GB' if m else 'unknown')" 2>/dev/null)
+                    
+                    # Mark recommendation
+                    local marker=""
+                    if [[ "$model_name" == *"qwen2.5-coder:7b"* ]]; then
+                        marker=" ⭐ RECOMMENDED"
+                    elif [[ "$model_name" == *"phi4"* ]] || [[ "$model_name" == *"qwen2.5"* ]]; then
+                        marker=" ✅ Good"
+                    fi
+                    
+                    echo "  $model_idx) $model_name (~$model_size)$marker"
+                    model_list+=("$model_name")
+                    ((model_idx++))
+                fi
+            done < <(curl -s http://localhost:11434/api/tags | \
+                python3 -c "import sys, json; [print(m.get('name','')) for m in json.load(sys.stdin).get('models',[])]" 2>/dev/null)
+            
+            echo ""
+            read -p "Select model [1-${#model_list[@]}, default=1]: " model_choice
+            
+            # Validate selection
+            if [[ "$model_choice" =~ ^[0-9]+$ ]] && (( model_choice >= 1 && model_choice <= ${#model_list[@]} )); then
+                ollama_model="${model_list[$((model_choice-1))]}"
+            else
+                # Default to coder model if available, otherwise first
+                ollama_model="${model_list[0]}"
+                for m in "${model_list[@]}"; do
+                    if [[ "$m" == *"coder"* ]] || [[ "$m" == *"7b"* ]]; then
+                        ollama_model="$m"
+                        break
+                    fi
+                done
+            fi
+            
+            echo ""
+            echo "✅ Selected: $ollama_model"
+            echo "💰 Cost: FREE (running locally)"
+            
+        elif [[ "$provider_choice" == "2" && -n "$OPENAI_API_KEY" ]]; then
+            llm_provider="openai"
+            echo ""
+            echo "💰 Estimated Cost:"
+            echo "  OpenAI (gpt-4o-mini): ~¥33.00 for 30 concepts"
+            echo "  (~¥1.10 per concept)"
+        else
+            # Default to kimi
+            llm_provider="kimi"
+            echo ""
+            echo "💰 Estimated Cost:"
+            echo "  Kimi (moonshot-v1-8k): ~¥2.00 for 30 concepts"
+            echo "  (~¥0.07 per concept)"
         fi
         
         # Estimate total cost
         local num_pdfs=${#pdfs[@]}
-        local est_cost_per_pdf="2.00"
-        if [[ "$llm_provider" == "openai" ]]; then
-            est_cost_per_pdf="33.00"
-        fi
         
         echo ""
+        # Check for large PDFs that may cause OOM
+        local large_pdfs=()
+        for pdf_path in "${pdfs[@]}"; do
+            local pdf_size_mb
+            pdf_size_mb=$(stat -f%z "$pdf_path" 2>/dev/null | awk '{print int($1/1024/1024)}' || echo "0")
+            if [[ $pdf_size_mb -gt 50 ]]; then
+                large_pdfs+=("$(basename "$pdf_path") (${pdf_size_mb}MB)")
+            fi
+        done
+        
         echo "📦 Batch Export Summary:"
         echo "  PDFs to process: $num_pdfs"
         echo "  LLM Provider: $llm_provider"
-        echo "  Estimated cost: ~¥$(echo "$est_cost_per_pdf * $num_pdfs" | bc) RMB"
+        if [[ "$llm_provider" != "ollama" ]]; then
+            local est_cost_per_pdf="2.00"
+            if [[ "$llm_provider" == "openai" ]]; then
+                est_cost_per_pdf="33.00"
+            fi
+            echo "  Estimated cost: ~¥$(echo "$est_cost_per_pdf * $num_pdfs" | bc) RMB"
+        else
+            echo "  Cost: FREE (local Ollama)"
+        fi
         echo "  Output: $sqladapt_dir"
-        echo ""
         
+        # Warn about large PDFs
+        if [[ ${#large_pdfs[@]} -gt 0 ]]; then
+            echo ""
+            echo "ℹ️  Large PDFs detected (will use Marker auto-split):"
+            for large_pdf in "${large_pdfs[@]}"; do
+                echo "     • $large_pdf"
+            done
+            echo "   (Large PDFs split into chunks for high-quality extraction)"
+        fi
+        
+        echo ""
         read -p "Continue with batch export? [Y/n]: " confirm
         if [[ "$confirm" =~ ^[Nn]$ ]]; then
             return 0
@@ -971,6 +1242,11 @@ export_educational_to_sqladapt_menu() {
         local success_count=0
         local fail_count=0
         
+        # Set memory limits to prevent OOM kills
+        export SURYA_MAX_WORKERS="${SURYA_MAX_WORKERS:-1}"
+        export MARKER_MAX_WORKERS="${MARKER_MAX_WORKERS:-1}"
+        export TORCH_DEVICE="${TORCH_DEVICE:-cpu}"
+        
         for pdf_path in "${pdfs[@]}"; do
             local pdf_name
             pdf_name=$(get_pdf_basename "$pdf_path")
@@ -979,7 +1255,13 @@ export_educational_to_sqladapt_menu() {
             
             export EDUCATIONAL_LLM_PROVIDER="$llm_provider"
             
-            if "$venv_python" -m algl_pdf_helper export-edu "$pdf_path" --output-dir "$sqladapt_dir"; then
+            # Build command args
+            local cmd_args=("$pdf_path" --output-dir "$sqladapt_dir" --llm-provider "$llm_provider")
+            if [[ -n "$ollama_model" ]]; then
+                cmd_args+=(--ollama-model "$ollama_model")
+            fi
+            
+            if "$venv_python" -m algl_pdf_helper export-edu "${cmd_args[@]}"; then
                 print_success "Exported: $pdf_name"
                 ((success_count++))
             else

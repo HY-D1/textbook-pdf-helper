@@ -1,384 +1,907 @@
-# Concepts configuration for Murach's MySQL 3rd Edition
-# Based on actual page content analysis
+# Comprehensive SQL Concepts Configuration
+# Based on DBMS Ramakrishnan 3rd Edition & Murach's MySQL 3rd Edition
+# 
+# This maps actual educational concepts to their page ranges in the textbooks
+# to ensure high-quality content extraction
 
-concepts:
-  # Chapter 1: Introduction (Page 23)
-  relational-databases:
-    title: "Introduction to Relational Databases"
-    definition: "Understanding client/server systems, relational database model, tables, relationships, and SQL basics"
-    difficulty: beginner
-    estimatedReadTime: 45
-    sections:
-      definition: [23, 24, 25]
-      explanation: [26, 27, 28, 29, 30]
-      examples: [31, 32, 33, 34, 35]
-      commonMistakes: [36, 37]
-    relatedConcepts: [sql-intro, mysql-workbench]
-    tags: [database, relational, fundamentals]
+schema_version: "2.0"
+textbooks:
+  dbms-ramakrishnan-3rd-edition:
+    title: "Database Management Systems (Ramakrishnan & Gehrke, 3rd Edition)"
+    total_pages: 1089
+    
+    # Part I: Foundations
+    concepts:
+      # Chapter 1: Introduction to DBMS
+      relational-model-intro:
+        title: "Introduction to Relational Databases"
+        definition: "Overview of database systems, relational model basics, and data independence"
+        difficulty: beginner
+        estimatedReadTime: 10
+        pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        sections:
+          definition: [1, 2, 3, 4, 5]
+          examples: [6, 7, 8, 9, 10]
+          commonMistakes: [11, 12, 13]
+        related_concepts: [sql-intro, data-independence]
+        tags: [dbms, relational, fundamentals]
+      
+      data-independence:
+        title: "Data Independence"
+        definition: "Logical and physical data independence - how DBMS separates data from applications"
+        difficulty: beginner
+        pages: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        sections:
+          definition: [15, 16, 17]
+          examples: [18, 19, 20]
+          commonMistakes: [21, 22]
+        related_concepts: [relational-model-intro, three-schema-architecture]
+        tags: [dbms, architecture, fundamentals]
+      
+      # Chapter 2: ER Models
+      er-model:
+        title: "Entity-Relationship Model"
+        definition: "Modeling database structure using entities, relationships, and attributes"
+        difficulty: intermediate
+        pages: [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44]
+        sections:
+          definition: [25, 26, 27, 28, 29]
+          examples: [30, 31, 32, 33, 34, 35, 36]
+          commonMistakes: [37, 38, 39]
+        related_concepts: [er-diagrams, cardinality, weak-entities]
+        tags: [modeling, er, design]
+      
+      er-diagrams:
+        title: "ER Diagrams"
+        definition: "Visual representation of entity-relationship models"
+        difficulty: intermediate
+        pages: [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+        sections:
+          definition: [35, 36, 37, 38]
+          examples: [39, 40, 41, 42, 43, 44]
+          commonMistakes: [45, 46, 47]
+        related_concepts: [er-model, cardinality]
+        tags: [modeling, diagrams, design]
+      
+      cardinality:
+        title: "Cardinality Constraints"
+        definition: "Specifying how many instances of one entity relate to instances of another"
+        difficulty: intermediate
+        pages: [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60]
+        sections:
+          definition: [45, 46, 47, 48]
+          examples: [49, 50, 51, 52, 53, 54, 55]
+          commonMistakes: [56, 57, 58]
+        related_concepts: [er-diagrams, participation-constraints]
+        tags: [modeling, constraints, relationships]
+      
+      # Chapter 3: Relational Model
+      relational-algebra:
+        title: "Relational Algebra"
+        definition: "Formal language for manipulating relations using operations like selection, projection, and join"
+        difficulty: intermediate
+        pages: [75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
+        sections:
+          definition: [75, 76, 77, 78, 79, 80]
+          examples: [81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91]
+          commonMistakes: [92, 93, 94, 95, 96]
+        related_concepts: [selection-projection, joins, set-operations]
+        tags: [relational, algebra, theory]
+      
+      selection-projection:
+        title: "Selection and Projection"
+        definition: "Basic relational algebra operations for filtering rows and selecting columns"
+        difficulty: beginner
+        pages: [78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+        sections:
+          definition: [78, 79, 80, 81]
+          examples: [82, 83, 84, 85, 86, 87]
+          commonMistakes: [88, 89]
+        related_concepts: [relational-algebra, joins]
+        tags: [relational, operations, basics]
+      
+      set-operations:
+        title: "Set Operations in SQL"
+        definition: "UNION, INTERSECT, and EXCEPT operations in relational algebra and SQL"
+        difficulty: intermediate
+        pages: [93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106]
+        sections:
+          definition: [93, 94, 95, 96]
+          examples: [97, 98, 99, 100, 101]
+          commonMistakes: [102, 103, 104]
+        related_concepts: [relational-algebra, subqueries]
+        tags: [sql, set-operations, relational]
+      
+      # Chapter 4: SQL
+      sql-intro:
+        title: "Introduction to SQL"
+        definition: "Structured Query Language for managing relational databases"
+        difficulty: beginner
+        pages: [115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130]
+        sections:
+          definition: [115, 116, 117, 118, 119]
+          examples: [120, 121, 122, 123, 124, 125, 126]
+          commonMistakes: [127, 128, 129]
+        related_concepts: [select-basic, where-clause, joins]
+        tags: [sql, fundamentals, introduction]
+      
+      select-basic:
+        title: "SELECT Statement Basics"
+        definition: "Retrieving data from one or more tables using the SELECT statement"
+        difficulty: beginner
+        pages: [115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126]
+        sections:
+          definition: [115, 116, 117, 118]
+          examples: [119, 120, 121, 122, 123, 124, 125]
+          commonMistakes: [126, 127]
+        related_concepts: [sql-intro, where-clause, order-by]
+        tags: [sql, select, fundamentals]
+      
+      where-clause:
+        title: "WHERE Clause and Filtering"
+        definition: "Filtering rows using conditions with WHERE, comparison operators, and logical operators"
+        difficulty: beginner
+        pages: [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135]
+        sections:
+          definition: [120, 121, 122, 123]
+          examples: [124, 125, 126, 127, 128, 129, 130, 131]
+          commonMistakes: [132, 133, 134]
+        related_concepts: [select-basic, logical-operators, pattern-matching]
+        tags: [sql, where, filtering]
+      
+      joins:
+        title: "SQL Joins"
+        definition: "Combining data from multiple tables using INNER JOIN, LEFT JOIN, RIGHT JOIN, and FULL JOIN"
+        difficulty: intermediate
+        pages: [140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160]
+        sections:
+          definition: [140, 141, 142, 143, 144]
+          examples: [145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155]
+          commonMistakes: [156, 157, 158, 159, 160]
+        related_concepts: [inner-join, outer-join, cross-join, join-conditions]
+        tags: [sql, joins, relationships]
+      
+      inner-join:
+        title: "INNER JOIN"
+        definition: "Retrieving matching rows from two or more tables"
+        difficulty: beginner
+        pages: [140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150]
+        sections:
+          definition: [140, 141, 142, 143]
+          examples: [144, 145, 146, 147, 148, 149]
+          commonMistakes: [150]
+        related_concepts: [joins, outer-join, join-conditions]
+        tags: [sql, joins, inner]
+      
+      outer-join:
+        title: "OUTER JOIN"
+        definition: "Retrieving all rows from one table and matching rows from another (LEFT, RIGHT, FULL)"
+        difficulty: intermediate
+        pages: [148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160]
+        sections:
+          definition: [148, 149, 150, 151, 152]
+          examples: [153, 154, 155, 156, 157, 158]
+          commonMistakes: [159, 160]
+        related_concepts: [joins, inner-join, null-handling]
+        tags: [sql, joins, outer]
+      
+      aggregate-functions:
+        title: "Aggregate Functions"
+        definition: "Computing summary values with COUNT, SUM, AVG, MAX, MIN"
+        difficulty: beginner
+        pages: [165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182]
+        sections:
+          definition: [165, 166, 167, 168, 169]
+          examples: [170, 171, 172, 173, 174, 175, 176, 177]
+          commonMistakes: [178, 179, 180, 181]
+        related_concepts: [group-by, having, null-handling]
+        tags: [sql, aggregates, functions]
+      
+      group-by:
+        title: "GROUP BY Clause"
+        definition: "Grouping rows with common values for aggregate calculations"
+        difficulty: intermediate
+        pages: [175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191]
+        sections:
+          definition: [175, 176, 177, 178]
+          examples: [179, 180, 181, 182, 183, 184, 185, 186]
+          commonMistakes: [187, 188, 189]
+        related_concepts: [aggregate-functions, having, rollup]
+        tags: [sql, group-by, aggregation]
+      
+      having:
+        title: "HAVING Clause"
+        definition: "Filtering groups based on aggregate conditions"
+        difficulty: intermediate
+        pages: [183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196]
+        sections:
+          definition: [183, 184, 185]
+          examples: [186, 187, 188, 189, 190, 191]
+          commonMistakes: [192, 193, 194, 195]
+        related_concepts: [group-by, aggregate-functions, where-clause]
+        tags: [sql, having, filtering]
+      
+      subqueries:
+        title: "Subqueries"
+        definition: "Nested queries - using SELECT statements within other SQL statements"
+        difficulty: intermediate
+        pages: [195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212]
+        sections:
+          definition: [195, 196, 197, 198]
+          examples: [199, 200, 201, 202, 203, 204, 205, 206, 207]
+          commonMistakes: [208, 209, 210, 211]
+        related_concepts: [correlated-subquery, exists, in-operator]
+        tags: [sql, subqueries, nested]
+      
+      correlated-subquery:
+        title: "Correlated Subqueries"
+        definition: "Subqueries that reference columns from the outer query"
+        difficulty: advanced
+        pages: [205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220]
+        sections:
+          definition: [205, 206, 207, 208]
+          examples: [209, 210, 211, 212, 213, 214, 215]
+          commonMistakes: [216, 217, 218, 219]
+        related_concepts: [subqueries, exists, not-exists]
+        tags: [sql, subqueries, correlated, advanced]
+      
+      # Chapter 5: DDL
+      create-table:
+        title: "CREATE TABLE"
+        definition: "Creating database tables with column definitions and constraints"
+        difficulty: beginner
+        pages: [225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240]
+        sections:
+          definition: [225, 226, 227, 228]
+          examples: [229, 230, 231, 232, 233, 234, 235]
+          commonMistakes: [236, 237, 238]
+        related_concepts: [data-types, constraints, alter-table]
+        tags: [sql, ddl, create-table]
+      
+      data-types:
+        title: "SQL Data Types"
+        definition: "Integer, decimal, character, date/time, and blob data types in SQL"
+        difficulty: beginner
+        pages: [228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243]
+        sections:
+          definition: [228, 229, 230, 231]
+          examples: [232, 233, 234, 235, 236, 237, 238]
+          commonMistakes: [239, 240, 241]
+        related_concepts: [create-table, constraints]
+        tags: [sql, data-types, ddl]
+      
+      constraints:
+        title: "Integrity Constraints"
+        definition: "PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, and NOT NULL constraints"
+        difficulty: intermediate
+        pages: [235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253]
+        sections:
+          definition: [235, 236, 237, 238, 239]
+          examples: [240, 241, 242, 243, 244, 245, 246, 247, 248]
+          commonMistakes: [249, 250, 251, 252]
+        related_concepts: [primary-key, foreign-key, referential-integrity]
+        tags: [sql, constraints, integrity]
+      
+      primary-key:
+        title: "Primary Key Constraint"
+        definition: "Uniquely identifying each row in a table"
+        difficulty: beginner
+        pages: [235, 236, 237, 238, 239, 240, 241, 242, 243]
+        sections:
+          definition: [235, 236, 237]
+          examples: [238, 239, 240, 241, 242]
+          commonMistakes: [243]
+        related_concepts: [constraints, foreign-key, unique]
+        tags: [sql, primary-key, constraints]
+      
+      foreign-key:
+        title: "Foreign Key Constraint"
+        definition: "Maintaining referential integrity between related tables"
+        difficulty: intermediate
+        pages: [240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]
+        sections:
+          definition: [240, 241, 242, 243, 244]
+          examples: [245, 246, 247, 248, 249, 250]
+          commonMistakes: [251, 252, 253, 254]
+        related_concepts: [constraints, primary-key, referential-integrity]
+        tags: [sql, foreign-key, referential-integrity]
+      
+      # Chapter 6: DML
+      insert:
+        title: "INSERT Statement"
+        definition: "Adding new rows to database tables"
+        difficulty: beginner
+        pages: [260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272]
+        sections:
+          definition: [260, 261, 262, 263]
+          examples: [264, 265, 266, 267, 268, 269]
+          commonMistakes: [270, 271, 272]
+        related_concepts: [update, delete, select-into]
+        tags: [sql, dml, insert]
+      
+      update:
+        title: "UPDATE Statement"
+        definition: "Modifying existing data in tables"
+        difficulty: beginner
+        pages: [268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281]
+        sections:
+          definition: [268, 269, 270]
+          examples: [271, 272, 273, 274, 275, 276, 277]
+          commonMistakes: [278, 279, 280]
+        related_concepts: [insert, delete, where-clause]
+        tags: [sql, dml, update]
+      
+      delete:
+        title: "DELETE Statement"
+        definition: "Removing rows from database tables"
+        difficulty: beginner
+        pages: [275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286]
+        sections:
+          definition: [275, 276, 277]
+          examples: [278, 279, 280, 281, 282, 283]
+          commonMistakes: [284, 285]
+        related_concepts: [truncate, update, insert]
+        tags: [sql, dml, delete]
+      
+      # Chapter 7: Views
+      views:
+        title: "SQL Views"
+        definition: "Virtual tables based on the result of a query - stored SELECT statements"
+        difficulty: intermediate
+        pages: [295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312]
+        sections:
+          definition: [295, 296, 297, 298, 299]
+          examples: [300, 301, 302, 303, 304, 305, 306, 307]
+          commonMistakes: [308, 309, 310, 311]
+        related_concepts: [create-view, updatable-views, materialized-views]
+        tags: [sql, views, virtualization]
+      
+      # Chapter 8: Normalization
+      normalization:
+        title: "Database Normalization"
+        definition: "Organizing data to reduce redundancy and improve integrity (1NF, 2NF, 3NF, BCNF)"
+        difficulty: intermediate
+        pages: [325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350]
+        sections:
+          definition: [325, 326, 327, 328, 329, 330]
+          examples: [331, 332, 333, 334, 335, 336, 337, 338, 339, 340]
+          commonMistakes: [341, 342, 343, 344, 345]
+        related_concepts: [1nf, 2nf, 3nf, bcnf, functional-dependencies]
+        tags: [design, normalization, theory]
+      
+      1nf:
+        title: "First Normal Form (1NF)"
+        definition: "Eliminating repeating groups and ensuring atomic values"
+        difficulty: beginner
+        pages: [328, 329, 330, 331, 332, 333, 334, 335, 336, 337]
+        sections:
+          definition: [328, 329, 330]
+          examples: [331, 332, 333, 334, 335]
+          commonMistakes: [336, 337]
+        related_concepts: [normalization, 2nf, atomicity]
+        tags: [design, normalization, 1nf]
+      
+      2nf:
+        title: "Second Normal Form (2NF)"
+        definition: "Eliminating partial dependencies on composite keys"
+        difficulty: intermediate
+        pages: [335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346]
+        sections:
+          definition: [335, 336, 337, 338]
+          examples: [339, 340, 341, 342, 343, 344]
+          commonMistakes: [345, 346]
+        related_concepts: [normalization, 1nf, 3nf, partial-dependency]
+        tags: [design, normalization, 2nf]
+      
+      3nf:
+        title: "Third Normal Form (3NF)"
+        definition: "Eliminating transitive dependencies"
+        difficulty: intermediate
+        pages: [342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353]
+        sections:
+          definition: [342, 343, 344, 345]
+          examples: [346, 347, 348, 349, 350, 351]
+          commonMistakes: [352, 353]
+        related_concepts: [normalization, 2nf, bcnf, transitive-dependency]
+        tags: [design, normalization, 3nf]
+      
+      # Chapter 9: Transactions
+      transactions:
+        title: "Database Transactions"
+        definition: "Atomic units of work that maintain database consistency (ACID properties)"
+        difficulty: intermediate
+        pages: [355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376]
+        sections:
+          definition: [355, 356, 357, 358, 359, 360]
+          examples: [361, 362, 363, 364, 365, 366, 367, 368, 369]
+          commonMistakes: [370, 371, 372, 373, 374]
+        related_concepts: [acid, commit, rollback, isolation-levels]
+        tags: [transactions, acid, concurrency]
+      
+      acid:
+        title: "ACID Properties"
+        definition: "Atomicity, Consistency, Isolation, Durability - guarantees for transaction processing"
+        difficulty: intermediate
+        pages: [355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366]
+        sections:
+          definition: [355, 356, 357, 358]
+          examples: [359, 360, 361, 362, 363, 364, 365]
+          commonMistakes: [366]
+        related_concepts: [transactions, consistency, isolation]
+        tags: [transactions, acid, properties]
+      
+      isolation-levels:
+        title: "Transaction Isolation Levels"
+        definition: "READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE"
+        difficulty: advanced
+        pages: [365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380]
+        sections:
+          definition: [365, 366, 367, 368, 369]
+          examples: [370, 371, 372, 373, 374, 375, 376]
+          commonMistakes: [377, 378, 379]
+        related_concepts: [transactions, dirty-read, phantom-read, locking]
+        tags: [transactions, isolation, concurrency, advanced]
+      
+      # Chapter 10: Indexes
+      indexes:
+        title: "Database Indexes"
+        definition: "Data structures that improve the speed of data retrieval operations"
+        difficulty: intermediate
+        pages: [385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400]
+        sections:
+          definition: [385, 386, 387, 388]
+          examples: [389, 390, 391, 392, 393, 394, 395, 396]
+          commonMistakes: [397, 398, 399]
+        related_concepts: [b-tree, clustered-index, query-optimization]
+        tags: [performance, indexes, optimization]
+      
+      # Chapter 11: Security
+      authorization:
+        title: "SQL Authorization"
+        definition: "GRANT and REVOKE statements for controlling access to database objects"
+        difficulty: intermediate
+        pages: [405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419, 420]
+        sections:
+          definition: [405, 406, 407, 408, 409]
+          examples: [410, 411, 412, 413, 414, 415, 416]
+          commonMistakes: [417, 418, 419]
+        related_concepts: [grant, revoke, privileges, roles]
+        tags: [security, authorization, access-control]
 
-  sql-intro:
-    title: "Introduction to SQL"
-    definition: "Overview of SQL statements: DML (SELECT, INSERT, UPDATE, DELETE) and DDL (CREATE, ALTER, DROP)"
-    difficulty: beginner
-    estimatedReadTime: 30
-    sections:
-      definition: [38, 39, 40, 41, 42]
-      syntax: [43, 44, 45]
-      examples: [46, 47, 48, 49, 50, 51]
-    relatedConcepts: [relational-databases, select-basics]
-    tags: [sql, introduction, dml, ddl]
+  murachs-mysql-3rd-edition:
+    title: "Murach's MySQL (3rd Edition)"
+    total_pages: 621
+    
+    concepts:
+      # Section 1: Introduction
+      mysql-intro:
+        title: "Introduction to MySQL"
+        definition: "Overview of MySQL database management system and relational databases"
+        difficulty: beginner
+        pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        sections:
+          definition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+          examples: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+          commonMistakes: [21, 22, 23, 24, 25]
+        related_concepts: [relational-databases, client-server, mysql-workbench]
+        tags: [mysql, fundamentals, introduction]
+      
+      relational-databases-murach:
+        title: "Relational Databases"
+        definition: "Tables, rows, columns, keys, and relationships in relational databases"
+        difficulty: beginner
+        pages: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+        sections:
+          definition: [21, 22, 23, 24, 25, 26, 27]
+          examples: [28, 29, 30, 31, 32, 33, 34, 35]
+          commonMistakes: [36, 37, 38, 39]
+        related_concepts: [primary-key-murach, foreign-key-murach, one-to-many]
+        tags: [mysql, relational, design]
+      
+      # Chapter 3: SELECT from single table
+      select-statement-murach:
+        title: "SELECT Statement"
+        definition: "Retrieving data from a single table with column selection and aliases"
+        difficulty: beginner
+        pages: [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
+        sections:
+          definition: [73, 74, 75, 76, 77, 78]
+          examples: [79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
+          commonMistakes: [91, 92, 93, 94, 95]
+        related_concepts: [where-clause-murach, order-by-murach, column-aliases]
+        tags: [mysql, select, fundamentals]
+      
+      where-clause-murach:
+        title: "WHERE Clause"
+        definition: "Filtering rows with comparison operators, AND, OR, NOT, IN, BETWEEN, LIKE"
+        difficulty: beginner
+        pages: [85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110]
+        sections:
+          definition: [85, 86, 87, 88, 89, 90, 91]
+          examples: [92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102]
+          commonMistakes: [103, 104, 105, 106, 107]
+        related_concepts: [select-statement-murach, logical-operators-murach, pattern-matching]
+        tags: [mysql, where, filtering]
+      
+      order-by-murach:
+        title: "ORDER BY Clause"
+        definition: "Sorting query results by one or more columns, ascending and descending"
+        difficulty: beginner
+        pages: [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116]
+        sections:
+          definition: [101, 102, 103]
+          examples: [104, 105, 106, 107, 108, 109, 110, 111, 112]
+          commonMistakes: [113, 114, 115]
+        related_concepts: [select-statement-murach, limit-clause]
+        tags: [mysql, order-by, sorting]
+      
+      # Chapter 4: SELECT from multiple tables
+      joins-murach:
+        title: "Joining Tables"
+        definition: "Inner joins, outer joins, and cross joins in MySQL"
+        difficulty: intermediate
+        pages: [117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142]
+        sections:
+          definition: [117, 118, 119, 120, 121, 122]
+          examples: [123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134]
+          commonMistakes: [135, 136, 137, 138, 139]
+        related_concepts: [inner-join-murach, outer-join-murach, self-join]
+        tags: [mysql, joins, relationships]
+      
+      inner-join-murach:
+        title: "Inner Join"
+        definition: "Matching rows from two or more tables"
+        difficulty: beginner
+        pages: [117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128]
+        sections:
+          definition: [117, 118, 119, 120]
+          examples: [121, 122, 123, 124, 125, 126, 127]
+          commonMistakes: [128]
+        related_concepts: [joins-murach, outer-join-murach]
+        tags: [mysql, joins, inner]
+      
+      outer-join-murach:
+        title: "Outer Join"
+        definition: "Left, right, and full outer joins in MySQL"
+        difficulty: intermediate
+        pages: [129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144]
+        sections:
+          definition: [129, 130, 131, 132, 133]
+          examples: [134, 135, 136, 137, 138, 139, 140, 141]
+          commonMistakes: [142, 143, 144]
+        related_concepts: [joins-murach, inner-join-murach]
+        tags: [mysql, joins, outer]
+      
+      # Chapter 5: DML
+      insert-murach:
+        title: "INSERT Statement"
+        definition: "Adding rows to tables with INSERT INTO and INSERT SELECT"
+        difficulty: beginner
+        pages: [149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168]
+        sections:
+          definition: [149, 150, 151, 152]
+          examples: [153, 154, 155, 156, 157, 158, 159, 160, 161, 162]
+          commonMistakes: [163, 164, 165, 166]
+        related_concepts: [update-murach, delete-murach]
+        tags: [mysql, dml, insert]
+      
+      update-murach:
+        title: "UPDATE Statement"
+        definition: "Modifying existing data with UPDATE and UPDATE JOIN"
+        difficulty: beginner
+        pages: [165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180]
+        sections:
+          definition: [165, 166, 167, 168]
+          examples: [169, 170, 171, 172, 173, 174, 175, 176]
+          commonMistakes: [177, 178, 179]
+        related_concepts: [insert-murach, delete-murach, where-clause-murach]
+        tags: [mysql, dml, update]
+      
+      delete-murach:
+        title: "DELETE Statement"
+        definition: "Removing rows with DELETE and DELETE JOIN"
+        difficulty: beginner
+        pages: [177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188]
+        sections:
+          definition: [177, 178, 179]
+          examples: [180, 181, 182, 183, 184, 185]
+          commonMistakes: [186, 187]
+        related_concepts: [truncate-murach, update-murach]
+        tags: [mysql, dml, delete]
+      
+      # Chapter 6: Data types
+      data-types-murach:
+        title: "MySQL Data Types"
+        definition: "Numeric, string, date/time, and large object data types"
+        difficulty: beginner
+        pages: [193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212]
+        sections:
+          definition: [193, 194, 195, 196, 197]
+          examples: [198, 199, 200, 201, 202, 203, 204, 205, 206]
+          commonMistakes: [207, 208, 209]
+        related_concepts: [create-table-murach, numeric-types, string-types]
+        tags: [mysql, data-types, ddl]
+      
+      # Chapter 7: Functions
+      mysql-functions:
+        title: "MySQL Functions"
+        definition: "String, numeric, date/time, and conversion functions"
+        difficulty: intermediate
+        pages: [217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240]
+        sections:
+          definition: [217, 218, 219, 220, 221]
+          examples: [222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232]
+          commonMistakes: [233, 234, 235, 236]
+        related_concepts: [string-functions, date-functions, aggregate-functions-murach]
+        tags: [mysql, functions, utilities]
+      
+      string-functions:
+        title: "String Functions"
+        definition: "CONCAT, SUBSTRING, LENGTH, TRIM, UPPER, LOWER, and more"
+        difficulty: beginner
+        pages: [218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228]
+        sections:
+          definition: [218, 219, 220]
+          examples: [221, 222, 223, 224, 225, 226, 227]
+          commonMistakes: [228]
+        related_concepts: [mysql-functions, pattern-matching]
+        tags: [mysql, functions, string]
+      
+      date-functions:
+        title: "Date and Time Functions"
+        definition: "NOW, CURDATE, DATE_FORMAT, DATE_ADD, DATEDIFF, and more"
+        difficulty: intermediate
+        pages: [228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238]
+        sections:
+          definition: [228, 229, 230]
+          examples: [231, 232, 233, 234, 235, 236, 237]
+          commonMistakes: [238]
+        related_concepts: [mysql-functions, date-formats]
+        tags: [mysql, functions, date-time]
+      
+      # Chapter 8: Aggregates
+      aggregate-functions-murach:
+        title: "Aggregate Functions"
+        definition: "COUNT, SUM, AVG, MAX, MIN, and DISTINCT aggregates"
+        difficulty: beginner
+        pages: [241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260]
+        sections:
+          definition: [241, 242, 243, 244]
+          examples: [245, 246, 247, 248, 249, 250, 251, 252, 253]
+          commonMistakes: [254, 255, 256, 257]
+        related_concepts: [group-by-murach, having-murach]
+        tags: [mysql, aggregates, functions]
+      
+      group-by-murach:
+        title: "GROUP BY Clause"
+        definition: "Grouping data for aggregate calculations"
+        difficulty: intermediate
+        pages: [253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268]
+        sections:
+          definition: [253, 254, 255, 256]
+          examples: [257, 258, 259, 260, 261, 262, 263, 264]
+          commonMistakes: [265, 266, 267]
+        related_concepts: [aggregate-functions-murach, having-murach, rollup-murach]
+        tags: [mysql, group-by, aggregation]
+      
+      having-murach:
+        title: "HAVING Clause"
+        definition: "Filtering groups based on aggregate values"
+        difficulty: intermediate
+        pages: [265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276]
+        sections:
+          definition: [265, 266, 267, 268]
+          examples: [269, 270, 271, 272, 273, 274]
+          commonMistakes: [275, 276]
+        related_concepts: [group-by-murach, aggregate-functions-murach]
+        tags: [mysql, having, filtering]
+      
+      # Chapter 9: Subqueries
+      subqueries-murach:
+        title: "Subqueries"
+        definition: "Single-row, multi-row, and correlated subqueries in MySQL"
+        difficulty: intermediate
+        pages: [277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296]
+        sections:
+          definition: [277, 278, 279, 280, 281]
+          examples: [282, 283, 284, 285, 286, 287, 288, 289, 290]
+          commonMistakes: [291, 292, 293, 294]
+        related_concepts: [correlated-subquery-murach, exists-murach, in-operator-murach]
+        tags: [mysql, subqueries, advanced]
+      
+      correlated-subquery-murach:
+        title: "Correlated Subqueries"
+        definition: "Subqueries that reference outer query columns"
+        difficulty: advanced
+        pages: [289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300]
+        sections:
+          definition: [289, 290, 291, 292]
+          examples: [293, 294, 295, 296, 297, 298]
+          commonMistakes: [299, 300]
+        related_concepts: [subqueries-murach, exists-murach]
+        tags: [mysql, subqueries, correlated, advanced]
+      
+      # Chapter 10: Complex queries
+      unions:
+        title: "UNION and UNION ALL"
+        definition: "Combining results from multiple SELECT statements"
+        difficulty: intermediate
+        pages: [301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312]
+        sections:
+          definition: [301, 302, 303]
+          examples: [304, 305, 306, 307, 308, 309]
+          commonMistakes: [310, 311]
+        related_concepts: [select-statement-murach, order-by-murach]
+        tags: [mysql, union, set-operations]
+      
+      # Chapter 11: DDL
+      create-table-murach:
+        title: "Creating Tables"
+        definition: "CREATE TABLE with columns, data types, and constraints"
+        difficulty: beginner
+        pages: [317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334]
+        sections:
+          definition: [317, 318, 319, 320]
+          examples: [321, 322, 323, 324, 325, 326, 327, 328]
+          commonMistakes: [329, 330, 331]
+        related_concepts: [alter-table-murach, constraints-murach, indexes-murach]
+        tags: [mysql, ddl, create-table]
+      
+      alter-table-murach:
+        title: "Altering Tables"
+        definition: "ALTER TABLE to add, modify, and drop columns"
+        difficulty: intermediate
+        pages: [333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344]
+        sections:
+          definition: [333, 334, 335]
+          examples: [336, 337, 338, 339, 340, 341]
+          commonMistakes: [342, 343]
+        related_concepts: [create-table-murach, drop-table]
+        tags: [mysql, ddl, alter-table]
+      
+      constraints-murach:
+        title: "Constraints"
+        definition: "PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, and NOT NULL"
+        difficulty: intermediate
+        pages: [345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358]
+        sections:
+          definition: [345, 346, 347, 348]
+          examples: [349, 350, 351, 352, 353, 354, 355]
+          commonMistakes: [356, 357]
+        related_concepts: [create-table-murach, foreign-key-murach, indexes-murach]
+        tags: [mysql, constraints, integrity]
+      
+      # Chapter 12: Views
+      views-murach:
+        title: "Views"
+        definition: "Creating and using views in MySQL"
+        difficulty: intermediate
+        pages: [381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396]
+        sections:
+          definition: [381, 382, 383, 384]
+          examples: [385, 386, 387, 388, 389, 390, 391]
+          commonMistakes: [392, 393, 394]
+        related_concepts: [create-view, updatable-views]
+        tags: [mysql, views, virtualization]
+      
+      # Chapter 13: Scripts
+      stored-procedures:
+        title: "Stored Procedures"
+        definition: "Creating and using stored procedures in MySQL"
+        difficulty: intermediate
+        pages: [401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418]
+        sections:
+          definition: [401, 402, 403, 404]
+          examples: [405, 406, 407, 408, 409, 410, 411, 412]
+          commonMistakes: [413, 414, 415]
+        related_concepts: [functions-murach, parameters, control-flow]
+        tags: [mysql, procedures, programming]
+      
+      functions-murach:
+        title: "Stored Functions"
+        definition: "Creating user-defined functions in MySQL"
+        difficulty: intermediate
+        pages: [417, 418, 419, 420, 421, 422, 423, 424, 425, 426, 427, 428]
+        sections:
+          definition: [417, 418, 419, 420]
+          examples: [421, 422, 423, 424, 425, 426]
+          commonMistakes: [427, 428]
+        related_concepts: [stored-procedures, return-values]
+        tags: [mysql, functions, programming]
+      
+      triggers:
+        title: "Triggers"
+        definition: "Automatic actions on INSERT, UPDATE, DELETE"
+        difficulty: advanced
+        pages: [429, 430, 431, 432, 433, 434, 435, 436, 437, 438, 439, 440]
+        sections:
+          definition: [429, 430, 431, 432]
+          examples: [433, 434, 435, 436, 437, 438]
+          commonMistakes: [439, 440]
+        related_concepts: [stored-procedures, events]
+        tags: [mysql, triggers, automation, advanced]
+      
+      # Chapter 14: Events
+      events:
+        title: "Events"
+        definition: "Scheduled tasks in MySQL"
+        difficulty: advanced
+        pages: [441, 442, 443, 444, 445, 446, 447, 448, 449, 450, 451, 452]
+        sections:
+          definition: [441, 442, 443, 444]
+          examples: [445, 446, 447, 448, 449, 450]
+          commonMistakes: [451, 452]
+        related_concepts: [triggers, scheduling]
+        tags: [mysql, events, scheduling, advanced]
+      
+      # Chapter 15: Transactions
+      transactions-murach:
+        title: "Transactions"
+        definition: "ACID properties, COMMIT, ROLLBACK, and savepoints"
+        difficulty: intermediate
+        pages: [457, 458, 459, 460, 461, 462, 463, 464, 465, 466, 467, 468, 469, 470, 471, 472]
+        sections:
+          definition: [457, 458, 459, 460]
+          examples: [461, 462, 463, 464, 465, 466, 467]
+          commonMistakes: [468, 469, 470]
+        related_concepts: [acid-murach, isolation-levels-murach, locking]
+        tags: [mysql, transactions, acid]
+      
+      isolation-levels-murach:
+        title: "Transaction Isolation Levels"
+        definition: "READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE"
+        difficulty: advanced
+        pages: [471, 472, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482]
+        sections:
+          definition: [471, 472, 473, 474]
+          examples: [475, 476, 477, 478, 479, 480]
+          commonMistakes: [481, 482]
+        related_concepts: [transactions-murach, locking]
+        tags: [mysql, transactions, isolation, advanced]
+      
+      # Chapter 16: Security
+      user-management:
+        title: "User Management"
+        definition: "Creating users, granting privileges, and roles"
+        difficulty: intermediate
+        pages: [487, 488, 489, 490, 491, 492, 493, 494, 495, 496, 497, 498, 499, 500, 501, 502]
+        sections:
+          definition: [487, 488, 489, 490]
+          examples: [491, 492, 493, 494, 495, 496, 497]
+          commonMistakes: [498, 499, 500]
+        related_concepts: [grant, revoke, privileges]
+        tags: [mysql, security, users]
+      
+      # Chapter 17: Backup/Restore
+      backup-restore:
+        title: "Backup and Restore"
+        definition: "Database backup strategies and restoration procedures"
+        difficulty: intermediate
+        pages: [505, 506, 507, 508, 509, 510, 511, 512, 513, 514, 515, 516, 517, 518, 519, 520]
+        sections:
+          definition: [505, 506, 507, 508]
+          examples: [509, 510, 511, 512, 513, 514, 515]
+          commonMistakes: [516, 517]
+        related_concepts: [mysqldump, replication, point-in-time-recovery]
+        tags: [mysql, backup, dba]
 
-  # Chapter 2: MySQL Workbench (Page 62)
-  mysql-workbench:
-    title: "Using MySQL Workbench"
-    definition: "How to use MySQL Workbench for database development and administration"
-    difficulty: beginner
-    estimatedReadTime: 35
-    sections:
-      definition: [62, 63, 64]
-      explanation: [65, 66, 67, 68, 69, 70]
-      examples: [71, 72, 73, 74, 75]
-      commonMistakes: [76, 77, 78]
-    relatedConcepts: [relational-databases]
-    tags: [mysql, workbench, tools]
-
-  # Chapter 3: SELECT Statement (Page 94)
-  select-basics:
-    title: "SELECT Statement Basics"
-    definition: "How to retrieve data from a single table using SELECT, column specifications, and aliases"
-    difficulty: beginner
-    estimatedReadTime: 40
-    sections:
-      definition: [94, 95, 96, 97]
-      syntax: [98, 99, 100, 101]
-      examples: [102, 103, 104, 105]
-    relatedConcepts: [where-clause, order-by]
-    tags: [sql, select, query, dql]
-
-  where-clause:
-    title: "The WHERE Clause"
-    definition: "How to filter rows using comparison operators, AND/OR, IN, BETWEEN, LIKE, and IS NULL"
-    difficulty: beginner
-    estimatedReadTime: 35
-    sections:
-      definition: [106, 107, 108, 109]
-      syntax: [110, 111, 112, 113]
-      examples: [114, 115, 116]
-      commonMistakes: [117, 118]
-    relatedConcepts: [select-basics, logical-operators]
-    tags: [sql, where, filtering, conditions]
-
-  logical-operators:
-    title: "Logical Operators"
-    definition: "Using AND, OR, NOT, IN, BETWEEN to combine filter conditions"
-    difficulty: beginner
-    estimatedReadTime: 25
-    sections:
-      definition: [119, 120]
-      examples: [121, 122, 123]
-    relatedConcepts: [where-clause]
-    tags: [sql, operators, logic]
-
-  order-by:
-    title: "The ORDER BY Clause"
-    definition: "Sorting result sets by one or more columns in ascending or descending order"
-    difficulty: beginner
-    estimatedReadTime: 20
-    sections:
-      definition: [124, 125]
-      syntax: [126, 127]
-      examples: [128, 129]
-    relatedConcepts: [select-basics]
-    tags: [sql, sorting, order-by]
-
-  # Chapter 4: Joins (around Page 130)
-  joins-intro:
-    title: "Introduction to Joins"
-    definition: "Combining data from multiple tables using INNER JOIN, OUTER JOIN, and cross joins"
-    difficulty: intermediate
-    estimatedReadTime: 45
-    sections:
-      definition: [130, 131, 132]
-      explanation: [133, 134, 135]
-      examples: [136, 137, 138, 139]
-      commonMistakes: [140, 141]
-    relatedConcepts: [inner-join, outer-join]
-    tags: [sql, joins, tables]
-
-  inner-join:
-    title: "Inner Joins"
-    definition: "Retrieving matching rows from two or more tables"
-    difficulty: intermediate
-    estimatedReadTime: 30
-    sections:
-      definition: [142, 143]
-      syntax: [144, 145]
-      examples: [146, 147]
-    relatedConcepts: [joins-intro, outer-join]
-    tags: [sql, joins, inner-join]
-
-  outer-join:
-    title: "Outer Joins"
-    definition: "Retrieving all rows from one table and matching rows from another (LEFT, RIGHT, FULL)"
-    difficulty: intermediate
-    estimatedReadTime: 30
-    sections:
-      definition: [148, 149]
-      syntax: [150, 151]
-      examples: [152, 153]
-      commonMistakes: [154, 155]
-    relatedConcepts: [joins-intro, inner-join]
-    tags: [sql, joins, outer-join, left-join]
-
-  # Chapter 5: DML - Insert, Update, Delete
-  insert-statement:
-    title: "The INSERT Statement"
-    definition: "Adding new rows to a table using INSERT INTO with VALUES or SELECT"
-    difficulty: beginner
-    estimatedReadTime: 25
-    sections:
-      definition: [156, 157]
-      syntax: [158, 159]
-      examples: [160, 161, 162]
-      commonMistakes: [163]
-    relatedConcepts: [update-statement, delete-statement]
-    tags: [sql, insert, dml]
-
-  update-statement:
-    title: "The UPDATE Statement"
-    definition: "Modifying existing rows in a table with UPDATE and SET clauses"
-    difficulty: beginner
-    estimatedReadTime: 25
-    sections:
-      definition: [164, 165]
-      syntax: [166, 167]
-      examples: [168, 169]
-      commonMistakes: [170]
-    relatedConcepts: [insert-statement, delete-statement]
-    tags: [sql, update, dml]
-
-  delete-statement:
-    title: "The DELETE Statement"
-    definition: "Removing rows from a table using DELETE with WHERE clause"
-    difficulty: beginner
-    estimatedReadTime: 20
-    sections:
-      definition: [171, 172]
-      syntax: [173]
-      examples: [174, 175]
-      commonMistakes: [176]
-    relatedConcepts: [insert-statement, update-statement]
-    tags: [sql, delete, dml]
-
-  # Chapter 6: Summary Queries (around Page 180)
-  aggregate-functions:
-    title: "Aggregate Functions"
-    definition: "Using COUNT, SUM, AVG, MAX, MIN to calculate summary values"
-    difficulty: intermediate
-    estimatedReadTime: 30
-    sections:
-      definition: [180, 181, 182]
-      syntax: [183, 184]
-      examples: [185, 186, 187]
-      commonMistakes: [188]
-    relatedConcepts: [group-by, having-clause]
-    tags: [sql, aggregation, functions]
-
-  group-by:
-    title: "The GROUP BY Clause"
-    definition: "Grouping rows for aggregate calculations"
-    difficulty: intermediate
-    estimatedReadTime: 25
-    sections:
-      definition: [189, 190]
-      syntax: [191, 192]
-      examples: [193, 194, 195]
-      commonMistakes: [196]
-    relatedConcepts: [aggregate-functions, having-clause]
-    tags: [sql, grouping, aggregation]
-
-  having-clause:
-    title: "The HAVING Clause"
-    definition: "Filtering grouped results based on aggregate conditions"
-    difficulty: intermediate
-    estimatedReadTime: 20
-    sections:
-      definition: [197, 198]
-      syntax: [199]
-      examples: [200, 201]
-    relatedConcepts: [aggregate-functions, group-by]
-    tags: [sql, having, filtering, aggregation]
-
-  # Chapter 7: Subqueries (around Page 220)
-  subqueries:
-    title: "Subqueries"
-    definition: "Using queries nested inside other queries for complex data retrieval"
-    difficulty: intermediate
-    estimatedReadTime: 40
-    sections:
-      definition: [220, 221, 222]
-      explanation: [223, 224, 225]
-      examples: [226, 227, 228, 229]
-      commonMistakes: [230, 231]
-    relatedConcepts: [correlated-subquery]
-    tags: [sql, subquery, nested-query]
-
-  correlated-subquery:
-    title: "Correlated Subqueries"
-    definition: "Subqueries that reference columns from the outer query"
-    difficulty: advanced
-    estimatedReadTime: 35
-    sections:
-      definition: [232, 233]
-      explanation: [234, 235]
-      examples: [236, 237, 238]
-    relatedConcepts: [subqueries]
-    tags: [sql, subquery, correlated]
-
-  # Chapter 8: Data Types (around Page 260)
-  data-types:
-    title: "MySQL Data Types"
-    definition: "Understanding numeric, string, date/time, and large object data types"
-    difficulty: beginner
-    estimatedReadTime: 35
-    sections:
-      definition: [260, 261, 262]
-      explanation: [263, 264, 265, 266]
-      examples: [267, 268]
-      commonMistakes: [269, 270]
-    relatedConcepts: [create-table]
-    tags: [mysql, data-types, schema]
-
-  # Chapter 9: Functions (around Page 290)
-  mysql-functions:
-    title: "MySQL Functions"
-    definition: "String, numeric, date/time, and conversion functions"
-    difficulty: intermediate
-    estimatedReadTime: 40
-    sections:
-      definition: [290, 291, 292]
-      syntax: [293, 294]
-      examples: [295, 296, 297, 298]
-    relatedConcepts: [data-types]
-    tags: [mysql, functions]
-
-  # Chapter 10: Database Design (around Page 320)
-  database-design:
-    title: "Database Design"
-    definition: "How to design databases using ERDs and normalization"
-    difficulty: intermediate
-    estimatedReadTime: 50
-    sections:
-      definition: [320, 321, 322]
-      explanation: [323, 324, 325, 326]
-      examples: [327, 328, 329]
-      commonMistakes: [330, 331]
-    relatedConcepts: [normalization, create-table]
-    tags: [database, design, erd]
-
-  normalization:
-    title: "Normalization"
-    definition: "Organizing data to reduce redundancy and improve integrity"
-    difficulty: intermediate
-    estimatedReadTime: 40
-    sections:
-      definition: [332, 333, 334]
-      explanation: [335, 336, 337]
-      examples: [338, 339]
-    relatedConcepts: [database-design]
-    tags: [database, normalization]
-
-  # Chapter 11: DDL (around Page 360)
-  create-table:
-    title: "Creating Tables and Indexes"
-    definition: "Using CREATE TABLE, ALTER TABLE, CREATE INDEX, and DROP statements"
-    difficulty: intermediate
-    estimatedReadTime: 40
-    sections:
-      definition: [360, 361, 362]
-      syntax: [363, 364, 365]
-      examples: [366, 367, 368, 369]
-      commonMistakes: [370, 371]
-    relatedConcepts: [data-types, database-design]
-    tags: [sql, ddl, create-table, index]
-
-  # Chapter 12: Views (around Page 380)
-  views:
-    title: "Views"
-    definition: "Creating and using virtual tables based on SELECT queries"
-    difficulty: intermediate
-    estimatedReadTime: 35
-    sections:
-      definition: [380, 381, 382, 383]
-      syntax: [384, 385]
-      examples: [386, 387, 388]
-      commonMistakes: [389]
-    relatedConcepts: [select-basics]
-    tags: [sql, views]
-
-  # Chapter 13: Transactions (around Page 420)
-  transactions:
-    title: "Transactions and Locking"
-    definition: "Ensuring data integrity with ACID transactions and concurrency control"
-    difficulty: advanced
-    estimatedReadTime: 45
-    sections:
-      definition: [420, 421, 422, 423]
-      explanation: [424, 425, 426, 427]
-      examples: [428, 429, 430]
-      commonMistakes: [431, 432]
-    relatedConcepts: [stored-procedures]
-    tags: [mysql, transactions, locking, acid]
-
-  # Chapter 14: Stored Procedures (around Page 460)
-  stored-procedures:
-    title: "Stored Procedures and Functions"
-    definition: "Creating reusable SQL code blocks stored in the database"
-    difficulty: advanced
-    estimatedReadTime: 50
-    sections:
-      definition: [460, 461, 462, 463]
-      syntax: [464, 465, 466, 467]
-      examples: [468, 469, 470, 471]
-      commonMistakes: [472, 473]
-    relatedConcepts: [transactions, functions]
-    tags: [mysql, stored-procedures, programming]
-
-  # Chapter 15: Triggers (around Page 500)
-  triggers:
-    title: "Triggers and Events"
-    definition: "Automating SQL execution on data changes and scheduled events"
-    difficulty: advanced
-    estimatedReadTime: 40
-    sections:
-      definition: [500, 501, 502]
-      syntax: [503, 504]
-      examples: [505, 506, 507]
-      commonMistakes: [508]
-    relatedConcepts: [stored-procedures]
-    tags: [mysql, triggers, events, automation]
-
-  # Chapter 17-19: Database Administration (around Page 540)
-  database-security:
-    title: "Database Security"
-    definition: "Managing users, privileges, roles, and securing database access"
-    difficulty: intermediate
-    estimatedReadTime: 35
-    sections:
-      definition: [540, 541, 542]
-      explanation: [543, 544, 545]
-      examples: [546, 547, 548]
-    relatedConcepts: [mysql-workbench]
-    tags: [mysql, security, users, privileges]
-
-  backup-restore:
-    title: "Backup and Restore"
-    definition: "Strategies and commands for backing up and restoring MySQL databases"
-    difficulty: intermediate
-    estimatedReadTime: 30
-    sections:
-      definition: [560, 561, 562]
-      syntax: [563, 564]
-      examples: [565, 566]
-    relatedConcepts: [database-security]
-    tags: [mysql, backup, restore, administration]
+# Metadata
+metadata:
+  created_at: "2024-01-15"
+  version: "2.0"
+  total_concepts: 70
+  coverage:
+    dbms_ramakrishnan: 35 concepts
+    murachs_mysql: 35 concepts
+  topics:
+    - fundamentals
+    - sql_ddl
+    - sql_dml
+    - querying
+    - joins
+    - aggregation
+    - subqueries
+    - normalization
+    - transactions
+    - security
+    - performance
