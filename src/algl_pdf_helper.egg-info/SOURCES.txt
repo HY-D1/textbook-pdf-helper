@@ -8,12 +8,14 @@ src/algl_pdf_helper/clean.py
 src/algl_pdf_helper/cli.py
 src/algl_pdf_helper/cli_educational.py
 src/algl_pdf_helper/concept_mapper.py
+src/algl_pdf_helper/concept_mapping_system.py
 src/algl_pdf_helper/educational_pipeline.py
 src/algl_pdf_helper/embedding.py
 src/algl_pdf_helper/export_sqladapt.py
 src/algl_pdf_helper/extract.py
 src/algl_pdf_helper/extract_marker.py
 src/algl_pdf_helper/indexer.py
+src/algl_pdf_helper/kimi_assistant.py
 src/algl_pdf_helper/markdown_generator.py
 src/algl_pdf_helper/models.py
 src/algl_pdf_helper/server.py
@@ -25,6 +27,7 @@ src/algl_pdf_helper.egg-info/requires.txt
 src/algl_pdf_helper.egg-info/top_level.txt
 tests/test_chunker.py
 tests/test_concept_mapper.py
+tests/test_concept_mapping_system.py
 tests/test_embedding_parity.py
 tests/test_markdown_generator.py
 tests/test_quality_check.py

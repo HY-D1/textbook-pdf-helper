@@ -12,6 +12,7 @@ import typer
 from tqdm import tqdm
 
 from .educational_pipeline import EducationalNoteGenerator, LLMProvider
+from .concept_mapper import load_concepts_config, find_concepts_config
 
 app = typer.Typer(help="Generate educational notes from PDFs")
 
@@ -89,7 +90,12 @@ def generate(
     
     # Show cost estimate first
     if estimate_cost or not use_llm:
-        generator = EducationalNoteGenerator(llm_provider=llm_provider)
+        import os
+        generator = EducationalNoteGenerator(
+            llm_provider=llm_provider,
+            kimi_api_key=os.getenv("KIMI_API_KEY"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+        )
         cost = generator.estimate_cost(num_concepts=30)  # Estimate for 30 concepts
         
         typer.echo("\n💰 Cost Estimate")
@@ -123,10 +129,31 @@ def generate(
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
     typer.echo()
     
+    # Load concepts configuration
+    concepts_config_path = find_concepts_config(pdf_path)
+    concepts_config = None
+    if concepts_config_path and concepts_config_path.exists():
+        try:
+            concepts_config = load_concepts_config(concepts_config_path, pdf_path)
+            total_concepts = len(concepts_config.get("concepts", {}))
+            matched_textbook = concepts_config.get("matched_textbook", "")
+            typer.echo(f"📖 Loaded concepts config: {concepts_config_path}")
+            if matched_textbook:
+                typer.echo(f"   Matched textbook: {matched_textbook}")
+            typer.echo(f"   Found {total_concepts} concepts defined")
+        except Exception as e:
+            typer.echo(f"⚠️  Warning: Failed to load concepts config: {e}")
+    else:
+        typer.echo(f"⚠️  No concepts.yaml found - will auto-detect topics")
+    typer.echo()
+    
     # Initialize generator
+    import os
     generator = EducationalNoteGenerator(
         use_marker=use_marker,
         llm_provider=llm_provider,
+        kimi_api_key=os.getenv("KIMI_API_KEY"),
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
     )
     
     if use_llm and not generator.llm_available:
@@ -146,6 +173,7 @@ def generate(
     try:
         result = generator.process_pdf(
             pdf_path, 
+            concepts_config=concepts_config,
             output_dir=output_dir,
             progress_callback=progress_cb,
         )

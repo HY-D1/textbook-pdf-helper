@@ -154,9 +154,20 @@ def export_edu(
         "--skip-llm",
         help="Skip LLM enhancement (faster but lower quality output)",
     ),
+    concepts_config: Path | None = typer.Option(
+        None,
+        "--concepts-config",
+        help="Path to concepts.yaml config file (auto-detected if not specified)",
+    ),
+    max_concepts: int | None = typer.Option(
+        None,
+        "--max-concepts",
+        help="Limit number of concepts to process (for testing)",
+    ),
 ):
     """Export PDF to SQL-Adapt with educational note generation."""
     from .educational_pipeline import EducationalNoteGenerator
+    from .concept_mapper import load_concepts_config, find_concepts_config
     from tqdm import tqdm
     
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
@@ -174,12 +185,46 @@ def export_edu(
         typer.echo(f"   Auto-split will be used if needed.")
         typer.echo()
     
-    # Initialize generator
+    # Load concepts configuration
+    concepts_config_path = concepts_config  # Use the renamed parameter
+    if concepts_config_path is None:
+        concepts_config_path = find_concepts_config(pdf_path)
+        typer.echo(f"🔍 Looking for concepts config...")
+        typer.echo(f"   Path found: {concepts_config_path}")
+    else:
+        typer.echo(f"🔍 Using specified concepts config: {concepts_config_path}")
+    
+    concepts_config_data = None
+    if concepts_config_path:
+        typer.echo(f"   Path exists: {concepts_config_path.exists()}")
+        if concepts_config_path.exists():
+            try:
+                concepts_config_data = load_concepts_config(concepts_config_path, pdf_path)
+                total_concepts = len(concepts_config_data.get("concepts", {}))
+                matched_textbook = concepts_config_data.get("matched_textbook", "")
+                typer.echo(f"📖 Loaded concepts config: {concepts_config_path}")
+                if matched_textbook:
+                    typer.echo(f"   Matched textbook: {matched_textbook}")
+                typer.echo(f"   Found {total_concepts} concepts defined")
+            except Exception as e:
+                typer.echo(f"⚠️  Warning: Failed to load concepts config: {e}")
+                import traceback
+                typer.echo(traceback.format_exc())
+        else:
+            typer.echo(f"⚠️  Config file not found at {concepts_config_path}")
+    else:
+        typer.echo(f"⚠️  No concepts.yaml found - will auto-detect topics")
+    typer.echo()
+    
+    # Initialize generator with API keys from environment
+    import os
     generator = EducationalNoteGenerator(
         llm_provider=llm_provider, 
         use_marker=use_marker,
         ollama_model=ollama_model,
         skip_llm=skip_llm,
+        kimi_api_key=os.getenv("KIMI_API_KEY"),
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
     )
     
     typer.echo(f"Configuration:")
@@ -247,8 +292,10 @@ def export_edu(
     try:
         result = generator.process_pdf(
             pdf_path, 
+            concepts_config=concepts_config_data,
             output_dir=output_dir,
             progress_callback=progress_callback,
+            max_concepts=max_concepts,
         )
     finally:
         if current_bar is not None:
@@ -270,10 +317,12 @@ def export_edu(
     # Show cost if LLM was used
     if result["stats"].get("llm_enhanced"):
         num_concepts = result["stats"].get("concepts_generated", 0)
-        if num_concepts > 0:
+        typer.echo()
+        if hasattr(generator, 'estimate_cost') and num_concepts > 0:
             cost = generator.estimate_cost(num_concepts)
-            typer.echo()
             typer.echo(f"💰 Actual Cost: ¥{cost['cost_rmb']['total']} RMB")
+        else:
+            typer.echo(f"💰 Concepts processed with LLM: {num_concepts}")
     
     # Show generated files
     typer.echo()

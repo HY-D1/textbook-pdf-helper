@@ -1,0 +1,31 @@
+# Study Guide
+Generated: 2026-02-27T11:58:35.541326
+
+## Introduction to MySQL
+
+**Definition:** See textbook for details.
+
+### Explanation
+See textbook for details.
+
+---
+
+## Relational Databases
+
+**Definition:** See textbook for details.
+
+### Explanation
+See textbook for details.
+
+### Common Mistakes
+**❌ Using 'SELECT *' without specifying conditions can lead to performance issues, especially with large tables.**
+**✅ Always specify necessary columns instead of using '*'.**
+
+**❌ Forgetting to use a WHERE clause in an UPDATE statement can result in unintended data changes across the entire table.**
+**✅ Always include a WHERE clause to target specific records.**
+
+**❌ Using incorrect column names or table aliases can lead to errors in SQL queries.**
+**✅ Double-check column and table names for accuracy, especially when using aliases.**
+
+---
+

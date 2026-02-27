@@ -284,7 +284,7 @@ def build_index(
     
     if config_path and config_path.exists():
         try:
-            concepts_cfg = load_concepts_config(config_path)
+            concepts_cfg = load_concepts_config(config_path, input_path)
             
             # Use first source doc as primary
             primary_doc_id = source_docs[0].docId if source_docs else ""

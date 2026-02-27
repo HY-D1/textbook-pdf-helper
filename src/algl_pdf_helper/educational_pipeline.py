@@ -47,6 +47,7 @@ except ImportError:
 from .extract import check_extraction_quality, extract_pages_fitz
 from .models import ConceptInfo, ConceptManifest
 from .kimi_assistant import KimiAssistant  # AI-assisted Phase 1 & 2
+from .concept_mapping_system import ConceptMappingSystem  # Three-layer mapping integration
 
 
 class LLMProvider:
@@ -664,6 +665,9 @@ class EducationalNoteGenerator:
         self.ollama_host = ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.skip_llm = skip_llm
         self.min_content_relevance = min_content_relevance
+        
+        # Initialize three-layer concept mapping system
+        self.concept_mapper = ConceptMappingSystem()
         self.use_kimi_assistant = use_kimi_assistant
         
         # Initialize Kimi Assistant for Phase 1 & 2
@@ -841,6 +845,7 @@ class EducationalNoteGenerator:
         concepts_config: dict[str, Any] | None = None,
         output_dir: Path | None = None,
         progress_callback: callable | None = None,
+        max_concepts: int | None = None,
     ) -> dict[str, Any]:
         """
         Process PDF into educational notes and SQL-Adapt format.
@@ -855,6 +860,16 @@ class EducationalNoteGenerator:
             Dictionary with paths to generated files and metadata
             Never raises exceptions - returns error info in result
         """
+        # FORCE LOAD concepts.yaml if not provided
+        if concepts_config is None:
+            from .concept_mapper import find_concepts_config, load_concepts_config
+            config_path = find_concepts_config(pdf_path)
+            if config_path and config_path.exists():
+                try:
+                    concepts_config = load_concepts_config(config_path, pdf_path)
+                except Exception:
+                    pass  # Fall back to auto-detect
+        
         result = {
             "success": False,
             "pdf_path": str(pdf_path),
@@ -897,7 +912,8 @@ class EducationalNoteGenerator:
             _progress("enhance", 0, 100, f"Generating educational notes for {num_concepts} concepts...")
             educational_notes = self._generate_educational_notes(
                 structured_content, 
-                progress_callback=_progress
+                progress_callback=_progress,
+                max_concepts=max_concepts,
             )
             _progress("enhance", 100, 100, "Educational notes complete")
             
@@ -1338,11 +1354,16 @@ class EducationalNoteGenerator:
     
     def _structure_content(
         self,
-        extraction_result: dict,
+        extraction_content: dict,
         concepts_config: dict | None,
     ) -> dict[str, Any]:
-        """Structure extracted content by concepts/topics."""
-        pages = extraction_result.get("pages", [])
+        """Structure extracted content by concepts/topics.
+        
+        Args:
+            extraction_content: The 'content' dict from extraction result with 'pages' key
+            concepts_config: Optional concept mapping configuration
+        """
+        pages = extraction_content.get("pages", [])
         
         # If concepts config provided, map content to concepts
         if concepts_config and "concepts" in concepts_config:
@@ -1487,11 +1508,18 @@ class EducationalNoteGenerator:
         self, 
         structured_content: dict,
         progress_callback: callable | None = None,
+        max_concepts: int | None = None,
     ) -> dict[str, Any]:
         """Generate educational notes from structured content."""
         notes = {"concepts": {}}
         
         concepts = list(structured_content.get("concepts", {}).items())
+        
+        # Limit concepts if specified (for testing)
+        if max_concepts and len(concepts) > max_concepts:
+            print(f"\n⚡ Processing first {max_concepts} of {len(concepts)} concepts (testing mode)")
+            concepts = concepts[:max_concepts]
+        
         total = len(concepts)
         
         for idx, (concept_id, concept_data) in enumerate(concepts, 1):
@@ -1933,7 +1961,11 @@ Respond ONLY with the JSON object, nothing else."""
         educational_notes: dict,
         pdf_path: Path,
     ) -> dict[str, Any]:
-        """Create SQL-Adapt compatible output format."""
+        """
+        Create SQL-Adapt compatible output format with three-layer concept mapping.
+        
+        Integrates Layer 1 (Error Subtypes) → Layer 2 (Alignment Map) → Layer 3 (Concept Content)
+        """
         doc_id = self._slugify(pdf_path.stem)
         
         sqladapt = {
@@ -1942,7 +1974,21 @@ Respond ONLY with the JSON object, nothing else."""
             "sourceFile": str(pdf_path),
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "concepts": {},
+            "errorMappings": {},  # Layer 1→2: Error subtype → Concept ID mappings
+            "metadata": {
+                "mappingSystem": "three-layer-concept-v1",
+                "totalErrorSubtypes": len(self.concept_mapper.ERROR_SUBTYPES),
+                "totalMappings": len(self.concept_mapper.ALIGNMENT_MAP),
+            }
         }
+        
+        # Build reverse mapping: concept_id → error_subtypes (for Layer 2→1 lookup)
+        concept_to_errors: dict[str, list[str]] = {}
+        for error_subtype, mapping in self.concept_mapper.ALIGNMENT_MAP.items():
+            for concept_id in mapping.get("concept_ids", []):
+                if concept_id not in concept_to_errors:
+                    concept_to_errors[concept_id] = []
+                concept_to_errors[concept_id].append(error_subtype)
         
         for concept_id, concept_data in educational_notes.get("concepts", {}).items():
             notes = concept_data.get("educational_notes", {})
@@ -1955,6 +2001,16 @@ Respond ONLY with the JSON object, nothing else."""
                         f"{doc_id}:p{p}:c1" 
                         for p in section_data.get("pages", [])
                     ]
+            
+            # Get error subtypes that map to this concept (Layer 1→2)
+            error_subtypes = concept_to_errors.get(concept_id, [])
+            
+            # Get teaching strategies for these errors
+            teaching_strategies = []
+            for err_subtype in error_subtypes:
+                strategy = self.concept_mapper.get_teaching_strategy(err_subtype)
+                if strategy and strategy not in teaching_strategies:
+                    teaching_strategies.append(strategy)
             
             sqladapt["concepts"][concept_id] = {
                 "id": concept_id,
@@ -1987,7 +2043,26 @@ Respond ONLY with the JSON object, nothing else."""
                 },
                 "relatedConcepts": concept_data.get("related_concepts", []),
                 "tags": concept_data.get("tags", []),
+                # Three-layer mapping integration
+                "errorSubtypes": error_subtypes,  # Layer 1 mappings
+                "teachingStrategies": teaching_strategies,  # Derived strategies
             }
+        
+        # Include full error→concept mappings for this document's concepts
+        for error_subtype, mapping in self.concept_mapper.ALIGNMENT_MAP.items():
+            # Only include mappings for concepts present in this document
+            relevant_concepts = [
+                cid for cid in mapping.get("concept_ids", [])
+                if cid in sqladapt["concepts"]
+            ]
+            if relevant_concepts:
+                sqladapt["errorMappings"][error_subtype] = {
+                    "errorSubtypeId": mapping.get("error_subtype_id"),
+                    "conceptIds": relevant_concepts,
+                    "confidence": mapping.get("confidence"),
+                    "teachingStrategy": mapping.get("teaching_strategy"),
+                    "remediationOrder": mapping.get("remediation_order"),
+                }
         
         return sqladapt
     
@@ -2060,6 +2135,24 @@ Respond ONLY with the JSON object, nothing else."""
         with open(sqladapt_path, "w", encoding="utf-8") as f:
             json.dump(sqladapt_output, f, indent=2, ensure_ascii=False)
         paths["sqladapt"] = str(sqladapt_path)
+        
+        # Copy three-layer concept mapping files to output (for SQL-Adapt integration)
+        mappings_dir = output_dir / "mappings"
+        mappings_dir.mkdir(exist_ok=True)
+        
+        import shutil
+        mapping_files = [
+            ("alignment-map.json", "Layer 2: Error → Concept mappings"),
+            ("concept-registry.json", "Layer 3: Concept → Content registry"),
+            ("error-subtypes.json", "Layer 1: Error subtype definitions"),
+        ]
+        
+        for filename, description in mapping_files:
+            src = Path(__file__).parent.parent.parent / "output" / "mappings" / filename
+            if src.exists():
+                dst = mappings_dir / filename
+                shutil.copy2(src, dst)
+                paths[f"mapping_{filename.replace('-', '_').replace('.json', '')}"] = str(dst)
         
         # Generate study guide (legacy, for humans)
         md_path = output_dir / f"{doc_id}-study-guide.md"

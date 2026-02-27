@@ -1,0 +1,183 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-02-27T21:19:41.902921+00:00",
+  "sourceDocIds": [
+    "murachs-mysql-3rd-edition"
+  ],
+  "concepts": {
+    "murachs-mysql-3rd-edition/mysql-intro": {
+      "title": "Introduction to MySQL",
+      "definition": "See textbook for details.",
+      "difficulty": "beginner",
+      "pageNumbers": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "chunkIds": {
+        "definition": [
+          "murachs-mysql-3rd-edition:p1:c1",
+          "murachs-mysql-3rd-edition:p2:c1",
+          "murachs-mysql-3rd-edition:p3:c1"
+        ],
+        "explanation": [
+          "murachs-mysql-3rd-edition:p4:c1",
+          "murachs-mysql-3rd-edition:p5:c1",
+          "murachs-mysql-3rd-edition:p6:c1"
+        ],
+        "examples": [
+          "murachs-mysql-3rd-edition:p7:c1",
+          "murachs-mysql-3rd-edition:p8:c1",
+          "murachs-mysql-3rd-edition:p9:c1"
+        ],
+        "commonMistakes": [
+          "murachs-mysql-3rd-edition:p10:c1",
+          "murachs-mysql-3rd-edition:p11:c1",
+          "murachs-mysql-3rd-edition:p12:c1"
+        ]
+      },
+      "relatedConcepts": [],
+      "practiceProblemIds": [],
+      "sourceDocId": "murachs-mysql-3rd-edition"
+    },
+    "murachs-mysql-3rd-edition/relational-databases-murach": {
+      "title": "Relational Databases",
+      "definition": "See textbook for details.",
+      "difficulty": "beginner",
+      "pageNumbers": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ],
+      "chunkIds": {
+        "definition": [
+          "murachs-mysql-3rd-edition:p21:c1",
+          "murachs-mysql-3rd-edition:p22:c1",
+          "murachs-mysql-3rd-edition:p23:c1"
+        ],
+        "explanation": [
+          "murachs-mysql-3rd-edition:p24:c1",
+          "murachs-mysql-3rd-edition:p25:c1",
+          "murachs-mysql-3rd-edition:p26:c1"
+        ],
+        "examples": [
+          "murachs-mysql-3rd-edition:p27:c1",
+          "murachs-mysql-3rd-edition:p28:c1",
+          "murachs-mysql-3rd-edition:p29:c1"
+        ],
+        "commonMistakes": [
+          "murachs-mysql-3rd-edition:p30:c1",
+          "murachs-mysql-3rd-edition:p31:c1",
+          "murachs-mysql-3rd-edition:p32:c1"
+        ]
+      },
+      "relatedConcepts": [],
+      "practiceProblemIds": [],
+      "sourceDocId": "murachs-mysql-3rd-edition"
+    },
+    "murachs-mysql-3rd-edition/select-statement-murach": {
+      "title": "SELECT Statement",
+      "definition": "See textbook for details.",
+      "difficulty": "beginner",
+      "pageNumbers": [
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100
+      ],
+      "chunkIds": {
+        "definition": [
+          "murachs-mysql-3rd-edition:p73:c1",
+          "murachs-mysql-3rd-edition:p74:c1",
+          "murachs-mysql-3rd-edition:p75:c1"
+        ],
+        "explanation": [
+          "murachs-mysql-3rd-edition:p76:c1",
+          "murachs-mysql-3rd-edition:p77:c1",
+          "murachs-mysql-3rd-edition:p78:c1"
+        ],
+        "examples": [
+          "murachs-mysql-3rd-edition:p79:c1",
+          "murachs-mysql-3rd-edition:p80:c1",
+          "murachs-mysql-3rd-edition:p81:c1"
+        ],
+        "commonMistakes": [
+          "murachs-mysql-3rd-edition:p82:c1",
+          "murachs-mysql-3rd-edition:p83:c1",
+          "murachs-mysql-3rd-edition:p84:c1"
+        ]
+      },
+      "relatedConcepts": [],
+      "practiceProblemIds": [],
+      "sourceDocId": "murachs-mysql-3rd-edition"
+    }
+  }
+}
