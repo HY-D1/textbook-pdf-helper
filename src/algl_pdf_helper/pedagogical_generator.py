@@ -16,6 +16,32 @@ from typing import Any
 # PRACTICE SCHEMAS - Standardized schemas for all SQL examples
 # =============================================================================
 
+# =============================================================================
+# FOREIGN KEY MAPPINGS - For proper join condition transformation
+# =============================================================================
+
+FOREIGN_KEY_MAPPINGS: dict[str, dict[str, dict[str, str]]] = {
+    "users": {
+        "orders": {"from": "users.id", "to": "orders.user_id"},
+        "employees": {"from": "users.id", "to": "employees.manager_id"},
+    },
+    "orders": {
+        "users": {"from": "orders.user_id", "to": "users.id"},
+        "products": {"from": "orders.product", "to": "products.name"},
+    },
+    "products": {
+        "orders": {"from": "products.name", "to": "orders.product"},
+    },
+    "departments": {
+        "employees": {"from": "departments.dept_id", "to": "employees.dept_id"},
+    },
+    "employees": {
+        "departments": {"from": "employees.dept_id", "to": "departments.dept_id"},
+        "employees_self": {"from": "employees.manager_id", "to": "employees.emp_id"},
+    },
+}
+
+
 PRACTICE_SCHEMAS: dict[str, dict[str, Any]] = {
     "users": {
         "columns": ["id", "name", "email", "age", "city"],
@@ -218,6 +244,76 @@ CONCEPT_TO_PROBLEMS: dict[str, list[str]] = {
 # =============================================================================
 
 COMMON_MISTAKES_TEMPLATES: dict[str, list[dict[str, Any]]] = {
+    "aggregation": [
+        {
+            "title": "Forgetting GROUP BY with Aggregates",
+            "error_sql": "SELECT name, COUNT(*) FROM users;",
+            "error_message": "misuse of aggregate: COUNT()",
+            "why_it_happens": "When using aggregate functions like COUNT, SUM, AVG with non-aggregated columns (like 'name'), you must include those columns in a GROUP BY clause.",
+            "fix_sql": "SELECT city, COUNT(*) FROM users GROUP BY city;",
+            "key_takeaway": "Any column in SELECT that isn't wrapped in an aggregate function must be in the GROUP BY clause.",
+        },
+        {
+            "title": "Using WHERE Instead of HAVING",
+            "error_sql": "SELECT city, COUNT(*) FROM users WHERE COUNT(*) > 2 GROUP BY city;",
+            "error_message": "misuse of aggregate: COUNT()",
+            "why_it_happens": "WHERE filters rows BEFORE aggregation. You can't use aggregate functions in WHERE. Use HAVING to filter groups after aggregation.",
+            "fix_sql": "SELECT city, COUNT(*) FROM users GROUP BY city HAVING COUNT(*) > 2;",
+            "key_takeaway": "Use WHERE for row filtering (before aggregation), HAVING for group filtering (after aggregation).",
+        },
+        {
+            "title": "Including Non-Aggregated Columns",
+            "error_sql": "SELECT name, city, AVG(age) FROM users GROUP BY city;",
+            "error_message": "misuse of aggregate: AVG()",
+            "why_it_happens": "'name' is not in the GROUP BY clause and isn't wrapped in an aggregate function. SQL doesn't know which 'name' to show for each city group.",
+            "fix_sql": "SELECT city, AVG(age) FROM users GROUP BY city;",
+            "key_takeaway": "Remove non-aggregated columns that aren't in GROUP BY, or add them to GROUP BY.",
+        },
+    ],
+    "group-by": [
+        {
+            "title": "Wrong Column in GROUP BY",
+            "error_sql": "SELECT category, AVG(price) FROM products GROUP BY id;",
+            "error_message": "Query runs but gives wrong results",
+            "why_it_happens": "Grouping by 'id' (unique per row) instead of 'category' means you're not actually grouping by category. Each product becomes its own group.",
+            "fix_sql": "SELECT category, AVG(price) FROM products GROUP BY category;",
+            "key_takeaway": "GROUP BY should use the column(s) you want to group by, not a unique ID.",
+        },
+        {
+            "title": "Missing column in GROUP BY",
+            "error_sql": "SELECT city, age, COUNT(*) FROM users GROUP BY city;",
+            "error_message": "column 'age' must appear in GROUP BY clause",
+            "why_it_happens": "When grouping, any non-aggregated column in SELECT must be in GROUP BY.",
+            "fix_sql": "SELECT city, age, COUNT(*) FROM users GROUP BY city, age;",
+            "key_takeaway": "Include all non-aggregated columns in GROUP BY",
+        },
+    ],
+    "subqueries": [
+        {
+            "title": "Subquery Returns Multiple Rows for Comparison",
+            "error_sql": "SELECT * FROM users WHERE age = (SELECT age FROM users WHERE city = 'Seattle');",
+            "error_message": "subquery returns more than one row",
+            "why_it_happens": "The subquery finds multiple ages (Seattle has Alice=25, Charlie=22). You can't compare a single value to multiple values with =.",
+            "fix_sql": "SELECT * FROM users WHERE age IN (SELECT age FROM users WHERE city = 'Seattle');",
+            "key_takeaway": "Use IN when the subquery might return multiple rows, = only when you're certain it returns exactly one.",
+        },
+        {
+            "title": "Correlated Subquery Missing Reference",
+            "error_sql": "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = id);",
+            "error_message": "ambiguous column name: id",
+            "why_it_happens": "Inside the subquery, 'id' could refer to users.id or orders.id. You need to qualify it.",
+            "fix_sql": "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = u.id);",
+            "key_takeaway": "In correlated subqueries, always use table aliases (u.id, o.user_id) to make references clear.",
+        },
+        {
+            "title": "Subquery returns multiple rows for single-row operator",
+            "error_sql": "SELECT * FROM users WHERE id = (SELECT user_id FROM orders);",
+            "error_message": "subquery returns more than one row",
+            "why_it_happens": "The = operator expects a single value, but the subquery returns multiple rows.",
+            "fix_sql": "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);",
+            "key_takeaway": "Use IN when the subquery may return multiple rows",
+        },
+    ],
     "select-basic": [
         {
             "title": "Forgetting the FROM clause",
@@ -271,6 +367,22 @@ COMMON_MISTAKES_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "fix_sql": "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id;",
             "key_takeaway": "Use table aliases or full table names for clarity",
         },
+        {
+            "title": "Joining on Wrong Column",
+            "error_sql": "SELECT * FROM users JOIN orders ON users.id = orders.order_id;",
+            "error_message": "Query runs but returns no/wrong results",
+            "why_it_happens": "You're matching users.id (1, 2, 3) with orders.order_id (101, 102, 103). These don't match. You need to match with the foreign key: orders.user_id.",
+            "fix_sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id;",
+            "key_takeaway": "Join on the foreign key relationship: primary_table.id = foreign_table.foreign_key_id.",
+        },
+        {
+            "title": "Missing Table Alias in SELECT",
+            "error_sql": "SELECT name, product FROM users u JOIN orders o ON u.id = o.user_id;",
+            "error_message": "ambiguous column name: name",
+            "why_it_happens": "Both users and orders tables might have a 'name' column (though in our schema only users does). Always qualify columns in JOINs.",
+            "fix_sql": "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id;",
+            "key_takeaway": "Always use table aliases (u.name, o.product) when joining tables.",
+        },
     ],
     "aggregate-functions": [
         {
@@ -288,26 +400,6 @@ COMMON_MISTAKES_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "why_it_happens": "WHERE filters rows before aggregation. Use HAVING to filter after aggregation.",
             "fix_sql": "SELECT city, COUNT(*) FROM users GROUP BY city HAVING COUNT(*) > 2;",
             "key_takeaway": "Use HAVING, not WHERE, for aggregate conditions",
-        },
-    ],
-    "group-by": [
-        {
-            "title": "Missing column in GROUP BY",
-            "error_sql": "SELECT city, age, COUNT(*) FROM users GROUP BY city;",
-            "error_message": "Error: column 'age' must appear in GROUP BY clause",
-            "why_it_happens": "When grouping, any non-aggregated column in SELECT must be in GROUP BY.",
-            "fix_sql": "SELECT city, age, COUNT(*) FROM users GROUP BY city, age;",
-            "key_takeaway": "Include all non-aggregated columns in GROUP BY",
-        },
-    ],
-    "subqueries": [
-        {
-            "title": "Subquery returns multiple rows for single-row operator",
-            "error_sql": "SELECT * FROM users WHERE id = (SELECT user_id FROM orders);",
-            "error_message": "Error: subquery returns more than one row",
-            "why_it_happens": "The = operator expects a single value, but the subquery returns multiple rows.",
-            "fix_sql": "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);",
-            "key_takeaway": "Use IN when the subquery may return multiple rows",
         },
     ],
     "insert": [
@@ -348,6 +440,47 @@ COMMON_MISTAKES_TEMPLATES: dict[str, list[dict[str, Any]]] = {
 # =============================================================================
 
 PRACTICE_CHALLENGES: dict[str, dict[str, Any]] = {
+    "aggregation": {
+        "description": "Calculate the total order value for each user. Show user name and total amount.",
+        "hint": "Use SUM() with a GROUP BY on the user's name. Join users and orders tables.",
+        "solution": """SELECT u.name, SUM(o.amount) as total_spent
+FROM users u
+JOIN orders o ON u.id = o.user_id
+GROUP BY u.name;""",
+        "explanation": "This joins users with their orders, groups by user name, and sums the order amounts.",
+    },
+    "group-by": {
+        "description": "Find the number of orders placed in each month. Assume orders table has an order_date column in format 'YYYY-MM-DD'.",
+        "hint": "Use strftime('%Y-%m', order_date) to extract year-month, then GROUP BY that.",
+        "solution": """SELECT strftime('%Y-%m', order_date) as month, COUNT(*) as order_count
+FROM orders
+GROUP BY strftime('%Y-%m', order_date);""",
+        "explanation": "strftime extracts the year-month portion. GROUP BY groups orders by month. COUNT counts orders in each group.",
+    },
+    "subqueries": {
+        "description": "Find users who have placed more orders than the average number of orders per user.",
+        "hint": "First write a subquery to calculate AVG(order count per user), then use HAVING to filter.",
+        "solution": """SELECT u.name, COUNT(o.order_id) as order_count
+FROM users u
+JOIN orders o ON u.id = o.user_id
+GROUP BY u.name
+HAVING COUNT(o.order_id) > (
+    SELECT AVG(order_count) FROM (
+        SELECT COUNT(*) as order_count 
+        FROM orders 
+        GROUP BY user_id
+    )
+);""",
+        "explanation": "The inner subquery calculates average orders per user. HAVING filters groups where order_count exceeds this average.",
+    },
+    "where-clause": {
+        "description": "Find all users from Seattle or Portland who are over 25 years old.",
+        "hint": "Use AND to combine conditions, OR for multiple cities. Watch your parentheses!",
+        "solution": """SELECT * FROM users 
+WHERE (city = 'Seattle' OR city = 'Portland') 
+  AND age > 25;""",
+        "explanation": "Parentheses ensure the OR is evaluated first, then combined with AND. Without them, AND would bind tighter.",
+    },
     "select-basic": {
         "description": "Write a query to find all users from 'Seattle' who are older than 25.",
         "hint": "Use WHERE with AND to combine conditions.",
@@ -580,6 +713,10 @@ class PedagogicalContentGenerator:
                 transformed_sql = re.sub(pattern, new_term, transformed_sql, flags=re.IGNORECASE)
                 mappings_used.append(f"{old_term} → {new_term}")
         
+        # Fix join conditions to use proper foreign key relationships
+        if "JOIN" in transformed_sql.upper():
+            transformed_sql = self._fix_join_conditions(transformed_sql)
+        
         # Clean up any artifacts
         transformed_sql = self._clean_sql_transform(transformed_sql)
         
@@ -600,6 +737,70 @@ class PedagogicalContentGenerator:
         sql = re.sub(r'\(\s+', '(', sql)
         sql = re.sub(r'\s+\)', ')', sql)
         return sql.strip()
+    
+    def _fix_join_conditions(self, sql: str) -> str:
+        """Fix join conditions to use proper foreign key relationships."""
+        # Pattern: ON table1.column = table2.column
+        # Replace with proper FK relationship
+        
+        # First, extract table aliases from the SQL
+        # Pattern: FROM table alias or JOIN table alias
+        alias_map: dict[str, str] = {}
+        
+        # Match "FROM table_name alias" or "FROM table_name AS alias" or "JOIN table_name alias"
+        alias_pattern = r'(?:FROM|JOIN)\s+(\w+)\s+(?:AS\s+)?(\w+)(?:\s|$|\n|JOIN|ON|WHERE|GROUP|ORDER|;)'
+        for match in re.finditer(alias_pattern, sql, re.IGNORECASE):
+            table_name = match.group(1).lower()
+            alias = match.group(2).lower()
+            # Don't treat keywords as aliases
+            if alias not in ['where', 'group', 'order', 'having', 'limit', 'join', 'on', 'inner', 'outer', 'left', 'right']:
+                alias_map[alias] = table_name
+        
+        # Also match simple alias pattern without AS
+        simple_alias_pattern = r'(?:FROM|JOIN)\s+(\w+)\s+(\w+)\s+(?:JOIN|ON)'
+        for match in re.finditer(simple_alias_pattern, sql, re.IGNORECASE):
+            table_name = match.group(1).lower()
+            alias = match.group(2).lower()
+            if alias not in ['where', 'group', 'order', 'having', 'limit', 'join', 'on', 'inner', 'outer', 'left', 'right']:
+                alias_map[alias] = table_name
+        
+        # Pattern to match join conditions (handles table aliases too)
+        # Matches: ON table.col = table2.col2 or ON t1.col = t2.col2
+        pattern = r'ON\s+(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)'
+        
+        def replace_condition(match: Any) -> str:
+            table1, col1, table2, col2 = match.groups()
+            table1_lower = table1.lower()
+            table2_lower = table2.lower()
+            
+            # Resolve aliases to actual table names
+            resolved_table1 = alias_map.get(table1_lower, table1_lower)
+            resolved_table2 = alias_map.get(table2_lower, table2_lower)
+            
+            # Check if we have a foreign key mapping for these tables
+            fk_map = FOREIGN_KEY_MAPPINGS.get(resolved_table1, {}).get(resolved_table2)
+            if fk_map:
+                # Use original table names (aliases) but correct columns
+                from_parts = fk_map['from'].split('.')
+                to_parts = fk_map['to'].split('.')
+                # Map back to aliases if they were used
+                from_table = table1 if resolved_table1 != table1_lower else from_parts[0]
+                to_table = table2 if resolved_table2 != table2_lower else to_parts[0]
+                return f"ON {from_table}.{from_parts[1]} = {to_table}.{to_parts[1]}"
+            
+            # Reverse lookup
+            fk_map_reverse = FOREIGN_KEY_MAPPINGS.get(resolved_table2, {}).get(resolved_table1)
+            if fk_map_reverse:
+                from_parts = fk_map_reverse['from'].split('.')
+                to_parts = fk_map_reverse['to'].split('.')
+                from_table = table2 if resolved_table2 != table2_lower else from_parts[0]
+                to_table = table1 if resolved_table1 != table1_lower else to_parts[0]
+                return f"ON {to_table}.{to_parts[1]} = {from_table}.{from_parts[1]}"
+            
+            # No mapping found, return original
+            return match.group(0)
+        
+        return re.sub(pattern, replace_condition, sql, flags=re.IGNORECASE)
     
     def _is_runnable(self, sql: str) -> bool:
         """Check if SQL appears to be runnable (basic validation)."""
