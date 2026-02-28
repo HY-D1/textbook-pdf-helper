@@ -46,6 +46,22 @@
         "why_it_happens": "Both tables have an 'id' column. SQL doesn't know which one to use in the comparison.",
         "fix_sql": "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id;",
         "key_takeaway": "Use table aliases or full table names for clarity"
+      },
+      {
+        "title": "Joining on Wrong Column",
+        "error_sql": "SELECT * FROM users JOIN orders ON users.id = orders.order_id;",
+        "error_message": "Query runs but returns no/wrong results",
+        "why_it_happens": "You're matching users.id (1, 2, 3) with orders.order_id (101, 102, 103). These don't match. You need to match with the foreign key: orders.user_id.",
+        "fix_sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id;",
+        "key_takeaway": "Join on the foreign key relationship: primary_table.id = foreign_table.foreign_key_id."
+      },
+      {
+        "title": "Missing Table Alias in SELECT",
+        "error_sql": "SELECT name, product FROM users u JOIN orders o ON u.id = o.user_id;",
+        "error_message": "ambiguous column name: name",
+        "why_it_happens": "Both users and orders tables might have a 'name' column (though in our schema only users does). Always qualify columns in JOINs.",
+        "fix_sql": "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id;",
+        "key_takeaway": "Always use table aliases (u.name, o.product) when joining tables."
       }
     ],
     "practice_challenge": {
