@@ -1,0 +1,63 @@
+{
+  "concept_id": "joins",
+  "title": "JOIN Operations",
+  "learning_objectives": [
+    "Understand the difference between INNER and OUTER joins",
+    "Write proper JOIN conditions with ON clause",
+    "Know when to use each type of join",
+    "Avoid common join pitfalls like Cartesian products"
+  ],
+  "prerequisite_concepts": [
+    "select-basic",
+    "where-clause"
+  ],
+  "practice_problems": [
+    "problem-3",
+    "problem-4"
+  ],
+  "sections": {
+    "definition": {
+      "concept_explanation": "JOIN operations combine rows from two or more tables based on related columns.",
+      "visual_diagram": "\n    users                    orders\n    +----+-------+           +----------+--------+--------+\n    | id | name  |           | order_id |user_id |product |\n    +----+-------+           +----------+--------+--------+\n    |  1 | Alice |<--------->|   101    |   1    | Laptop |\n    |  2 | Bob   |<--------->|   102    |   1    | Mouse  |\n    +----+-------+           +----------+--------+--------+\n            INNER JOIN matches rows where id = user_id\n            "
+    },
+    "examples": [
+      {
+        "title": "SQL Example 1",
+        "difficulty": "beginner",
+        "scenario": "Combining data from multiple tables",
+        "sql": "SELECT * FROM users s JOIN products b ON s.id = b.id;",
+        "explanation": "Example SQL statement",
+        "expected_output": "| id | name | email | age | city |\n| --- | --- | --- | --- | --- |\n| 1 | Alice | alice@email.com | 25 | Seattle |\n| 2 | Bob | bob@email.com | 30 | Portland |\n| 3 | Charlie | charlie@email.com | 22 | Seattle |"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Missing JOIN condition (Cartesian product)",
+        "error_sql": "SELECT * FROM users, orders;",
+        "error_message": "No error, but returns too many rows",
+        "why_it_happens": "Without a JOIN condition, every row in the first table is matched with every row in the second table.",
+        "fix_sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id;",
+        "key_takeaway": "Always specify the JOIN condition with ON"
+      },
+      {
+        "title": "Ambiguous column reference",
+        "error_sql": "SELECT name, product FROM users JOIN orders ON id = user_id;",
+        "error_message": "Error: ambiguous column name: id",
+        "why_it_happens": "Both tables have an 'id' column. SQL doesn't know which one to use in the comparison.",
+        "fix_sql": "SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id;",
+        "key_takeaway": "Use table aliases or full table names for clarity"
+      }
+    ],
+    "practice_challenge": {
+      "description": "List all users who have placed orders, showing their name and the total amount they've spent.",
+      "hint": "JOIN users with orders, then use SUM and GROUP BY.",
+      "solution": "SELECT u.name, SUM(o.amount) as total_spent\nFROM users u\nJOIN orders o ON u.id = o.user_id\nGROUP BY u.id, u.name;",
+      "explanation": "We JOIN to get related orders, then GROUP BY user to aggregate, and SUM the order amounts."
+    }
+  },
+  "metadata": {
+    "difficulty": "intermediate",
+    "estimated_time_minutes": 20,
+    "source_chunks": 2
+  }
+}
