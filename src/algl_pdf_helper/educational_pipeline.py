@@ -49,6 +49,28 @@ from .models import ConceptInfo, ConceptManifest
 from .kimi_assistant import KimiAssistant  # AI-assisted Phase 1 & 2
 from .concept_mapping_system import ConceptMappingSystem  # Three-layer mapping integration
 
+# =============================================================================
+# INTEGRATION: Pedagogical Content Generation (Added 2026-02-27)
+# =============================================================================
+# These imports enable the new pedagogical content generation pipeline that:
+# 1. Transforms textbook schemas to standardized practice schemas
+# 2. Generates learning objectives, prerequisites, and practice problems
+# 3. Creates structured educational content with SQL-Adapt problem links
+from .pedagogical_generator import (
+    PedagogicalContentGenerator,
+    PRACTICE_SCHEMAS,
+    TEXTBOOK_TO_PRACTICE_MAPPING,
+    CONCEPT_TO_PROBLEMS,
+)
+from .prompts import (
+    build_concept_prompt,
+    build_sql_example_prompt,
+    build_mistakes_prompt,
+    build_practice_prompt,
+    build_transformation_prompt,
+    ERROR_PATTERNS,
+)
+
 
 class LLMProvider:
     """Supported LLM providers."""
@@ -659,12 +681,14 @@ class EducationalNoteGenerator:
         skip_llm: bool = False,
         min_content_relevance: float = 0.3,  # Minimum relevance score for content
         use_kimi_assistant: bool = True,  # Enable AI-assisted Phase 1 & 2
+        use_pedagogical: bool = False,  # Enable new pedagogical generation
     ):
         self.use_marker = use_marker and MARKER_AVAILABLE
         self.llm_provider = llm_provider.lower()
         self.ollama_host = ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.skip_llm = skip_llm
         self.min_content_relevance = min_content_relevance
+        self.use_pedagogical = use_pedagogical  # Store pedagogical mode flag
         
         # Initialize three-layer concept mapping system
         self.concept_mapper = ConceptMappingSystem()
@@ -672,6 +696,16 @@ class EducationalNoteGenerator:
         
         # Initialize Kimi Assistant for Phase 1 & 2
         self.kimi = KimiAssistant() if use_kimi_assistant else None
+        
+        # =============================================================================
+        # INTEGRATION: Initialize Pedagogical Content Generator (Added 2026-02-27)
+        # =============================================================================
+        # This generator transforms textbook content into pedagogically structured
+        # educational materials using standardized practice schemas.
+        self.pedagogical_generator = PedagogicalContentGenerator(
+            PRACTICE_SCHEMAS,
+            TEXTBOOK_TO_PRACTICE_MAPPING
+        )
         
         # Auto-select best Ollama model if not specified
         if ollama_model:
@@ -839,6 +873,243 @@ class EducationalNoteGenerator:
                 raise ValueError("Empty response from Ollama")
             return content
     
+    # =============================================================================
+    # INTEGRATION: Pedagogical Content Generation Methods (Added 2026-02-27)
+    # =============================================================================
+    
+    def process_concept(
+        self,
+        concept_id: str,
+        raw_chunks: list[dict[str, Any]] | list[str],
+        concept_title: str | None = None,
+        use_pedagogical: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Process a single concept using either standard or pedagogical generation.
+        
+        This is the main entry point for concept processing with optional
+        pedagogical content generation that includes:
+        - Learning objectives and prerequisites
+        - Schema-transformed SQL examples
+        - Practice problem links
+        - Structured common mistakes
+        
+        Args:
+            concept_id: Unique identifier for the concept
+            raw_chunks: List of raw text chunks from PDF extraction
+            concept_title: Human-readable title (defaults to concept_id)
+            use_pedagogical: Override to use pedagogical mode (defaults to self.use_pedagogical)
+            
+        Returns:
+            Dictionary containing educational notes for the concept
+            
+        Example:
+            >>> generator = EducationalNoteGenerator(use_pedagogical=True)
+            >>> concept = generator.process_concept(
+            ...     concept_id="joins",
+            ...     raw_chunks=[{"text": "JOIN combines tables..."}],
+            ...     concept_title="SQL JOINs"
+            ... )
+        """
+        # Determine which mode to use
+        use_ped_mode = use_pedagogical if use_pedagogical is not None else self.use_pedagogical
+        
+        # Default title
+        title = concept_title or concept_id.replace("-", " ").title()
+        
+        if use_ped_mode:
+            # ===================================================================
+            # PEDAGOGICAL MODE: Use new structured content generation
+            # ===================================================================
+            # Get practice problem links for this concept
+            problem_links = CONCEPT_TO_PROBLEMS.get(concept_id, [])
+            
+            # Generate pedagogical concept structure
+            pedagogical_concept = self.pedagogical_generator.generate_pedagogical_concept(
+                concept_id=concept_id,
+                concept_title=title,
+                raw_chunks=raw_chunks,
+                practice_problem_links=problem_links if problem_links else None,
+            )
+            
+            # Convert to standard educational_notes format for backward compatibility
+            educational_notes = self._convert_pedagogical_to_notes(pedagogical_concept)
+            
+            return {
+                "id": concept_id,
+                "title": title,
+                "educational_notes": educational_notes,
+                "pedagogical_structure": pedagogical_concept,  # Include full structure
+                "llm_enhanced": True,
+                "pedagogical_mode": True,
+                "practice_problem_links": problem_links,
+            }
+        else:
+            # ===================================================================
+            # LEGACY MODE: Use original LLM enhancement
+            # ===================================================================
+            # Combine raw chunks into text
+            combined_text = "\n\n".join(
+                chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+                for chunk in raw_chunks
+            )
+            
+            # Use existing LLM enhancement
+            if not self.skip_llm and self.llm_available and len(combined_text) > 100:
+                educational_content = self._llm_enhance_concept(
+                    title=title,
+                    definition="",
+                    raw_text=combined_text,
+                    concept_id=concept_id,
+                )
+            else:
+                educational_content = self._create_basic_notes(
+                    title=title,
+                    raw_text=combined_text,
+                )
+            
+            return {
+                "id": concept_id,
+                "title": title,
+                **educational_content,
+                "pedagogical_mode": False,
+            }
+    
+    def _convert_pedagogical_to_notes(
+        self,
+        pedagogical_concept: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Convert pedagogical concept structure to standard educational_notes format.
+        
+        This ensures backward compatibility with existing code that expects
+        the standard educational_notes structure.
+        
+        Args:
+            pedagogical_concept: The full pedagogical concept structure
+            
+        Returns:
+            Dictionary in standard educational_notes format
+        """
+        sections = pedagogical_concept.get("sections", {})
+        definition_section = sections.get("definition", {})
+        
+        # Transform examples to standard format
+        examples = []
+        for ex in sections.get("examples", []):
+            examples.append({
+                "title": ex.get("title", "Example"),
+                "code": ex.get("sql", ""),
+                "explanation": ex.get("explanation", ""),
+                "scenario": ex.get("scenario", ""),
+                "difficulty": ex.get("difficulty", "beginner"),
+            })
+        
+        # Transform common mistakes to standard format
+        common_mistakes = []
+        for mistake in sections.get("common_mistakes", []):
+            common_mistakes.append({
+                "mistake": mistake.get("title", "Mistake"),
+                "incorrect_code": mistake.get("error_sql", ""),
+                "correct_code": mistake.get("fix_sql", ""),
+                "explanation": f"{mistake.get('why_it_happens', '')} Key takeaway: {mistake.get('key_takeaway', '')}",
+            })
+        
+        # Get practice challenge
+        challenge = sections.get("practice_challenge", {})
+        
+        return {
+            "definition": definition_section.get("concept_explanation", ""),
+            "explanation": self._build_explanation_from_pedagogical(pedagogical_concept),
+            "key_points": pedagogical_concept.get("learning_objectives", []),
+            "examples": examples,
+            "common_mistakes": common_mistakes,
+            "practice": {
+                "question": challenge.get("description", ""),
+                "solution": f"{challenge.get('solution', '')}\n\n{challenge.get('explanation', '')}",
+                "hint": challenge.get("hint", ""),
+            },
+            "learning_objectives": pedagogical_concept.get("learning_objectives", []),
+            "prerequisites": pedagogical_concept.get("prerequisite_concepts", []),
+        }
+    
+    def _build_explanation_from_pedagogical(
+        self,
+        pedagogical_concept: dict[str, Any],
+    ) -> str:
+        """
+        Build a comprehensive explanation from pedagogical concept structure.
+        
+        Args:
+            pedagogical_concept: The pedagogical concept structure
+            
+        Returns:
+            Formatted explanation string
+        """
+        lines = []
+        
+        # Add learning objectives context
+        objectives = pedagogical_concept.get("learning_objectives", [])
+        if objectives:
+            lines.append("**Learning Objectives:**")
+            for obj in objectives:
+                lines.append(f"- {obj}")
+            lines.append("")
+        
+        # Add definition
+        definition = pedagogical_concept.get("sections", {}).get("definition", {}).get("concept_explanation", "")
+        if definition:
+            lines.append(definition)
+            lines.append("")
+        
+        # Add visual diagram if available
+        diagram = pedagogical_concept.get("sections", {}).get("definition", {}).get("visual_diagram", "").strip()
+        if diagram:
+            lines.append("```")
+            lines.append(diagram)
+            lines.append("```")
+            lines.append("")
+        
+        # Add practice problem links note
+        problems = pedagogical_concept.get("practice_problems", [])
+        if problems:
+            lines.append(f"**Related Practice Problems:** {', '.join(problems)}")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def generate_pedagogical_markdown(
+        self,
+        concept_id: str,
+        concept_data: dict[str, Any],
+    ) -> str:
+        """
+        Generate markdown for a concept using the pedagogical generator.
+        
+        This method uses the PedagogicalContentGenerator's markdown generation
+        which produces more structured output than the standard format.
+        
+        Args:
+            concept_id: The concept identifier
+            concept_data: The concept data (must include 'pedagogical_structure')
+            
+        Returns:
+            Formatted markdown string
+            
+        Note:
+            If concept_data doesn't contain 'pedagogical_structure', falls back
+            to standard _generate_concept_markdown method.
+        """
+        # Check if we have pedagogical structure
+        ped_structure = concept_data.get("pedagogical_structure")
+        
+        if ped_structure and self.use_pedagogical:
+            # Use pedagogical generator's markdown
+            return self.pedagogical_generator.generate_markdown(ped_structure)
+        else:
+            # Fall back to standard markdown generation
+            return self._generate_concept_markdown(concept_id, concept_data)
+
     def process_pdf(
         self,
         pdf_path: Path,
@@ -1510,7 +1781,12 @@ class EducationalNoteGenerator:
         progress_callback: callable | None = None,
         max_concepts: int | None = None,
     ) -> dict[str, Any]:
-        """Generate educational notes from structured content."""
+        """
+        Generate educational notes from structured content.
+        
+        INTEGRATION (2026-02-27): When use_pedagogical=True, uses the new
+        pedagogical content generation pipeline instead of standard LLM enhancement.
+        """
         notes = {"concepts": {}}
         
         concepts = list(structured_content.get("concepts", {}).items())
@@ -1533,6 +1809,45 @@ class EducationalNoteGenerator:
                     f"Processing concept {idx}/{total}: {concept_data.get('title', concept_id)}"
                 )
             
+            # ===================================================================
+            # INTEGRATION: Use pedagogical mode if enabled (Added 2026-02-27)
+            # ===================================================================
+            if self.use_pedagogical:
+                if progress_callback:
+                    progress_callback(
+                        "enhance",
+                        percent,
+                        100,
+                        f"Pedagogical mode: {concept_data.get('title', concept_id)[:30]}..."
+                    )
+                
+                # Collect raw chunks from all sections
+                raw_chunks = []
+                for section_name, section_data in concept_data.get("sections", {}).items():
+                    if isinstance(section_data, dict) and "text" in section_data:
+                        raw_chunks.append({
+                            "text": section_data["text"],
+                            "section": section_name,
+                        })
+                
+                # Use process_concept with pedagogical mode
+                pedagogical_result = self.process_concept(
+                    concept_id=concept_id,
+                    raw_chunks=raw_chunks,
+                    concept_title=concept_data.get("title", concept_id),
+                    use_pedagogical=True,
+                )
+                
+                notes["concepts"][concept_id] = {
+                    **concept_data,
+                    **pedagogical_result,
+                    "pedagogical_mode": True,
+                }
+                continue
+            
+            # ===================================================================
+            # LEGACY MODE: Standard LLM enhancement (original code)
+            # ===================================================================
             # Get raw text for this concept
             raw_text = concept_data.get("sections", {}).get("content", {}).get("text", "")
             if not raw_text:
@@ -2277,7 +2592,27 @@ Respond ONLY with the JSON object, nothing else."""
         concept_id: str,
         concept_data: dict,
     ) -> str:
-        """Generate markdown for a single concept in SQL-Adapt standard format."""
+        """
+        Generate markdown for a single concept in SQL-Adapt standard format.
+        
+        INTEGRATION (2026-02-27): When pedagogical_mode=True and
+        pedagogical_structure is present, uses the pedagogical generator's
+        markdown output which includes learning objectives, prerequisites,
+        and structured practice challenges.
+        """
+        # ===================================================================
+        # INTEGRATION: Check for pedagogical structure (Added 2026-02-27)
+        # ===================================================================
+        ped_structure = concept_data.get("pedagogical_structure")
+        is_pedagogical = concept_data.get("pedagogical_mode", False)
+        
+        if ped_structure and is_pedagogical:
+            # Use pedagogical generator's markdown for richer output
+            return self.pedagogical_generator.generate_markdown(ped_structure)
+        
+        # ===================================================================
+        # LEGACY MODE: Standard markdown generation (original code)
+        # ===================================================================
         notes = concept_data.get("educational_notes", {})
         
         lines = []

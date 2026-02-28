@@ -164,8 +164,22 @@ def export_edu(
         "--max-concepts",
         help="Limit number of concepts to process (for testing)",
     ),
+    pedagogical: bool = typer.Option(
+        False,
+        "--pedagogical",
+        help="Use pedagogical content generation with practice schemas and SQL-Adapt integration",
+    ),
 ):
-    """Export PDF to SQL-Adapt with educational note generation."""
+    """
+    Export PDF to SQL-Adapt with educational note generation.
+    
+    INTEGRATION (2026-02-27): Use --pedagogical flag to enable the new
+    pedagogical content generation pipeline with:
+    - Standardized practice schemas (users, orders, products, employees, departments)
+    - Learning objectives and prerequisites
+    - SQL-Adapt practice problem links
+    - Structured common mistakes with error messages
+    """
     from .educational_pipeline import EducationalNoteGenerator
     from .concept_mapper import load_concepts_config, find_concepts_config
     from tqdm import tqdm
@@ -173,6 +187,15 @@ def export_edu(
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
     typer.echo(f"📁 Exporting to: {output_dir}")
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
+    
+    # =======================================================================
+    # INTEGRATION: Display pedagogical mode status (Added 2026-02-27)
+    # =======================================================================
+    if pedagogical:
+        typer.echo("🎓 Pedagogical Mode: ENABLED")
+        typer.echo("   - Using practice schemas (users, orders, products, employees, departments)")
+        typer.echo("   - Generating learning objectives and prerequisites")
+        typer.echo("   - Linking to SQL-Adapt practice problems")
     if llm_provider.lower() == "ollama":
         typer.echo(f"🦙 Ollama Model: {ollama_model}")
     typer.echo()
@@ -225,6 +248,7 @@ def export_edu(
         skip_llm=skip_llm,
         kimi_api_key=os.getenv("KIMI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
+        use_pedagogical=pedagogical,  # INTEGRATION: Pass pedagogical flag (2026-02-27)
     )
     
     typer.echo(f"Configuration:")
@@ -313,6 +337,16 @@ def export_edu(
     typer.echo("📊 Stats:")
     for key, value in result["stats"].items():
         typer.echo(f"   {key}: {value}")
+    
+    # =======================================================================
+    # INTEGRATION: Show pedagogical mode summary (Added 2026-02-27)
+    # =======================================================================
+    if pedagogical:
+        typer.echo()
+        typer.echo("🎓 Pedagogical Features:")
+        typer.echo("   - Content transformed to practice schemas")
+        typer.echo("   - Learning objectives and prerequisites included")
+        typer.echo("   - Practice problem links added where available")
     
     # Show cost if LLM was used
     if result["stats"].get("llm_enhanced"):
