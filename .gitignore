@@ -30,3 +30,6 @@ dist/
 
 # Run scripts (temporary)
 run_*.sh
+test_output/
+output/regenerated/
+content_quality_report*.json
