@@ -1,0 +1,17 @@
+{
+  "indexId": "pdf-index-a8138bdab4b52321",
+  "createdAt": "2026-03-01T17:17:50.306043+00:00",
+  "schemaVersion": "pdf-index-schema-v2",
+  "chunkerVersion": "word-window-180-overlap-30-v1",
+  "embeddingModelId": "hash-embedding-v1",
+  "sourceDocs": [
+    {
+      "docId": "golden-chapter",
+      "filename": "golden_chapter.pdf",
+      "sha256": "e73ca1498822ceeb94d60a2b6ce773bebc39a31dfaca793e7d8f02d888f9bcbf",
+      "pageCount": 8
+    }
+  ],
+  "docCount": 1,
+  "chunkCount": 8
+}

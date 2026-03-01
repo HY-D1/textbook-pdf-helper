@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "asset-manifest-v1",
+  "docId": "golden-chapter",
+  "createdAt": "2026-03-01T17:17:50.305363+00:00",
+  "assets": [
+    {
+      "id": "page-003-table-01",
+      "type": "table",
+      "path": "assets/tables/golden-chapter/page-003-table-01.html",
+      "pageNumber": 3,
+      "caption": "",
+      "width": null,
+      "height": null,
+      "extractedText": ""
+    },
+    {
+      "id": "page-007-table-01",
+      "type": "table",
+      "path": "assets/tables/golden-chapter/page-007-table-01.html",
+      "pageNumber": 7,
+      "caption": "",
+      "width": null,
+      "height": null,
+      "extractedText": ""
+    }
+  ]
+}

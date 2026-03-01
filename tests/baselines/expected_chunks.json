@@ -1,0 +1,44 @@
+{
+  "description": "Expected chunk structure for golden_chapter.pdf",
+  "document": {
+    "schemaVersion": "pdf-index-schema-v2",
+    "chunkerVersion": "word-window-180-overlap-30-v1",
+    "embeddingModelId": "hash-embedding-v1",
+    "expectedPageCount": 8,
+    "expectedChunkCountRange": {
+      "min": 15,
+      "max": 50
+    },
+    "docId": "golden-chapter"
+  },
+  "validation": {
+    "chunkIdFormat": "{docId}:p{page}:c{chunkIndex}",
+    "embeddingDimension": 24,
+    "minChunkLength": 20,
+    "maxNonPrintableRatio": 0.1
+  },
+  "expectedContent": {
+    "keywords": [
+      "SELECT",
+      "WHERE",
+      "JOIN",
+      "SQL",
+      "query",
+      "table",
+      "filter",
+      "pattern"
+    ],
+    "tables": [
+      {
+        "name": "SELECT Patterns",
+        "page": 3,
+        "keywords": ["Pattern", "SQL Statement", "Description"]
+      },
+      {
+        "name": "JOIN Types",
+        "page": 7,
+        "keywords": ["Join Type", "Description", "Use Case"]
+      }
+    ]
+  }
+}
