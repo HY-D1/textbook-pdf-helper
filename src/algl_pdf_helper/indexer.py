@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Literal
+
+import typer
 
 from .chunker import chunk_page_words
 from .clean import normalize_text, strip_repeated_headers_footers
@@ -26,6 +30,9 @@ from .markdown_generator import (
     generate_index_readme,
 )
 from .models import (
+    ASSET_MANIFEST_VERSION,
+    AssetManifest,
+    AssetReference,
     ConceptManifest,
     IndexBuildOptions,
     PdfIndexChunk,
@@ -33,6 +40,19 @@ from .models import (
     PdfIndexManifest,
     PdfSourceDoc,
 )
+
+
+try:
+    from .asset_extractor import (
+        AssetExtractor,
+        ExtractedAsset,
+        extract_assets_from_pdf,
+    )
+    ASSET_EXTRACTION_AVAILABLE = True
+except ImportError:
+    ASSET_EXTRACTION_AVAILABLE = False
+    # Type placeholder for when asset_extractor is not available
+    ExtractedAsset = Any  # type: ignore
 
 
 _DEFAULT_ALIASES: dict[str, str] = {
@@ -91,6 +111,114 @@ def discover_pdfs(input_path: Path) -> list[Path]:
     return pdfs
 
 
+def extract_and_save_assets(
+    pdf_path: Path,
+    doc_id: str,
+    out_dir: Path,
+    backend: Literal["pymupdf", "marker"] = "pymupdf",
+    extract_images: bool = True,
+    extract_tables: bool = True,
+) -> AssetManifest | None:
+    """Extract and save assets from a PDF.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        doc_id: Document ID for asset naming
+        out_dir: Output directory for assets
+        backend: Extraction backend to use
+        extract_images: Whether to extract images
+        extract_tables: Whether to extract tables
+        
+    Returns:
+        AssetManifest if extraction successful, None otherwise
+    """
+    if not ASSET_EXTRACTION_AVAILABLE:
+        return None
+    
+    try:
+        extractor = AssetExtractor(backend=backend)
+        
+        images: list[ExtractedAsset] = []
+        tables: list[ExtractedAsset] = []
+        
+        if extract_images:
+            images = extractor.extract_images(pdf_path, doc_id)
+        
+        if extract_tables:
+            tables = extractor.extract_tables(pdf_path, doc_id)
+        
+        # Save assets to disk
+        extractor.save_assets(images, out_dir)
+        extractor.save_assets(tables, out_dir)
+        
+        # Build provenance mapping
+        provenance: dict[str, list[int]] = {}
+        for asset in images + tables:
+            if asset.id not in provenance:
+                provenance[asset.id] = []
+            if asset.page not in provenance[asset.id]:
+                provenance[asset.id].append(asset.page)
+        
+        # Create manifest
+        created_at = datetime.now(timezone.utc).isoformat()
+        
+        # Convert to Pydantic models for JSON serialization
+        def asset_to_reference(asset) -> AssetReference:
+            """Convert extracted asset to AssetReference."""
+            ref = AssetReference(
+                id=asset.id,
+                type=asset.type,
+                path=asset.get_relative_path(),
+                pageNumber=asset.page,
+                caption=asset.caption or "",
+                extractedText=asset.metadata.get("extracted_text", ""),
+            )
+            # Add dimensions if available
+            if hasattr(asset, 'metadata') and asset.metadata:
+                if 'width' in asset.metadata:
+                    ref.width = asset.metadata['width']
+                if 'height' in asset.metadata:
+                    ref.height = asset.metadata['height']
+            return ref
+        
+        all_assets = []
+        for a in images:
+            all_assets.append(asset_to_reference(a))
+        for a in tables:
+            all_assets.append(asset_to_reference(a))
+        
+        manifest = AssetManifest(
+            schemaVersion=ASSET_MANIFEST_VERSION,
+            docId=doc_id,
+            createdAt=created_at,
+            assets=all_assets,
+        )
+        
+        return manifest
+        
+    except Exception as e:
+        # Log warning but don't fail the index build
+        import warnings
+        warnings.warn(f"Asset extraction failed for '{pdf_path.name}': {e}")
+        return None
+
+
+def save_asset_manifest(
+    manifest: AssetManifest,
+    out_path: Path,
+) -> None:
+    """Save asset manifest to JSON file.
+    
+    Args:
+        manifest: Asset manifest to save
+        out_path: Output path for JSON file
+    """
+    out_path.write_text(
+        json.dumps(manifest.model_dump(), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def build_index(
     input_path: Path,
     out_dir: Path,
@@ -101,7 +229,26 @@ def build_index(
     use_aliases: bool = False,
     strip_headers: bool = True,
     concepts_config: Path | None = None,
+    extract_assets: bool = True,
+    asset_backend: Literal["pymupdf", "marker"] = "pymupdf",
 ) -> PdfIndexDocument:
+    """Build index from PDF(s).
+    
+    Args:
+        input_path: Path to PDF file or directory of PDFs
+        out_dir: Output directory for generated files
+        options: Index build options
+        ocr: Force OCR processing
+        auto_ocr: Automatically use OCR if quality is poor
+        use_aliases: Use stable doc aliases instead of SHA-based IDs
+        strip_headers: Strip repeated headers/footers
+        concepts_config: Path to concepts config file
+        extract_assets: Whether to extract images and tables
+        asset_backend: Backend to use for asset extraction
+        
+    Returns:
+        The generated index document
+    """
     options.validate_pair()
 
     pdfs = discover_pdfs(input_path)
@@ -111,6 +258,7 @@ def build_index(
     used_doc_ids: set[str] = set()
     source_docs: list[PdfSourceDoc] = []
     chunks: list[PdfIndexChunk] = []
+    asset_manifests: dict[str, AssetManifest] = {}  # doc_id -> manifest
 
     for pdf_path in pdfs:
         did_ocr = False
@@ -119,11 +267,29 @@ def build_index(
         
         try:
             # Step 1: Try without OCR first (unless force OCR)
-            pdf_to_use, did_ocr = maybe_ocr_pdf(
-                pdf_path,
-                force=ocr,
-                auto=auto_ocr,
-            )
+            try:
+                pdf_to_use, did_ocr = maybe_ocr_pdf(
+                    pdf_path,
+                    force=ocr,
+                    auto=auto_ocr,
+                )
+            except RuntimeError as e:
+                if "ocrmypdf is not installed" in str(e):
+                    if ocr:
+                        typer.echo(f"❌ Error: {e}", err=True)
+                        typer.echo("Install with: pip install -e '.[ocr]'", err=True)
+                        raise typer.Exit(1)
+                    else:
+                        # Auto-OCR was triggered but ocrmypdf not installed
+                        import warnings as _warnings
+                        _warnings.warn(
+                            f"Low quality text detected but ocrmypdf not installed. "
+                            f"Install with: pip install -e '.[ocr]'"
+                        )
+                        pdf_to_use = pdf_path
+                        did_ocr = False
+                else:
+                    raise
 
             sha = sha256_file(pdf_path)
             filename = pdf_path.name
@@ -142,8 +308,8 @@ def build_index(
             
             # Step 3: If quality is poor and we didn't OCR yet, retry with OCR
             if not quality_info["is_quality_good"] and not did_ocr and not ocr:
-                import warnings
-                warnings.warn(
+                import warnings as _warnings
+                _warnings.warn(
                     f"Low quality extraction for '{filename}': {quality_info['reason']}. "
                     f"Retrying with OCR..."
                 )
@@ -153,11 +319,23 @@ def build_index(
                     cleanup_temp_pdf(pdf_to_use)
                 
                 # Force OCR
-                pdf_to_use, did_ocr = maybe_ocr_pdf(
-                    pdf_path,
-                    force=True,
-                    auto=False,
-                )
+                try:
+                    pdf_to_use, did_ocr = maybe_ocr_pdf(
+                        pdf_path,
+                        force=True,
+                        auto=False,
+                    )
+                except RuntimeError as e:
+                    if "ocrmypdf is not installed" in str(e):
+                        import warnings as _warnings
+                        _warnings.warn(
+                            f"OCR recommended but ocrmypdf not installed. "
+                            f"Install with: pip install -e '.[ocr]'"
+                        )
+                        pdf_to_use = pdf_path
+                        did_ocr = False
+                    else:
+                        raise
                 
                 # Re-extract with OCR
                 pages = extract_pages_fitz(pdf_to_use)
@@ -184,6 +362,19 @@ def build_index(
                     pageCount=len(pages),
                 )
             )
+
+            # Step 4: Extract assets (images and tables) if enabled
+            if extract_assets and ASSET_EXTRACTION_AVAILABLE:
+                asset_manifest = extract_and_save_assets(
+                    pdf_path=pdf_to_use,
+                    doc_id=doc_id,
+                    out_dir=out_dir,
+                    backend=asset_backend,
+                    extract_images=True,
+                    extract_tables=True,
+                )
+                if asset_manifest:
+                    asset_manifests[doc_id] = asset_manifest
 
             for page_num, page_text in pages:
                 for chunk_id, chunk_text in chunk_page_words(
@@ -274,6 +465,12 @@ def build_index(
         encoding="utf-8",
     )
 
+    # Save asset manifests
+    if asset_manifests:
+        for doc_id, asset_manifest in asset_manifests.items():
+            asset_manifest_path = out_dir / f"asset-manifest-{doc_id}.json"
+            save_asset_manifest(asset_manifest, asset_manifest_path)
+
     # Generate concept manifest and markdown files if config exists
     concept_manifest: ConceptManifest | None = None
     
@@ -302,18 +499,23 @@ def build_index(
                 out_dir / "concept-manifest.json",
             )
             
+            # Get combined asset manifest for primary doc
+            combined_asset_manifest = asset_manifests.get(primary_doc_id)
+            
             # Generate markdown files
             concepts_dir = out_dir / "concepts"
             generate_all_concept_markdowns(
                 concept_manifest,
                 chunks,
                 concepts_dir,
+                asset_manifest=combined_asset_manifest,
             )
             
             # Generate README index
             generate_index_readme(
                 concept_manifest,
                 concepts_dir / "README.md",
+                asset_manifest=combined_asset_manifest,
             )
             
         except Exception as e:

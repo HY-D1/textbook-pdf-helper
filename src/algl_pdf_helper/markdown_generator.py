@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .models import ConceptInfo, ConceptManifest, PdfIndexChunk
+    from .models import AssetManifest, AssetReference, ConceptInfo, ConceptManifest, PdfIndexChunk
 
 
 SECTION_TITLES = {
@@ -17,6 +17,100 @@ SECTION_TITLES = {
     "tips": "Tips",
     "practice": "Practice",
 }
+
+
+def _generate_yaml_frontmatter(
+    concept: "ConceptInfo",
+    doc_id: str,
+    include_provenance: bool = True,
+) -> str:
+    """Generate YAML frontmatter with metadata and provenance.
+    
+    Args:
+        concept: Concept metadata
+        doc_id: Source document ID
+        include_provenance: Whether to include provenance links
+        
+    Returns:
+        YAML frontmatter string
+    """
+    lines: list[str] = ["---"]
+    lines.append(f'title: "{concept.title}"')
+    lines.append(f'concept_id: "{concept.id}"')
+    lines.append(f'difficulty: "{concept.difficulty}"')
+    lines.append(f'estimated_read_time: {concept.estimatedReadTime}')
+    lines.append(f'source_doc: "{doc_id}"')
+    
+    if concept.pageReferences:
+        pages_str = ", ".join(str(p) for p in sorted(set(concept.pageReferences)))
+        lines.append(f'source_pages: [{pages_str}]')
+    
+    if include_provenance:
+        # Collect all chunk IDs from all sections
+        all_chunks: set[str] = set()
+        for section in concept.sections.values():
+            all_chunks.update(section.chunkIds)
+        
+        if all_chunks:
+            chunks_list = ', '.join(f'"{c}"' for c in sorted(all_chunks))
+            lines.append(f'source_chunks: [{chunks_list}]')
+    
+    if concept.tags:
+        tags_str = ', '.join(f'"{t}"' for t in concept.tags)
+        lines.append(f'tags: [{tags_str}]')
+    
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _generate_view_source_links(
+    concept: "ConceptInfo",
+    doc_id: str,
+    base_url: str = "",
+) -> str:
+    """Generate "View Source" links for the concept.
+    
+    Args:
+        concept: Concept metadata
+        doc_id: Source document ID
+        base_url: Base URL for source viewer
+        
+    Returns:
+        Markdown string with view source links
+    """
+    lines: list[str] = []
+    
+    if not concept.pageReferences:
+        return ""
+    
+    lines.append("### 📖 View Source")
+    lines.append("")
+    lines.append("View the original textbook passages for this concept:")
+    lines.append("")
+    
+    # Page links
+    for page in sorted(set(concept.pageReferences)):
+        if base_url:
+            link = f"{base_url}/view?doc={doc_id}&page={page}"
+            lines.append(f"- [Page {page}]({link})")
+        else:
+            # Use HTML comment for chunk reference
+            lines.append(f"- Page {page} <!-- open-page: {doc_id}:{page} -->")
+    
+    lines.append("")
+    
+    # Source chunks hidden comment
+    all_chunks: set[str] = set()
+    for section in concept.sections.values():
+        all_chunks.update(section.chunkIds)
+    
+    if all_chunks:
+        chunks_str = ", ".join(sorted(all_chunks))
+        lines.append(f"<!-- source-chunks: {chunks_str} -->")
+        lines.append("")
+    
+    return "\n".join(lines)
 
 # =============================================================================
 # INTEGRATION: Pedagogical Section Titles (Added 2026-02-27)
@@ -81,10 +175,193 @@ def is_pedagogical_format(concept: ConceptInfo) -> bool:
     return False
 
 
+def format_asset_reference(asset: AssetReference) -> str:
+    """Format an asset reference for markdown.
+    
+    Args:
+        asset: The asset reference
+        
+    Returns:
+        Markdown string for the asset reference
+    """
+    if asset.type == "image":
+        caption = asset.caption or f"Figure on page {asset.pageNumber}"
+        return f"![{caption}]({asset.path})"
+    else:  # table
+        # Tables are embedded as HTML
+        return f"<iframe src=\"{asset.path}\" title=\"{asset.caption or 'Table'}\" frameborder=\"0\" width=\"100%\"></iframe>"
+
+
+def get_assets_for_section(
+    section: "ConceptSection",
+    asset_manifest: AssetManifest | None,
+) -> list[AssetReference]:
+    """Get all assets referenced by a concept section.
+    
+    Args:
+        section: The concept section
+        asset_manifest: The asset manifest
+        
+    Returns:
+        List of asset references
+    """
+    if not asset_manifest:
+        return []
+    
+    assets: list[AssetReference] = []
+    seen_ids: set[str] = set()
+    
+    # First check explicit asset IDs
+    for asset_id in getattr(section, "assetIds", []):
+        for asset in asset_manifest.get_all_assets():
+            if asset.id == asset_id and asset.id not in seen_ids:
+                assets.append(asset)
+                seen_ids.add(asset.id)
+                break
+    
+    # Then check pages - include assets that fall on the section's pages
+    for page in section.pageNumbers:
+        page_assets = asset_manifest.get_assets_for_page(page)
+        for asset in page_assets:
+            if asset.id not in seen_ids:
+                assets.append(asset)
+                seen_ids.add(asset.id)
+    
+    return assets
+
+
+def generate_asset_markdown(
+    assets: list[AssetReference],
+    section_name: str | None = None,
+) -> str:
+    """Generate markdown for displaying assets.
+    
+    Args:
+        assets: List of assets to render
+        section_name: Optional section name for context
+        
+    Returns:
+        Markdown string for assets
+    """
+    if not assets:
+        return ""
+    
+    lines: list[str] = []
+    
+    # Separate images and tables
+    images = [a for a in assets if a.type == "image"]
+    tables = [a for a in assets if a.type == "table"]
+    
+    # Render images
+    for asset in images:
+        ref = format_asset_reference(asset)
+        if ref:
+            lines.append("")
+            lines.append(ref)
+            lines.append("")
+    
+    # Render tables (as links to HTML files)
+    for asset in tables:
+        caption = asset.caption or f"Table on page {asset.pageNumber}"
+        lines.append("")
+        lines.append(f"📊 [{caption}]({asset.path})")
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+def generate_provenance_footer(
+    doc_id: str,
+    page_numbers: list[int],
+    include_separator: bool = True,
+) -> str:
+    """Generate a provenance footer with source and page information.
+    
+    Args:
+        doc_id: Source document ID
+        page_numbers: List of page numbers
+        include_separator: Whether to include a separator line before footer
+        
+    Returns:
+        Markdown string for the footer
+    """
+    lines: list[str] = []
+    
+    if include_separator:
+        lines.append("")
+        lines.append("---")
+    
+    lines.append("")
+    lines.append(f"**Source:** `{doc_id}`")
+    
+    if page_numbers:
+        pages_str = ", ".join(str(p) for p in sorted(set(page_numbers)))
+        lines.append(f"**Pages:** {pages_str}")
+    
+    lines.append("")
+    
+    return "\n".join(lines)
+
+
+def generate_frontmatter(
+    concept: ConceptInfo,
+    asset_manifest: AssetManifest | None,
+) -> str:
+    """Generate YAML frontmatter for a concept markdown file.
+    
+    Args:
+        concept: Concept metadata
+        asset_manifest: Optional asset manifest for asset references
+        
+    Returns:
+        YAML frontmatter string
+    """
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f'id: "{concept.id}"')
+    lines.append(f'title: "{concept.title}"')
+    lines.append(f'difficulty: "{concept.difficulty}"')
+    lines.append(f'estimated_read_time: {concept.estimatedReadTime}')
+    
+    if concept.tags:
+        lines.append(f"tags: [{', '.join(f'\"{t}\"' for t in concept.tags)}]")
+    
+    if concept.pageReferences:
+        pages_str = ", ".join(str(p) for p in concept.pageReferences)
+        lines.append(f"pages: [{pages_str}]")
+    
+    # Add asset references to frontmatter
+    if asset_manifest:
+        all_assets: list[AssetReference] = []
+        seen_ids: set[str] = set()
+        for section in concept.sections.values():
+            section_assets = get_assets_for_section(section, asset_manifest)
+            for asset in section_assets:
+                if asset.id not in seen_ids:
+                    all_assets.append(asset)
+                    seen_ids.add(asset.id)
+        
+        if all_assets:
+            lines.append("assets:")
+            for asset in all_assets:
+                lines.append(f'  - id: "{asset.id}"')
+                lines.append(f'    type: "{asset.type}"')
+                lines.append(f'    path: "{asset.path}"')
+                lines.append(f'    page: {asset.pageNumber}')
+                if asset.caption:
+                    lines.append(f'    caption: "{asset.caption}"')
+    
+    lines.append("---")
+    lines.append("")
+    
+    return "\n".join(lines)
+
+
 def generate_pedagogical_markdown(
     concept: ConceptInfo,
     chunks: list[PdfIndexChunk],
     doc_id: str,
+    asset_manifest: AssetManifest | None = None,
 ) -> str:
     """
     Generate markdown for a concept in the pedagogical format.
@@ -97,11 +374,14 @@ def generate_pedagogical_markdown(
     - Common mistakes with error messages and fixes
     - Practice challenges with hints and solutions
     - Links to SQL-Adapt practice problems
+    - Asset references (images/tables)
+    - Provenance footer
     
     Args:
         concept: Concept metadata in pedagogical format
         chunks: All available chunks
         doc_id: Source document ID
+        asset_manifest: Optional asset manifest for inline assets
         
     Returns:
         Markdown formatted string
@@ -111,12 +391,15 @@ def generate_pedagogical_markdown(
     # ===================================================================
     if is_pedagogical_format(concept):
         # Use pedagogical markdown generation for richer output
-        return generate_pedagogical_markdown(concept, chunks, doc_id)
+        return generate_pedagogical_markdown(concept, chunks, doc_id, asset_manifest)
     
     # ===================================================================
     # LEGACY MODE: Standard markdown generation
     # ===================================================================
     lines: list[str] = []
+    
+    # Frontmatter
+    lines.append(generate_frontmatter(concept, asset_manifest))
     
     # Title
     lines.append(f"# {concept.title}")
@@ -146,6 +429,11 @@ def generate_pedagogical_markdown(
             if obj.strip():
                 lines.append(f"- {obj.strip()}")
         lines.append("")
+        
+        # Add assets for this section
+        if asset_manifest:
+            assets = get_assets_for_section(learning_obj_section, asset_manifest)
+            lines.append(generate_asset_markdown(assets, "learning_objectives"))
     
     # Prerequisites
     prereq_section = concept.sections.get("prerequisite_concepts")
@@ -172,6 +460,11 @@ def generate_pedagogical_markdown(
         elif hasattr(definition_section, "concept_explanation"):
             lines.append(definition_section.concept_explanation)
         lines.append("")
+        
+        # Add assets for this section
+        if asset_manifest:
+            assets = get_assets_for_section(definition_section, asset_manifest)
+            lines.append(generate_asset_markdown(assets, "definition"))
         
         # Visual diagram if available
         if hasattr(definition_section, "visual_diagram") and definition_section.visual_diagram:
@@ -227,6 +520,11 @@ def generate_pedagogical_markdown(
                     lines.append("")
                     lines.append(expected)
                     lines.append("")
+        
+        # Add assets for this section
+        if asset_manifest:
+            assets = get_assets_for_section(examples_section, asset_manifest)
+            lines.append(generate_asset_markdown(assets, "examples"))
     
     # Common Mistakes with pedagogical structure
     mistakes_section = concept.sections.get("common_mistakes")
@@ -277,6 +575,11 @@ def generate_pedagogical_markdown(
                     if takeaway:
                         lines.append(f"💡 **Key Takeaway:** {takeaway}")
                         lines.append("")
+        
+        # Add assets for this section
+        if asset_manifest:
+            assets = get_assets_for_section(mistakes_section, asset_manifest)
+            lines.append(generate_asset_markdown(assets, "common_mistakes"))
     
     # Practice Challenge
     challenge_section = concept.sections.get("practice_challenge")
@@ -323,14 +626,6 @@ def generate_pedagogical_markdown(
                 lines.append(f"- [{prob_id}](/practice/{prob_id})")
             lines.append("")
     
-    # Page references
-    page_link = format_page_links(concept.pageReferences, doc_id)
-    if page_link:
-        lines.append("---")
-        lines.append("")
-        lines.append(page_link)
-        lines.append("")
-    
     # Related concepts
     if concept.relatedConcepts:
         lines.append("## Related Concepts")
@@ -349,6 +644,15 @@ def generate_pedagogical_markdown(
             tags_str = " ".join(f"`{tag}`" for tag in display_tags)
             lines.append(f"**Tags:** {tags_str}")
             lines.append("")
+    
+    # Provenance footer
+    all_pages: list[int] = []
+    for section in concept.sections.values():
+        all_pages.extend(section.pageNumbers)
+    if concept.pageReferences:
+        all_pages.extend(concept.pageReferences)
+    
+    lines.append(generate_provenance_footer(doc_id, sorted(set(all_pages))))
     
     # Footer
     lines.append("---")
@@ -380,23 +684,36 @@ def generate_concept_markdown(
     concept: ConceptInfo,
     chunks: list[PdfIndexChunk],
     doc_id: str,
+    asset_manifest: AssetManifest | None = None,
+    include_provenance: bool = True,
+    base_url: str = "",
 ) -> str:
     """
     Generate markdown content for a single concept.
     
     INTEGRATION (2026-02-27): Automatically detects and handles both standard
-    and pedagogical formats. Use generate_pedagogical_markdown() for explicit
-    pedagogical format generation.
+    and pedagogical formats. Now includes asset references and provenance footer.
+    Phase 5: Added provenance support with YAML frontmatter and view source links.
     
     Args:
         concept: Concept metadata
         chunks: All available chunks (to look up text)
         doc_id: Source document ID
+        asset_manifest: Optional asset manifest for inline assets
+        include_provenance: Whether to include provenance metadata
+        base_url: Base URL for source viewer links
         
     Returns:
         Markdown formatted string
     """
+    # Check for pedagogical format
+    if is_pedagogical_format(concept):
+        return generate_pedagogical_markdown(concept, chunks, doc_id, asset_manifest)
+    
     lines: list[str] = []
+    
+    # Frontmatter
+    lines.append(generate_frontmatter(concept, asset_manifest))
     
     # Title
     lines.append(f"# {concept.title}")
@@ -447,6 +764,12 @@ def generate_concept_markdown(
             lines.append("*Content not available in source.*")
         
         lines.append("")
+        
+        # Add inline assets for this section
+        if asset_manifest:
+            assets = get_assets_for_section(section, asset_manifest)
+            if assets:
+                lines.append(generate_asset_markdown(assets, section_name))
     
     # Related concepts
     if concept.relatedConcepts:
@@ -464,6 +787,21 @@ def generate_concept_markdown(
         lines.append(f"**Tags:** {tags_str}")
         lines.append("")
     
+    # Provenance footer
+    all_pages: list[int] = []
+    for section in concept.sections.values():
+        all_pages.extend(section.pageNumbers)
+    if concept.pageReferences:
+        all_pages.extend(concept.pageReferences)
+    
+    lines.append(generate_provenance_footer(doc_id, sorted(set(all_pages)), include_separator=True))
+    
+    # Footer
+    lines.append("---")
+    lines.append("")
+    lines.append("*Content generated for SQL-Adapt Learning Platform*")
+    lines.append("")
+    
     return "\n".join(lines)
 
 
@@ -472,6 +810,9 @@ def save_concept_markdown(
     chunks: list[PdfIndexChunk],
     doc_id: str,
     out_dir: Path,
+    asset_manifest: AssetManifest | None = None,
+    include_provenance: bool = True,
+    base_url: str = "",
 ) -> Path:
     """Generate and save markdown for a concept.
     
@@ -480,13 +821,20 @@ def save_concept_markdown(
         chunks: All available chunks
         doc_id: Source document ID
         out_dir: Output directory for markdown files
+        asset_manifest: Optional asset manifest for inline assets
+        include_provenance: Whether to include provenance metadata
+        base_url: Base URL for source viewer links
         
     Returns:
         Path to saved file
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    markdown = generate_concept_markdown(concept, chunks, doc_id)
+    markdown = generate_concept_markdown(
+        concept, chunks, doc_id, asset_manifest,
+        include_provenance=include_provenance,
+        base_url=base_url,
+    )
     
     file_path = out_dir / f"{concept.id}.md"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -499,6 +847,9 @@ def generate_all_concept_markdowns(
     manifest: ConceptManifest,
     chunks: list[PdfIndexChunk],
     out_dir: Path,
+    asset_manifest: AssetManifest | None = None,
+    include_provenance: bool = True,
+    base_url: str = "",
 ) -> list[Path]:
     """Generate markdown files for all concepts in manifest.
     
@@ -506,6 +857,9 @@ def generate_all_concept_markdowns(
         manifest: Concept manifest with all concepts
         chunks: All available chunks
         out_dir: Output directory
+        asset_manifest: Optional asset manifest for inline assets
+        include_provenance: Whether to include provenance metadata
+        base_url: Base URL for source viewer links
         
     Returns:
         List of paths to generated files
@@ -515,7 +869,9 @@ def generate_all_concept_markdowns(
     generated: list[Path] = []
     for concept in manifest.concepts.values():
         file_path = save_concept_markdown(
-            concept, chunks, manifest.sourceDocId, out_dir
+            concept, chunks, manifest.sourceDocId, out_dir, asset_manifest,
+            include_provenance=include_provenance,
+            base_url=base_url,
         )
         generated.append(file_path)
     
@@ -525,12 +881,14 @@ def generate_all_concept_markdowns(
 def generate_index_readme(
     manifest: ConceptManifest,
     out_path: Path,
+    asset_manifest: AssetManifest | None = None,
 ) -> Path:
     """Generate README.md index of all concepts.
     
     Args:
         manifest: Concept manifest
         out_path: Output path for README
+        asset_manifest: Optional asset manifest for statistics
         
     Returns:
         Path to saved file
@@ -540,10 +898,21 @@ def generate_index_readme(
         "",
         f"**Source:** {manifest.sourceDocId}",
         f"**Total Concepts:** {manifest.conceptCount}",
+    ]
+    
+    # Add asset statistics if available
+    if asset_manifest:
+        total_images = len(asset_manifest.images)
+        total_tables = len(asset_manifest.tables)
+        if total_images > 0 or total_tables > 0:
+            lines.append(f"**Total Images:** {total_images}")
+            lines.append(f"**Total Tables:** {total_tables}")
+    
+    lines.extend([
         "",
         "## Concepts by Difficulty",
         "",
-    ]
+    ])
     
     # Group by difficulty
     by_difficulty: dict[str, list[ConceptInfo]] = {
