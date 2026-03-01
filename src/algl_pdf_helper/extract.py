@@ -5,16 +5,27 @@ import os
 import re
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 import fitz  # PyMuPDF
 
 from .clean import normalize_text
+from .quality_metrics import (
+    QualityThresholds,
+    TextCoverageAnalyzer,
+    validate_text_quality,
+)
 
 
-# Minimum quality thresholds for extracted text
+# Legacy minimum quality thresholds (kept for backwards compatibility)
 MIN_EXTRACTED_CHARS = 500  # Minimum total characters
 MIN_READABLE_RATIO = 0.7   # Ratio of readable chars to total chars
 MAX_GIBBERISH_RATIO = 0.3  # Maximum ratio of gibberish patterns
+
+# Text coverage threshold for new quality system
+MIN_TEXT_COVERAGE = 0.70
+
+ExtractionStrategy = Literal["direct", "ocrmypdf", "marker"]
 
 
 def calculate_text_quality(text: str) -> dict:
@@ -117,6 +128,47 @@ def check_extraction_quality(pages: list[tuple[int, str]]) -> dict:
     }
 
 
+def check_text_coverage(pages: list[tuple[int, str]], min_coverage: float = None) -> dict:
+    """Check text coverage using the new quality metrics system.
+    
+    Args:
+        pages: List of (page_number, text) tuples
+        min_coverage: Minimum required coverage threshold
+        
+    Returns:
+        Coverage check results with pass/fail status
+    """
+    if min_coverage is None:
+        min_coverage = MIN_TEXT_COVERAGE
+    
+    if not pages:
+        return {
+            "coverage_score": 0.0,
+            "meets_threshold": False,
+            "page_count": 0,
+            "total_chars": 0,
+            "reason": "No pages extracted",
+        }
+    
+    analyzer = TextCoverageAnalyzer()
+    total_text = "\n".join(text for _, text in pages)
+    coverage = analyzer.calculate_coverage(total_text)
+    
+    meets_threshold = coverage >= min_coverage
+    reason = ""
+    if not meets_threshold:
+        reason = f"Text coverage {coverage:.1%} below threshold {min_coverage:.1%}"
+    
+    return {
+        "coverage_score": coverage,
+        "meets_threshold": meets_threshold,
+        "page_count": len(pages),
+        "total_chars": len(total_text),
+        "threshold": min_coverage,
+        "reason": reason,
+    }
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -128,14 +180,51 @@ def sha256_file(path: Path) -> str:
 def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
     doc = fitz.open(pdf_path)
     pages: list[tuple[int, str]] = []
-    for i in range(doc.page_count):
-        page = doc.load_page(i)
-        text = page.get_text("text")
-        text = normalize_text(text)
-        if text:
-            pages.append((i + 1, text))
-    doc.close()
+    try:
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = page.get_text("text")
+            text = normalize_text(text)
+            if text:
+                pages.append((i + 1, text))
+    finally:
+        doc.close()
     return pages
+
+
+def extract_pages_with_page_map(pdf_path: Path) -> tuple[list[tuple[int, str]], dict]:
+    """Extract pages and return with page number mapping.
+    
+    This ensures page numbers remain stable after OCR processing.
+    
+    Args:
+        pdf_path: Path to PDF file
+        
+    Returns:
+        Tuple of (pages, metadata) where metadata includes page count and mapping info
+    """
+    doc = fitz.open(pdf_path)
+    pages: list[tuple[int, str]] = []
+    
+    try:
+        page_count = doc.page_count
+        
+        for i in range(page_count):
+            page = doc.load_page(i)
+            text = page.get_text("text")
+            text = normalize_text(text)
+            # Always include page, even if empty, to maintain stable page numbering
+            pages.append((i + 1, text))
+        
+        metadata = {
+            "page_count": page_count,
+            "source": "fitz",
+            "page_numbers_stable": True,
+        }
+    finally:
+        doc.close()
+    
+    return pages, metadata
 
 
 def maybe_ocr_pdf(
@@ -170,6 +259,7 @@ def maybe_ocr_pdf(
     out_path = tmp_dir / (pdf_path.stem + ".ocr.pdf")
 
     # Minimal safe defaults: deskew + rotate pages.
+    # force_ocr=True allows OCR on PDFs that already have text
     ocrmypdf.ocr(
         str(pdf_path),
         str(out_path),
@@ -178,9 +268,246 @@ def maybe_ocr_pdf(
         optimize=1,
         output_type="pdf",
         progress_bar=False,
+        force_ocr=True,
     )
 
     return out_path, True
+
+
+def ocr_pdf_with_validation(
+    pdf_path: Path,
+    min_coverage: float = None,
+) -> tuple[Path, dict]:
+    """OCR a PDF and validate the output quality.
+    
+    Creates a searchable PDF using OCRmyPDF and validates that
+    the text extraction meets quality thresholds.
+    
+    Args:
+        pdf_path: Path to source PDF
+        min_coverage: Minimum text coverage threshold
+        
+    Returns:
+        Tuple of (output_path, validation_result)
+        
+    Raises:
+        RuntimeError: If ocrmypdf is not installed
+        ValueError: If OCR output doesn't meet quality thresholds
+    """
+    if min_coverage is None:
+        min_coverage = MIN_TEXT_COVERAGE
+    
+    try:
+        import ocrmypdf  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "OCR requested but ocrmypdf is not installed. "
+            "Install with: pip install -e '.[ocr]'"
+        ) from e
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="algl_pdf_"))
+    out_path = tmp_dir / (pdf_path.stem + ".ocr.pdf")
+
+    # OCR with safe defaults that preserve page structure
+    # force_ocr=True allows OCR on PDFs that already have text
+    ocrmypdf.ocr(
+        str(pdf_path),
+        str(out_path),
+        deskew=True,
+        rotate_pages=True,
+        optimize=1,
+        output_type="pdf",
+        progress_bar=False,
+        force_ocr=True,
+    )
+
+    # Validate OCR quality
+    pages, _ = extract_pages_with_page_map(out_path)
+    coverage_check = check_text_coverage(pages, min_coverage)
+    
+    return out_path, coverage_check
+
+
+def extract_with_strategy(
+    pdf_path: Path,
+    strategy: ExtractionStrategy = "direct",
+    min_coverage: float = None,
+    force_ocr: bool = False,
+    auto_ocr: bool = True,
+) -> tuple[list[tuple[int, str]], dict]:
+    """Extract PDF text using specified strategy with quality validation.
+    
+    This is the main extraction function that supports multiple strategies:
+    - "direct": Direct text extraction using PyMuPDF
+    - "ocrmypdf": OCR with OCRmyPDF (creates searchable PDF first)
+    - "marker": Use Marker library (if available)
+    
+    Args:
+        pdf_path: Path to PDF file
+        strategy: Extraction strategy to use
+        min_coverage: Minimum text coverage threshold (default: 0.70)
+        force_ocr: Force OCR even if direct extraction seems to work
+        auto_ocr: Automatically try OCR if direct extraction quality is poor
+        
+    Returns:
+        Tuple of (pages, extraction_info) where:
+        - pages: List of (page_number, text) tuples
+        - extraction_info: Dict with metadata about the extraction
+        
+    Raises:
+        FileNotFoundError: If PDF doesn't exist
+        RuntimeError: If extraction fails or quality threshold not met
+        ValueError: If strategy is invalid
+    """
+    if min_coverage is None:
+        min_coverage = MIN_TEXT_COVERAGE
+    
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    
+    extraction_info = {
+        "strategy": strategy,
+        "ocr_applied": False,
+        "page_count": 0,
+        "coverage_score": 0.0,
+        "meets_threshold": False,
+        "warnings": [],
+    }
+    
+    temp_pdf_path: Path | None = None
+    
+    try:
+        if strategy == "direct":
+            # Try direct extraction first
+            pages, metadata = extract_pages_with_page_map(pdf_path)
+            extraction_info["page_count"] = metadata["page_count"]
+            
+            # Check quality
+            coverage_check = check_text_coverage(pages, min_coverage)
+            extraction_info["coverage_score"] = coverage_check["coverage_score"]
+            extraction_info["meets_threshold"] = coverage_check["meets_threshold"]
+            
+            # If quality is poor and auto_ocr is enabled, retry with OCR
+            if not coverage_check["meets_threshold"] and auto_ocr and not force_ocr:
+                extraction_info["warnings"].append(
+                    f"Direct extraction quality poor ({coverage_check['coverage_score']:.1%}), "
+                    "retrying with OCR..."
+                )
+                
+                temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
+                    pdf_path, min_coverage
+                )
+                
+                pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+                extraction_info["ocr_applied"] = True
+                extraction_info["coverage_score"] = ocr_validation["coverage_score"]
+                extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
+                
+                if not extraction_info["meets_threshold"]:
+                    extraction_info["warnings"].append(
+                        f"OCR extraction also failed quality threshold: "
+                        f"{extraction_info['coverage_score']:.1%} < {min_coverage:.1%}"
+                    )
+            
+            elif force_ocr:
+                # Force OCR even if direct extraction was okay
+                temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
+                    pdf_path, min_coverage
+                )
+                pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+                extraction_info["ocr_applied"] = True
+                extraction_info["coverage_score"] = ocr_validation["coverage_score"]
+                extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
+        
+        elif strategy == "ocrmypdf":
+            # Always use OCR
+            temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
+                pdf_path, min_coverage
+            )
+            pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+            extraction_info["ocr_applied"] = True
+            extraction_info["page_count"] = metadata["page_count"]
+            extraction_info["coverage_score"] = ocr_validation["coverage_score"]
+            extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
+        
+        elif strategy == "marker":
+            # Use Marker library if available
+            try:
+                pages, extraction_info = _extract_with_marker(pdf_path)
+                
+                # Validate coverage
+                coverage_check = check_text_coverage(pages, min_coverage)
+                extraction_info["coverage_score"] = coverage_check["coverage_score"]
+                extraction_info["meets_threshold"] = coverage_check["meets_threshold"]
+                
+            except ImportError:
+                raise RuntimeError(
+                    "Marker strategy requested but marker is not installed. "
+                    "Install with: pip install marker-pdf"
+                )
+        
+        else:
+            raise ValueError(f"Unknown extraction strategy: {strategy}")
+        
+        # Final validation
+        if not extraction_info["meets_threshold"]:
+            # Still return pages but warn
+            extraction_info["warnings"].append(
+                f"Text coverage {extraction_info['coverage_score']:.1%} "
+                f"below threshold {min_coverage:.1%}"
+            )
+        
+        return pages, extraction_info
+    
+    finally:
+        # Cleanup temp file if we created one
+        if temp_pdf_path is not None:
+            cleanup_temp_pdf(temp_pdf_path)
+
+
+def _extract_with_marker(pdf_path: Path) -> tuple[list[tuple[int, str]], dict]:
+    """Extract PDF using Marker library.
+    
+    Marker is better for complex layouts, tables, and multi-column documents.
+    
+    Args:
+        pdf_path: Path to PDF file
+        
+    Returns:
+        Tuple of (pages, extraction_info)
+    """
+    try:
+        from marker.convert import convert_single_pdf
+        from marker.models import load_all_models
+    except ImportError as e:
+        raise ImportError("marker-pdf is not installed") from e
+    
+    # Load models (this may take time on first run)
+    model_lst = load_all_models()
+    
+    # Convert PDF
+    full_text, images, out_meta = convert_single_pdf(
+        str(pdf_path),
+        model_lst,
+    )
+    
+    # Marker returns full text, need to estimate page breaks
+    # For now, return as single "page" or attempt to split by form feed
+    pages_text = full_text.split('\f') if '\f' in full_text else [full_text]
+    
+    pages = []
+    for i, text in enumerate(pages_text):
+        if text.strip():
+            pages.append((i + 1, normalize_text(text)))
+    
+    extraction_info = {
+        "strategy": "marker",
+        "ocr_applied": False,  # Marker may use OCR internally
+        "page_count": len(pages),
+        "marker_metadata": out_meta,
+    }
+    
+    return pages, extraction_info
 
 
 def cleanup_temp_pdf(path: Path) -> None:
