@@ -1,38 +1,56 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.dist/
-.dist-info/
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
+develop-eggs/
 dist/
-.out/
-
-# Processing folders (keep structure, ignore contents)
-/raw_pdf/*
-!/raw_pdf/.gitkeep
-/read_use/*
-!/read_use/.gitkeep
-
-# Build artifacts
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
-build/
-dist/
-.env
-*.key
-.env.local
+.installed.cfg
+*.egg
+
+# Test cache
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+test_reports/perf_test_output/
+test_reports/real_pdf_benchmarks/
+test_reports/profiling_output/
+test_reports/resource_limit_tests/
+output/
+test_output/
+*.log
 
 # Temporary files
-.process_pid
-*.log
-AGENTS.md
-COMMIT_SUGGESTIONS.md
-CONTENT_QUALITY_RECOMMENDATIONS.md
-
-# Run scripts (temporary)
-run_*.sh
-test_output/
-output/regenerated/
-content_quality_report*.json
+*.tmp
+temp/
+tmp/
