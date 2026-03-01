@@ -1,27 +1,61 @@
 from __future__ import annotations
 
+import json
 import os
 import warnings
 from pathlib import Path
 
 import typer
 
-from .export_sqladapt import DEFAULT_OUTPUT_DIR, export_to_sqladapt
-from .extract import check_extraction_quality, extract_pages_fitz
+from .export_sqladapt import export_to_sqladapt
+from .extract import (
+    check_extraction_quality,
+    check_text_coverage,
+    extract_pages_fitz,
+    extract_with_strategy,
+)
 from .indexer import build_index
-from .models import IndexBuildOptions
+from .models import IndexBuildOptions, OutputConfig
+from .preflight import run_preflight, ExtractionStrategy
+from .quality_metrics import validate_text_quality
+from .structure_extractor import StructureExtractor
+from .mapping_generator import MappingGenerator
 
 app = typer.Typer(add_completion=False)
 
 # Import educational CLI
-from .cli_educational import app as educational_app
-app.add_typer(educational_app, name="edu", help="Educational note generation")
+try:
+    from .cli_educational import app as educational_app
+    app.add_typer(educational_app, name="edu", help="Educational note generation")
+except ImportError:
+    pass  # Educational CLI is optional
+
+
+def resolve_output_dir(output_dir: Path | None) -> Path:
+    """
+    Resolve output directory from CLI option or environment variable.
+    
+    Priority:
+    1. --output-dir CLI option
+    2. SQL_ADAPT_PUBLIC_DIR/textbook-static environment variable
+    3. Error with helpful message
+    """
+    config = OutputConfig(output_dir=output_dir)
+    try:
+        return config.resolve()
+    except ValueError as e:
+        typer.echo(f"❌ Error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()
 def index(
     input_path: Path = typer.Argument(..., exists=True, help="PDF file or directory"),
-    out: Path = typer.Option(Path("./out/pdf-index"), help="Output directory"),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir", "-o",
+        help="Output directory (or set SQL_ADAPT_PUBLIC_DIR env var)"
+    ),
     ocr: bool = typer.Option(False, help="Force OCR (requires ocrmypdf)"),
     auto_ocr: bool = typer.Option(True, help="Auto OCR when little/no text is found"),
     use_aliases: bool = typer.Option(
@@ -37,6 +71,9 @@ def index(
         help="Path to concepts.yaml config (auto-detected if not specified)",
     ),
 ):
+    """Build PDF index to textbook-static format."""
+    out = resolve_output_dir(output_dir)
+    
     opts = IndexBuildOptions(
         chunkWords=chunk_words,
         overlapWords=overlap_words,
@@ -52,29 +89,90 @@ def index(
         strip_headers=strip_headers,
         concepts_config=concepts_config,
     )
-    typer.echo(f"Wrote PDF index to: {out}")
-    typer.echo(f"Index ID: {doc.indexId}")
-    typer.echo(f"Docs: {doc.docCount}  Chunks: {doc.chunkCount}")
+    typer.echo(f"✅ Wrote PDF index to: {out}")
+    typer.echo(f"   Index ID: {doc.indexId}")
+    typer.echo(f"   Docs: {doc.docCount}  Chunks: {doc.chunkCount}")
     
     # Check if concept files were generated
     concept_manifest_path = out / "concept-manifest.json"
     if concept_manifest_path.exists():
         import json
         manifest = json.loads(concept_manifest_path.read_text())
-        typer.echo(f"Concepts: {manifest.get('conceptCount', 0)}  (concept-manifest.json)")
+        typer.echo(f"   Concepts: {manifest.get('conceptCount', 0)}")
         concepts_dir = out / "concepts"
         if concepts_dir.exists():
-            typer.echo(f"Concept markdowns: {concepts_dir}")
+            typer.echo(f"   Concept markdowns: {concepts_dir}")
+    
+    # Show schema info
+    typer.echo(f"\n📋 Schema: textbook-static-v1 (v1.0.0)")
 
 
 @app.command()
 def check_quality(
     pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to check"),
+    detailed: bool = typer.Option(
+        False,
+        "--detailed",
+        help="Show detailed page-by-page analysis",
+    ),
+    preflight_check: bool = typer.Option(
+        False,
+        "--preflight",
+        help="Show comprehensive preflight report",
+    ),
 ):
     """Check text extraction quality of a PDF without processing."""
     typer.echo(f"Checking quality of: {pdf_path.name}")
     typer.echo("")
     
+    # Run comprehensive preflight if requested
+    if preflight_check:
+        typer.echo("=" * 60)
+        typer.echo("COMPREHENSIVE PREFLIGHT REPORT")
+        typer.echo("=" * 60)
+        
+        try:
+            report = run_preflight(pdf_path)
+            
+            typer.echo(f"\n📊 Document Overview")
+            typer.echo(f"   Total pages: {report.page_count}")
+            typer.echo(f"   Sampled pages: {', '.join(map(str, report.sample_pages_analyzed))}")
+            typer.echo(f"   Average text density: {report.average_page_text_density:.0f} chars/page")
+            
+            typer.echo(f"\n🔍 Text Analysis")
+            typer.echo(f"   Has embedded text: {'✅ Yes' if report.has_embedded_text else '❌ No'}")
+            typer.echo(f"   OCR needed: {'⚠️ Yes' if report.ocr_needed else '✅ No'}")
+            typer.echo(f"   Text coverage score: {report.text_coverage_score:.1%}")
+            
+            typer.echo(f"\n📐 Structure Detection")
+            typer.echo(f"   Estimated tables: ~{report.estimated_table_count}")
+            typer.echo(f"   Estimated figures: ~{report.estimated_figure_count}")
+            
+            if report.warning_flags:
+                typer.echo(f"\n⚠️  Warning Flags")
+                for flag in report.warning_flags:
+                    typer.echo(f"   - {flag}")
+            else:
+                typer.echo(f"\n✅ No warnings")
+            
+            typer.echo(f"\n📋 Recommendation")
+            typer.echo(f"   Strategy: {report.recommended_strategy}")
+            
+            if report.recommended_strategy == "direct":
+                typer.echo(f"   ✅ PDF has good embedded text, direct extraction recommended")
+            elif report.recommended_strategy == "ocrmypdf":
+                typer.echo(f"   ⚠️  OCR recommended - use: algl-pdf index {pdf_path} --ocr")
+            elif report.recommended_strategy == "marker":
+                typer.echo(f"   📊 Complex layout detected - Marker may work better")
+            
+            typer.echo("")
+            return
+            
+        except Exception as e:
+            typer.echo(f"❌ Preflight analysis failed: {e}")
+            typer.echo("Falling back to basic quality check...\n")
+    
+    # Basic quality check (legacy)
     pages = extract_pages_fitz(pdf_path)
     quality = check_extraction_quality(pages)
     
@@ -84,28 +182,66 @@ def check_quality(
     typer.echo(f"Gibberish ratio: {quality['gibberish_ratio']:.1%}")
     typer.echo("")
     
+    # Also show new coverage metric
+    coverage = check_text_coverage(pages)
+    typer.echo(f"Text coverage score: {coverage['coverage_score']:.1%}")
+    typer.echo(f"Meets threshold: {'✅ Yes' if coverage['meets_threshold'] else '❌ No'}")
+    typer.echo("")
+    
     if quality['is_quality_good']:
         typer.echo("✅ Quality is GOOD - no OCR needed")
     else:
         typer.echo(f"⚠️  Quality is POOR - OCR recommended")
         if quality['reason']:
             typer.echo(f"   Reason: {quality['reason']}")
+    
+    # Detailed page analysis
+    if detailed and pages:
+        typer.echo("")
+        typer.echo("=" * 60)
+        typer.echo("PAGE-BY-PAGE ANALYSIS")
+        typer.echo("=" * 60)
+        
+        from .quality_metrics import TextCoverageAnalyzer
+        analyzer = TextCoverageAnalyzer()
+        
+        for page_num, text in pages[:20]:  # Limit to first 20 pages
+            validation = validate_text_quality(text)
+            status = "✅" if validation["passed"] else "❌"
+            typer.echo(f"\n{status} Page {page_num}")
+            typer.echo(f"   Characters: {validation['total_chars']:,}")
+            typer.echo(f"   Coverage: {validation['coverage_score']:.1%}")
+            if validation['fail_reasons']:
+                typer.echo(f"   Issues: {', '.join(validation['fail_reasons'])}")
+        
+        if len(pages) > 20:
+            typer.echo(f"\n... ({len(pages) - 20} more pages)")
 
 
 @app.command()
 def export(
-    input_dir: Path = typer.Argument(..., exists=True, help="Input directory with processed PDF (contains concept-manifest.json)"),
-    output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+    input_dir: Path = typer.Argument(
+        ..., 
+        exists=True, 
+        help="Input directory with processed PDF (contains concept-manifest.json)"
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir", "-o",
+        help="Output directory (or set SQL_ADAPT_PUBLIC_DIR env var)"
+    ),
     merge: bool = typer.Option(True, help="Merge with existing exports instead of overwriting"),
 ):
     """Export processed PDF to SQL-Adapt compatible format."""
+    out = resolve_output_dir(output_dir)
+    
     typer.echo(f"Exporting from: {input_dir}")
-    typer.echo(f"Output to: {output_dir}")
+    typer.echo(f"Output to: {out}")
     typer.echo(f"Mode: {'Merge' if merge else 'Overwrite'}")
     typer.echo("")
     
     try:
-        result = export_to_sqladapt(input_dir, output_dir, merge=merge)
+        result = export_to_sqladapt(input_dir, out, merge=merge)
         
         if result.get('is_new_pdf'):
             typer.echo(f"✅ Added new PDF: {result['source_doc_id']}")
@@ -138,7 +274,11 @@ def export(
 @app.command()
 def export_edu(
     pdf_path: Path = typer.Argument(..., exists=True, help="Path to PDF file"),
-    output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, help="Output directory for SQL-Adapt files"),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir", "-o",
+        help="Output directory (or set SQL_ADAPT_PUBLIC_DIR env var)"
+    ),
     llm_provider: str = typer.Option("kimi", help="LLM provider: openai, kimi, or ollama"),
     use_marker: bool = typer.Option(
         True, 
@@ -173,24 +313,24 @@ def export_edu(
     """
     Export PDF to SQL-Adapt with educational note generation.
     
-    INTEGRATION (2026-02-27): Use --pedagogical flag to enable the new
-    pedagogical content generation pipeline with:
-    - Standardized practice schemas (users, orders, products, employees, departments)
-    - Learning objectives and prerequisites
-    - SQL-Adapt practice problem links
-    - Structured common mistakes with error messages
+    Use --pedagogical flag to enable the pedagogical content generation pipeline.
     """
-    from .educational_pipeline import EducationalNoteGenerator
-    from .concept_mapper import load_concepts_config, find_concepts_config
-    from tqdm import tqdm
+    out = resolve_output_dir(output_dir)
+    
+    try:
+        from .educational_pipeline import EducationalNoteGenerator
+        from .concept_mapper import load_concepts_config, find_concepts_config
+        from tqdm import tqdm
+    except ImportError as e:
+        typer.echo(f"❌ Error: Missing dependencies for educational export: {e}")
+        typer.echo("Install with: pip install -e '.[edu]'")
+        raise typer.Exit(1)
     
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
-    typer.echo(f"📁 Exporting to: {output_dir}")
+    typer.echo(f"📁 Exporting to: {out}")
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
     
-    # =======================================================================
-    # INTEGRATION: Display pedagogical mode status (Added 2026-02-27)
-    # =======================================================================
+    # Display pedagogical mode status
     if pedagogical:
         typer.echo("🎓 Pedagogical Mode: ENABLED")
         typer.echo("   - Using practice schemas (users, orders, products, employees, departments)")
@@ -209,7 +349,7 @@ def export_edu(
         typer.echo()
     
     # Load concepts configuration
-    concepts_config_path = concepts_config  # Use the renamed parameter
+    concepts_config_path = concepts_config
     if concepts_config_path is None:
         concepts_config_path = find_concepts_config(pdf_path)
         typer.echo(f"🔍 Looking for concepts config...")
@@ -240,7 +380,6 @@ def export_edu(
     typer.echo()
     
     # Initialize generator with API keys from environment
-    import os
     generator = EducationalNoteGenerator(
         llm_provider=llm_provider, 
         use_marker=use_marker,
@@ -248,7 +387,7 @@ def export_edu(
         skip_llm=skip_llm,
         kimi_api_key=os.getenv("KIMI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
-        use_pedagogical=pedagogical,  # INTEGRATION: Pass pedagogical flag (2026-02-27)
+        use_pedagogical=pedagogical,
     )
     
     typer.echo(f"Configuration:")
@@ -317,7 +456,7 @@ def export_edu(
         result = generator.process_pdf(
             pdf_path, 
             concepts_config=concepts_config_data,
-            output_dir=output_dir,
+            output_dir=out,
             progress_callback=progress_callback,
             max_concepts=max_concepts,
         )
@@ -338,9 +477,7 @@ def export_edu(
     for key, value in result["stats"].items():
         typer.echo(f"   {key}: {value}")
     
-    # =======================================================================
-    # INTEGRATION: Show pedagogical mode summary (Added 2026-02-27)
-    # =======================================================================
+    # Show pedagogical mode summary
     if pedagogical:
         typer.echo()
         typer.echo("🎓 Pedagogical Features:")
@@ -366,18 +503,18 @@ def export_edu(
     doc_id = result["stats"].get("doc_id", "unknown")
     
     # Standard SQL-Adapt format outputs (REQUIRED)
-    if (output_dir / "concept-map.json").exists():
+    if (out / "concept-map.json").exists():
         typer.echo(f"   📋 concept-map.json (main index)")
     
     # Check for concepts in textbook subdirectory
-    concepts_subdir = output_dir / "concepts" / doc_id
+    concepts_subdir = out / "concepts" / doc_id
     if concepts_subdir.exists():
         concept_count = len(list(concepts_subdir.glob("*.md")))
         typer.echo(f"   📚 concepts/{doc_id}/ ({concept_count} concept files)")
         typer.echo(f"   📖 concepts/{doc_id}/README.md")
     
     # Diagnostic/Internal files
-    if (output_dir / "concept-manifest.json").exists():
+    if (out / "concept-manifest.json").exists():
         typer.echo(f"   🔧 concept-manifest.json (internal)")
     if result["outputs"].get("extraction"):
         typer.echo(f"   🔍 {doc_id}-extraction.json (diagnostic)")
@@ -385,6 +522,100 @@ def export_edu(
         typer.echo(f"   📄 {doc_id}-sqladapt.json (diagnostic)")
     if result["outputs"].get("study_guide"):
         typer.echo(f"   📖 {doc_id}-study-guide.md (combined)")
+
+
+@app.command()
+def preflight(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to analyze"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output report as JSON",
+    ),
+):
+    """Run preflight analysis on a PDF to determine extraction strategy."""
+    try:
+        report = run_preflight(pdf_path)
+        
+        if json_output:
+            import json
+            typer.echo(json.dumps(report.to_dict(), indent=2))
+        else:
+            typer.echo(report.summary)
+            
+            typer.echo("")
+            if report.is_extractable:
+                typer.echo("✅ PDF is extractable with recommended strategy")
+            else:
+                typer.echo("❌ PDF may have extraction issues")
+                typer.echo(f"   Consider using: algl-pdf index {pdf_path} --ocr")
+    
+    except FileNotFoundError as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"❌ Preflight failed: {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def extract(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to extract"),
+    out: Path | None = typer.Option(None, help="Output text file (default: stdout)"),
+    strategy: ExtractionStrategy = typer.Option(
+        "direct",
+        "--strategy",
+        help="Extraction strategy: direct, ocrmypdf, marker",
+    ),
+    min_coverage: float = typer.Option(
+        0.70,
+        "--min-coverage",
+        help="Minimum text coverage threshold (0.0-1.0)",
+    ),
+    validate: bool = typer.Option(
+        True,
+        "--validate/--no-validate",
+        help="Validate extraction quality",
+    ),
+):
+    """Extract text from PDF with quality validation."""
+    typer.echo(f"Extracting: {pdf_path.name}")
+    typer.echo(f"Strategy: {strategy}")
+    typer.echo("")
+    
+    try:
+        pages, info = extract_with_strategy(
+            pdf_path,
+            strategy=strategy,
+            min_coverage=min_coverage,
+        )
+        
+        # Combine all text
+        all_text = "\n\n".join(f"--- Page {p} ---\n{t}" for p, t in pages)
+        
+        # Output
+        if out:
+            out.write_text(all_text, encoding="utf-8")
+            typer.echo(f"✅ Text written to: {out}")
+        else:
+            typer.echo(all_text)
+        
+        # Show extraction info
+        typer.echo("")
+        typer.echo("Extraction Summary:")
+        typer.echo(f"  Pages extracted: {len(pages)}")
+        typer.echo(f"  OCR applied: {'Yes' if info.get('ocr_applied') else 'No'}")
+        typer.echo(f"  Coverage score: {info.get('coverage_score', 0):.1%}")
+        typer.echo(f"  Meets threshold: {'✅ Yes' if info.get('meets_threshold') else '⚠️ No'}")
+        
+        if info.get('warnings'):
+            typer.echo("\n  Warnings:")
+            for warning in info['warnings']:
+                typer.echo(f"    ⚠️  {warning}")
+        
+    except Exception as e:
+        typer.echo(f"❌ Extraction failed: {e}")
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -403,3 +634,488 @@ def serve(
     from .server import api
 
     uvicorn.run(api, host=host, port=port)
+
+
+# =============================================================================
+# PHASE 3: AUTO-MAPPING COMMANDS
+# =============================================================================
+
+@app.command()
+def suggest_mapping(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to analyze"),
+    output: Path = typer.Option(Path("./draft-mapping.yaml"), help="Output YAML file path"),
+    confidence_threshold: float = typer.Option(
+        0.5,
+        help="Minimum confidence for automatic acceptance"
+    ),
+    registry_path: Path | None = typer.Option(
+        None,
+        help="Path to concept registry YAML (uses default if not specified)"
+    ),
+    max_concepts: int | None = typer.Option(
+        None,
+        help="Maximum number of concepts to generate"
+    ),
+    format: str = typer.Option(
+        "yaml",
+        help="Output format: yaml or json"
+    ),
+):
+    """Generate draft concepts.yaml from PDF structure analysis.
+    
+    This command analyzes the PDF's table of contents and headings to
+    automatically suggest concept mappings. The output is a draft YAML
+    file that should be reviewed before use.
+    
+    Example:
+        algl-pdf suggest-mapping ./textbook.pdf --output ./concepts.yaml
+        algl-pdf suggest-mapping ./textbook.pdf --confidence-threshold 0.7
+    """
+    typer.echo(f"🔍 Analyzing PDF structure: {pdf_path.name}")
+    typer.echo(f"📊 Confidence threshold: {confidence_threshold}")
+    
+    # Use default registry if not specified
+    if registry_path is None:
+        registry_path = Path(__file__).parent.parent.parent / "data" / "concept_registry.yaml"
+        if not registry_path.exists():
+            registry_path = None  # Will use built-in defaults
+    
+    # Initialize generator
+    generator = MappingGenerator(
+        registry_path=registry_path,
+        confidence_threshold=confidence_threshold,
+        max_concepts=max_concepts
+    )
+    
+    # Generate draft mapping
+    try:
+        draft = generator.generate_draft_mapping(pdf_path, registry_path)
+    except Exception as e:
+        typer.echo(f"❌ Error generating mapping: {e}")
+        raise typer.Exit(1)
+    
+    # Get summary
+    summary = generator.get_mapping_summary(draft)
+    
+    typer.echo(f"\n📈 Analysis Results:")
+    typer.echo(f"   Total pages: {summary['total_pages']}")
+    typer.echo(f"   Detected headings: {summary['detected_headings']}")
+    typer.echo(f"   Matched concepts: {summary['matched_concepts']}")
+    typer.echo(f"   High confidence: {summary['high_confidence']}")
+    typer.echo(f"   Needs review: {summary['needs_review']}")
+    typer.echo(f"   Unmatched headings: {summary['unmatched_headings']}")
+    
+    typer.echo(f"\n📊 By Difficulty:")
+    for diff, count in summary['by_difficulty'].items():
+        if count > 0:
+            typer.echo(f"   {diff}: {count}")
+    
+    # Export based on format
+    if format.lower() == "json":
+        output_path = output.with_suffix(".json")
+        generator.export_to_json(draft, output_path)
+    else:
+        output_path = output.with_suffix(".yaml") if not output.suffix == ".yaml" else output
+        generator.export_to_yaml(draft, output_path, include_metadata=True)
+    
+    typer.echo(f"\n✅ Draft mapping saved to: {output_path}")
+    
+    if summary['needs_review'] > 0:
+        typer.echo(f"\n⚠️  {summary['needs_review']} concepts need review.")
+        typer.echo("   Run 'review-mapping' command to create a review package.")
+
+
+@app.command()
+def review_mapping(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to analyze"),
+    output: Path = typer.Option(Path("./review-package.json"), help="Output review package path"),
+    confidence_threshold: float = typer.Option(
+        0.5,
+        help="Minimum confidence for automatic acceptance"
+    ),
+    registry_path: Path | None = typer.Option(
+        None,
+        help="Path to concept registry YAML"
+    ),
+):
+    """Create a comprehensive review package for human-in-the-loop workflow.
+    
+    This command creates a detailed review package with:
+    - Draft concept mappings
+    - Confidence scores
+    - Suggested edits
+    - Preview of generated content
+    
+    The review package should be edited and then applied to create the final
+    concepts.yaml configuration.
+    
+    Example:
+        algl-pdf review-mapping ./textbook.pdf --output ./review.json
+    """
+    typer.echo(f"🔍 Creating review package for: {pdf_path.name}")
+    
+    # Use default registry if not specified
+    if registry_path is None:
+        registry_path = Path(__file__).parent.parent.parent / "data" / "concept_registry.yaml"
+        if not registry_path.exists():
+            registry_path = None
+    
+    # Initialize workflow
+    workflow = MappingWorkflow(
+        registry_path=registry_path,
+        confidence_threshold=confidence_threshold
+    )
+    
+    # Generate draft and create review package
+    try:
+        generator = MappingGenerator(
+            registry_path=registry_path,
+            confidence_threshold=confidence_threshold
+        )
+        draft = generator.generate_draft_mapping(pdf_path, registry_path)
+        package = workflow.create_review_package(draft, include_previews=True)
+    except Exception as e:
+        typer.echo(f"❌ Error creating review package: {e}")
+        raise typer.Exit(1)
+    
+    # Export package
+    output_path = workflow.export_review_package(package, output)
+    
+    typer.echo(f"\n📦 Review Package Created: {output_path}")
+    typer.echo(f"   Package ID: {package.package_id}")
+    typer.echo(f"   PDF: {package.pdf_name}")
+    typer.echo(f"   Total pages: {package.total_pages}")
+    typer.echo(f"   Concepts: {package.statistics['matched_concepts']}")
+    typer.echo(f"   Suggestions: {len(package.suggestions)}")
+    typer.echo(f"   Export ready: {'Yes' if package.export_ready else 'No'}")
+    
+    typer.echo(f"\n📝 Review Instructions:")
+    for instruction in workflow._get_review_instructions():
+        typer.echo(f"   {instruction}")
+    
+    # Show suggestions summary
+    if package.suggestions:
+        typer.echo(f"\n💡 Top Suggestions:")
+        for i, suggestion in enumerate(package.suggestions[:5], 1):
+            typer.echo(f"   {i}. [{suggestion.type}] {suggestion.description}")
+
+
+@app.command()
+def extract_structure(
+    pdf_path: Path = typer.Argument(..., exists=True, help="PDF file to analyze"),
+):
+    """Extract and display document structure (TOC, headings, chapters).
+    
+    This is a diagnostic command to see what structure the auto-mapping
+    system detects in the PDF.
+    
+    Example:
+        algl-pdf extract-structure ./textbook.pdf
+    """
+    typer.echo(f"🔍 Extracting structure from: {pdf_path.name}")
+    typer.echo()
+    
+    extractor = StructureExtractor()
+    
+    # Get full structure summary
+    summary = extractor.get_structure_summary(pdf_path)
+    
+    typer.echo("📊 Document Summary:")
+    typer.echo(f"   Total pages: {summary['total_pages']}")
+    typer.echo(f"   Has TOC: {'Yes' if summary['has_toc'] else 'No'}")
+    typer.echo(f"   TOC entries: {summary['toc_entries']}")
+    typer.echo(f"   Detected headings: {summary['detected_headings']}")
+    
+    if summary['headings_by_level']:
+        typer.echo(f"\n📑 Headings by Level:")
+        for level, count in summary['headings_by_level'].items():
+            if count > 0:
+                typer.echo(f"   Level {level}: {count}")
+    
+    # Show chapters
+    if summary['chapters']:
+        typer.echo(f"\n📚 Detected Chapters:")
+        for i, ch in enumerate(summary['chapters'][:10], 1):
+            pages = f"pp. {ch['start_page']}-{ch['end_page']}" if ch['end_page'] else f"p. {ch['start_page']}"
+            typer.echo(f"   {i}. {ch['title'][:50]}")
+            typer.echo(f"      {pages}, {ch['section_count']} sections")
+        
+        if len(summary['chapters']) > 10:
+            typer.echo(f"   ... and {len(summary['chapters']) - 10} more")
+    
+    # Show TOC if available
+    toc = extractor.extract_toc(pdf_path)
+    if toc:
+        typer.echo(f"\n📋 Table of Contents (first 10):")
+        for entry in toc[:10]:
+            indent = "  " * (entry.level - 1)
+            typer.echo(f"   {indent}• {entry.title[:40]} (p. {entry.page})")
+    
+    # Show sample headings
+    headings = extractor.extract_headings(pdf_path)
+    if headings:
+        typer.echo(f"\n📝 Sample Headings (first 10):")
+        for h in headings[:10]:
+            confidence = "🟢" if h.confidence > 0.8 else "🟡" if h.confidence > 0.5 else "🔴"
+            typer.echo(f"   {confidence} L{h.level} p.{h.page}: {h.text[:50]}")
+
+
+
+# =============================================================================
+# CI / QUALITY GATE COMMANDS
+# =============================================================================
+
+@app.command()
+def evaluate(
+    input_dir: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Directory containing processed PDF output (with index.json)"
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        "-b",
+        help="Baseline directory for comparison",
+    ),
+    threshold: float = typer.Option(
+        0.70,
+        "--threshold",
+        "-t",
+        help="Minimum quality score threshold (0.0-1.0)",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output path for evaluation report JSON",
+    ),
+):
+    """Evaluate PDF processing quality against expected metrics.
+    
+    This command runs quality checks on processed PDF output and optionally
+    compares against a baseline. It checks:
+    - Concept coverage
+    - Chunk quality
+    - Schema version consistency
+    - File completeness
+    
+    Example:
+        algl-pdf evaluate ./output --threshold 0.75
+        algl-pdf evaluate ./output --baseline ./baseline --output report.json
+    """
+    from .metrics import EvaluationReport, CoverageMetric, QualityScore
+    from .regression_detector import load_baseline
+    from .embedding import build_hash_embedding
+    
+    typer.echo(f"🔍 Evaluating: {input_dir}")
+    typer.echo(f"📊 Quality threshold: {threshold:.0%}")
+    
+    # Load the processed document
+    index_path = input_dir / "index.json"
+    if not index_path.exists():
+        typer.echo(f"❌ Error: index.json not found in {input_dir}")
+        raise typer.Exit(1)
+    
+    try:
+        index_data = json.loads(index_path.read_text())
+        from .models import PdfIndexDocument
+        document = PdfIndexDocument(**index_data)
+    except Exception as e:
+        typer.echo(f"❌ Error loading index: {e}")
+        raise typer.Exit(1)
+    
+    # Load concept manifest if available
+    concept_manifest_path = input_dir / "concept-manifest.json"
+    concept_manifest = None
+    if concept_manifest_path.exists():
+        try:
+            from .models import ConceptManifest
+            manifest_data = json.loads(concept_manifest_path.read_text())
+            concept_manifest = ConceptManifest(**manifest_data)
+            typer.echo(f"✅ Loaded {concept_manifest.conceptCount} concepts")
+        except Exception as e:
+            typer.echo(f"⚠️  Warning: Could not load concept manifest: {e}")
+    
+    # Load baseline if specified
+    baseline_doc = None
+    if baseline:
+        typer.echo(f"📋 Comparing against baseline: {baseline}")
+        try:
+            baseline_doc, baseline_manifest = load_baseline(baseline)
+            typer.echo(f"✅ Baseline loaded: {baseline_doc.chunkCount} chunks")
+        except Exception as e:
+            typer.echo(f"⚠️  Warning: Could not load baseline: {e}")
+            baseline_doc = None
+    
+    # Build evaluation report
+    from datetime import datetime, timezone
+    
+    report = EvaluationReport(
+        document_id=document.indexId,
+        evaluation_time=datetime.now(timezone.utc).isoformat(),
+        chunk_count=document.chunkCount,
+        concept_count=len(concept_manifest.concepts) if concept_manifest else 0,
+        page_count=sum(d.pageCount for d in document.sourceDocs),
+    )
+    
+    # Coverage metric
+    expected_concepts = ["select-basic", "where-clause", "join-operations"]
+    found_concepts = list(concept_manifest.concepts.keys()) if concept_manifest else []
+    report.coverage = CoverageMetric(
+        expected_concepts=expected_concepts,
+        found_concepts=found_concepts,
+    )
+    
+    # Quality score
+    report.quality = QualityScore(
+        coverage_score=report.coverage.coverage_ratio,
+        retrieval_score=1.0 if concept_manifest else 0.0,  # Simplified
+    )
+    report.calculate_chunk_quality(document.chunks)
+    
+    # Display results
+    typer.echo("")
+    typer.echo("=" * 60)
+    typer.echo("EVALUATION RESULTS")
+    typer.echo("=" * 60)
+    typer.echo(f"")
+    typer.echo(f"📄 Document: {document.sourceName}")
+    typer.echo(f"🆔 Index ID: {document.indexId}")
+    typer.echo(f"")
+    typer.echo(f"📊 Metrics:")
+    typer.echo(f"   Chunks: {document.chunkCount}")
+    typer.echo(f"   Pages: {report.page_count}")
+    typer.echo(f"   Concepts: {report.concept_count}")
+    typer.echo(f"")
+    typer.echo(f"🎯 Coverage:")
+    typer.echo(f"   Expected: {len(expected_concepts)}")
+    typer.echo(f"   Found: {len(found_concepts)}")
+    typer.echo(f"   Ratio: {report.coverage.coverage_ratio:.1%}")
+    if report.coverage.missing_concepts:
+        typer.echo(f"   Missing: {', '.join(report.coverage.missing_concepts)}")
+    typer.echo(f"")
+    typer.echo(f"⭐ Quality Score:")
+    typer.echo(f"   Overall: {report.quality.overall_score:.2f}")
+    typer.echo(f"   Grade: {report.quality.grade}")
+    typer.echo(f"   Coverage: {report.quality.coverage_score:.2f}")
+    typer.echo(f"   Chunk Quality: {report.quality.chunk_quality_score:.2f}")
+    typer.echo(f"")
+    
+    # Pass/fail
+    passed = report.quality.overall_score >= threshold
+    if passed:
+        typer.echo(f"✅ PASSED (>= {threshold:.0%})")
+    else:
+        typer.echo(f"❌ FAILED (< {threshold:.0%})")
+    
+    # Save report if requested
+    if output:
+        report.save(output)
+        typer.echo(f"")
+        typer.echo(f"💾 Report saved: {output}")
+    
+    # Exit with error code if failed
+    if not passed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def detect_regressions(
+    baseline: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Baseline output directory",
+    ),
+    current: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Current output directory to compare",
+    ),
+    tolerance: float = typer.Option(
+        0.10,
+        "--tolerance",
+        "-t",
+        help="Chunk count change tolerance (0.10 = 10%)",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output path for regression report JSON",
+    ),
+):
+    """Detect regressions between baseline and current output.
+    
+    Compares two PDF processing outputs and reports any regressions:
+    - Schema version changes
+    - Chunk count changes
+    - Missing concepts
+    - Quality score drops
+    
+    Example:
+        algl-pdf detect-regressions ./baseline ./current
+        algl-pdf detect-regressions ./baseline ./current --tolerance 0.15
+    """
+    from .regression_detector import detect_regression
+    
+    typer.echo(f"🔍 Detecting regressions...")
+    typer.echo(f"📋 Baseline: {baseline}")
+    typer.echo(f"📋 Current: {current}")
+    typer.echo(f"📊 Tolerance: {tolerance:.0%}")
+    typer.echo("")
+    
+    try:
+        report = detect_regression(
+            baseline_dir=baseline,
+            current_dir=current,
+            chunk_count_tolerance=tolerance,
+        )
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+    
+    # Display results
+    typer.echo("=" * 60)
+    typer.echo("REGRESSION DETECTION RESULTS")
+    typer.echo("=" * 60)
+    typer.echo(f"")
+    typer.echo(f"📄 Document: {report.document_id}")
+    typer.echo(f"")
+    typer.echo(f"📊 Summary:")
+    typer.echo(f"   Total checks: {len(report.checks)}")
+    typer.echo(f"   Passed: {len(report.passed_checks)}")
+    typer.echo(f"   Failed: {len(report.failed_checks)}")
+    typer.echo(f"")
+    
+    # Show all checks
+    typer.echo(f"🔍 Checks:")
+    for check in report.checks:
+        icon = "✅" if check.passed else "❌"
+        severity = check.severity.upper()
+        typer.echo(f"   {icon} [{severity}] {check.check_name}")
+        typer.echo(f"      {check.message}")
+        if check.baseline_value is not None or check.current_value is not None:
+            typer.echo(f"      Baseline: {check.baseline_value} → Current: {check.current_value}")
+    
+    typer.echo(f"")
+    
+    # Final status
+    if report.has_errors:
+        typer.echo(f"❌ ERRORS DETECTED - DO NOT PROCEED")
+        exit_code = 1
+    elif report.has_warnings:
+        typer.echo(f"⚠️  WARNINGS - Review recommended")
+        exit_code = 0
+    else:
+        typer.echo(f"✅ ALL CHECKS PASSED")
+        exit_code = 0
+    
+    # Save report if requested
+    if output:
+        report.save(output)
+        typer.echo(f"")
+        typer.echo(f"💾 Report saved: {output}")
+    
+    if exit_code != 0:
+        raise typer.Exit(exit_code)

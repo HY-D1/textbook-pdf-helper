@@ -2,7 +2,7 @@
 Export PDF index to SQL-Adapt compatible format.
 
 This module handles the integration between the PDF helper project and
-the SQL-Adapt main application.
+the SQL-Adapt main application using the textbook-static-v1 schema.
 """
 
 from __future__ import annotations
@@ -14,11 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from .markdown_generator import generate_concept_markdown
-from .models import ConceptInfo, ConceptManifest, ConceptMap, ConceptMapEntry
-
-
-# Output paths for SQL-Adapt integration
-DEFAULT_OUTPUT_DIR = Path("/Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static")
+from .models import (
+    TEXTBOOK_STATIC_SCHEMA_ID,
+    TEXTBOOK_STATIC_VERSION,
+    ConceptInfo,
+    ConceptManifest,
+    ConceptMap,
+    ConceptMapEntry,
+    TextbookStaticManifest,
+    PdfSourceDoc,
+)
 
 
 def load_chunks(chunks_file: Path) -> list[dict]:
@@ -52,8 +57,31 @@ def convert_to_concept_map(manifest: ConceptManifest) -> ConceptMap:
     for cid, concept in manifest.concepts.items():
         # Convert sections to chunkIds dict
         chunk_ids: dict[str, list[str]] = {}
+        source_blocks: list[dict] = []
+        all_pages: set[int] = set()
+        
         for section_name, section in concept.sections.items():
             chunk_ids[section_name] = section.chunkIds
+            all_pages.update(section.pageNumbers)
+            
+            # Collect source blocks from sections
+            if hasattr(section, 'sourceBlocks') and section.sourceBlocks:
+                for block in section.sourceBlocks:
+                    if isinstance(block, dict):
+                        source_blocks.append(block)
+        
+        # Build provenance structure
+        provenance = {
+            "chunks": list(set(
+                chunk_id 
+                for section_chunks in chunk_ids.values() 
+                for chunk_id in section_chunks
+            )),
+            "pages": sorted(all_pages),
+            "blocks": source_blocks,
+            "extraction_method": "pymupdf",
+            "source_doc_id": manifest.sourceDocId,
+        }
         
         concepts[cid] = ConceptMapEntry(
             title=concept.title,
@@ -62,14 +90,60 @@ def convert_to_concept_map(manifest: ConceptManifest) -> ConceptMap:
             pageNumbers=concept.pageReferences,
             chunkIds=chunk_ids,
             relatedConcepts=concept.relatedConcepts,
-            practiceProblemIds=[],  # To be filled by SQL-Adapt
+            practiceProblemIds=concept.practiceProblemIds,
+            sourceDocId=manifest.sourceDocId,
+            provenance=provenance,
         )
     
     return ConceptMap(
-        version="1.0.0",
+        version=TEXTBOOK_STATIC_VERSION,
         generatedAt=datetime.now(timezone.utc).isoformat(),
-        sourceDocId=manifest.sourceDocId,
+        sourceDocIds=[manifest.sourceDocId],
         concepts=concepts,
+    )
+
+
+def create_textbook_manifest(
+    source_doc_id: str,
+    filename: str,
+    sha256: str,
+    page_count: int,
+    chunk_count: int,
+    source_name: str = "",
+) -> TextbookStaticManifest:
+    """
+    Create a TextbookStaticManifest for the exported content.
+    
+    Args:
+        source_doc_id: Document ID (e.g., 'sql-textbook')
+        filename: Original filename
+        sha256: SHA256 hash of the PDF
+        page_count: Number of pages
+        chunk_count: Number of chunks
+        source_name: Human-readable source name
+        
+    Returns:
+        TextbookStaticManifest with schema v1
+    """
+    if not source_name:
+        source_name = filename
+    
+    source_doc = PdfSourceDoc(
+        docId=source_doc_id,
+        filename=filename,
+        sha256=sha256,
+        pageCount=page_count,
+    )
+    
+    return TextbookStaticManifest(
+        schemaVersion=TEXTBOOK_STATIC_VERSION,
+        schemaId=TEXTBOOK_STATIC_SCHEMA_ID,
+        indexId=f"idx-{source_doc_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        createdAt=datetime.now(timezone.utc).isoformat(),
+        sourceName=source_name,
+        sourceDocs=[source_doc],
+        docCount=1,
+        chunkCount=chunk_count,
     )
 
 
@@ -192,10 +266,32 @@ No specific mistakes documented in textbook.
 
 """
     
-    # Build full markdown
+    # Build full markdown with YAML frontmatter
     pages_str = ", ".join(map(str, sorted(concept.pageReferences))) if concept.pageReferences else "Unknown"
     
-    markdown = f"""# {concept.title}
+    # Build chunk IDs list for frontmatter
+    all_chunk_ids = []
+    for section in concept.sections.values():
+        all_chunk_ids.extend(section.chunkIds)
+    all_chunk_ids = list(dict.fromkeys(all_chunk_ids))  # Remove duplicates, preserve order
+    
+    # Build related concepts list (namespaced)
+    namespaced_related = [f"{doc_id}/{rid}" if "/" not in rid else rid for rid in concept.relatedConcepts]
+    
+    markdown = f"""---
+id: {concept.id}
+title: {concept.title}
+definition: {concept.definition or "No definition available."}
+difficulty: {concept.difficulty}
+estimatedReadTime: {concept.estimatedReadTime}
+pageReferences: {concept.pageReferences}
+chunkIds:{''.join([f"\n  - {cid}" for cid in all_chunk_ids])}
+relatedConcepts:{''.join([f"\n  - {rid}" for rid in namespaced_related])}
+tags:{''.join([f"\n  - {tag}" for tag in concept.tags])}
+sourceDocId: {doc_id}
+---
+
+# {concept.title}
 
 ## Definition
 {concept.definition or "No definition available."}
@@ -229,7 +325,7 @@ def merge_concept_maps(
         # Namespace the concept ID with source doc
         namespaced_id = f"{source_doc_id}/{cid}"
         
-        # Convert ConceptMapEntry to dict
+        # Convert ConceptMapEntry to dict with provenance
         merged_concepts[namespaced_id] = {
             "title": concept_entry.title,
             "definition": concept_entry.definition,
@@ -242,14 +338,19 @@ def merge_concept_maps(
             ],
             "practiceProblemIds": concept_entry.practiceProblemIds,
             "sourceDocId": source_doc_id,
+            "provenance": concept_entry.provenance,
         }
     
+    # Merge source doc IDs
+    existing_source_ids = existing_map.get("sourceDocIds", [])
+    if isinstance(existing_source_ids, str):
+        existing_source_ids = [existing_source_ids]
+    all_source_ids = list(set(existing_source_ids + [source_doc_id]))
+    
     return {
-        "version": "1.0.0",
+        "version": TEXTBOOK_STATIC_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "sourceDocIds": list(set(
-            existing_map.get("sourceDocIds", []) + [source_doc_id]
-        )),
+        "sourceDocIds": all_source_ids,
         "concepts": merged_concepts,
     }
 
@@ -262,16 +363,28 @@ def export_to_sqladapt(
     """
     Export PDF index to SQL-Adapt compatible format.
     
+    This function creates textbook-static-v1 compatible output including:
+    - textbook-manifest.json (main manifest with schema v1)
+    - concept-map.json (concept index for web app)
+    - chunks.json (all chunks with embeddings)
+    - concepts/{docId}/{concept-id}.md (individual concept files)
+    
     Args:
         input_dir: Directory containing processed PDF output (concept-manifest.json, chunks.json)
-        output_dir: SQL-Adapt output directory (defaults to DEFAULT_OUTPUT_DIR)
+        output_dir: SQL-Adapt output directory (required, no default)
         merge: If True, merge with existing concept map instead of overwriting
         
     Returns:
         Summary of exported files
+        
+    Raises:
+        ValueError: If output_dir is not provided
+        FileNotFoundError: If required input files are missing
     """
     if output_dir is None:
-        output_dir = DEFAULT_OUTPUT_DIR
+        raise ValueError(
+            "output_dir is required. Provide --output-dir or set SQL_ADAPT_PUBLIC_DIR environment variable."
+        )
     
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -294,8 +407,21 @@ def export_to_sqladapt(
     # Generate concept map for this PDF
     concept_map = convert_to_concept_map(manifest)
     
+    # Create textbook manifest (schema v1)
+    # Note: We don't have access to the original PDF file here, so we use placeholder values
+    # In production, these should be passed from the indexer
+    textbook_manifest = create_textbook_manifest(
+        source_doc_id=manifest.sourceDocId,
+        filename=f"{manifest.sourceDocId}.pdf",
+        sha256="unknown",  # Should be provided by caller
+        page_count=0,  # Should be provided by caller
+        chunk_count=len(chunks),
+        source_name=manifest.sourceDocId,
+    )
+    
     # Load or create merged concept map
     concept_map_file = output_dir / "concept-map.json"
+    textbook_manifest_file = output_dir / "textbook-manifest.json"
     
     if merge and concept_map_file.exists():
         # Load existing and merge
@@ -308,7 +434,7 @@ def export_to_sqladapt(
     else:
         # Create new or overwrite
         merged_map = {
-            "version": "1.0.0",
+            "version": TEXTBOOK_STATIC_VERSION,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "sourceDocIds": [manifest.sourceDocId],
             "concepts": {},
@@ -326,6 +452,7 @@ def export_to_sqladapt(
                 ],
                 "practiceProblemIds": concept_entry.practiceProblemIds,
                 "sourceDocId": manifest.sourceDocId,
+                "provenance": concept_entry.provenance,
             }
         final_concept_count = len(merged_map["concepts"])
         is_new_pdf = True
@@ -334,14 +461,24 @@ def export_to_sqladapt(
     with open(concept_map_file, "w", encoding="utf-8") as f:
         json.dump(merged_map, f, indent=2)
     
-    # Generate markdown files (namespaced)
+    # Save textbook manifest
+    with open(textbook_manifest_file, "w", encoding="utf-8") as f:
+        json.dump(
+            json.loads(textbook_manifest.model_dump_json()),
+            f,
+            indent=2
+        )
+    
+    # Generate markdown files (namespaced by docId)
     generated_files = []
     updated_files = []
+    
+    doc_concepts_dir = concepts_dir / manifest.sourceDocId
+    doc_concepts_dir.mkdir(parents=True, exist_ok=True)
+    
     for cid, concept in manifest.concepts.items():
-        namespaced_id = f"{manifest.sourceDocId}/{cid}"
         markdown = generate_sqladapt_markdown(concept, chunks, manifest.sourceDocId)
-        md_file = concepts_dir / f"{namespaced_id}.md"
-        md_file.parent.mkdir(parents=True, exist_ok=True)
+        md_file = doc_concepts_dir / f"{cid}.md"
         
         # Check if file exists (for reporting)
         if md_file.exists():
@@ -351,6 +488,27 @@ def export_to_sqladapt(
             
         with open(md_file, "w", encoding="utf-8") as f:
             f.write(markdown)
+    
+    # Generate README for this document's concepts
+    readme_content = f"""# {manifest.sourceDocId} Concepts
+
+This directory contains concept documentation for **{manifest.sourceDocId}**.
+
+## Concepts
+
+"""
+    for cid, concept in manifest.concepts.items():
+        readme_content += f"- [{concept.title}](./{cid}.md)\n"
+    
+    readme_content += f"""
+---
+*Generated: {datetime.now(timezone.utc).isoformat()}*
+*Schema: {TEXTBOOK_STATIC_SCHEMA_ID} v{TEXTBOOK_STATIC_VERSION}*
+"""
+    
+    readme_file = doc_concepts_dir / "README.md"
+    with open(readme_file, "w", encoding="utf-8") as f:
+        f.write(readme_content)
     
     # Save chunks metadata (for reference)
     chunks_meta_file = output_dir / "chunks-metadata.json"
@@ -372,11 +530,14 @@ def export_to_sqladapt(
     
     return {
         "concept_map": str(concept_map_file),
-        "concepts_dir": str(concepts_dir),
+        "textbook_manifest": str(textbook_manifest_file),
+        "concepts_dir": str(doc_concepts_dir),
         "generated_files": generated_files,
         "updated_files": updated_files,
         "concept_count": len(manifest.concepts),
         "total_concepts": final_concept_count,
         "is_new_pdf": is_new_pdf,
         "source_doc_id": manifest.sourceDocId,
+        "schema_id": TEXTBOOK_STATIC_SCHEMA_ID,
+        "schema_version": TEXTBOOK_STATIC_VERSION,
     }
