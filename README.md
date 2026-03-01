@@ -1,5 +1,9 @@
 # algl-pdf-helper
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 Helper project for **ALGL SQL-Adapt** that turns PDFs (including scanned PDFs) into a
 `PdfIndexDocument` compatible with the existing client-side retrieval system.
 
@@ -179,4 +183,15 @@ Doc IDs:
 
 - Upload-mode doc IDs: `doc-<sha256[:12]>`
 - Disk-mode doc IDs (optional): stable aliases (e.g. `sql-textbook`) via `--use-aliases`
+
+## Documentation
+
+- **[Complete Documentation](docs/)** - Full documentation index
+- **[Output Specification](docs/OUTPUT_SPEC.md)** - Output format specification
+- **[Pipeline Architecture](docs/03-pipeline-architecture.md)** - Detailed pipeline documentation
+- **[AI Agent Guide](AGENTS.md)** - Development guidelines and architecture
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
 
