@@ -98,10 +98,14 @@ def _parse_markdown_to_pages(markdown: str, rendered: Any) -> list[dict]:
             # Clean HTML tags if present
             page_text = re.sub(r'<[^>]+>', '', page_text)
             
+            # Extract block references with IDs
+            blocks = _extract_block_refs(page_block, page_idx + 1)
+            
             pages.append({
                 "page_number": page_idx + 1,
                 "text": page_text,
                 "block_types": _get_block_types(page_block),
+                "blocks": blocks,
             })
     else:
         # Fallback: split by page markers or use whole text
@@ -114,6 +118,7 @@ def _parse_markdown_to_pages(markdown: str, rendered: Any) -> list[dict]:
                     "page_number": idx + 1,
                     "text": section.strip(),
                     "block_types": ["text"],
+                    "blocks": [],
                 })
     
     return pages
@@ -132,11 +137,53 @@ def _get_block_types(page_block: Any) -> list[str]:
     return list(set(types)) if types else ["text"]
 
 
+def _extract_block_refs(page_block: Any, page_number: int) -> list[dict]:
+    """Extract block references with IDs from page block.
+    
+    Args:
+        page_block: The page block from Marker
+        page_number: The page number (1-indexed)
+        
+    Returns:
+        List of block reference dictionaries with id, type, and page
+    """
+    blocks = []
+    block_counter = 0
+    
+    if hasattr(page_block, 'children') and page_block.children:
+        for child in page_block.children:
+            block_type = getattr(child, 'block_type', 'text')
+            
+            # Generate a block ID if not available
+            block_id = getattr(child, 'id', None)
+            if block_id is None:
+                block_counter += 1
+                block_id = f"p{page_number}_b{block_counter}"
+            
+            # Get block text content
+            block_text = ""
+            if hasattr(child, 'html'):
+                block_text = re.sub(r'<[^>]+>', '', child.html)
+            elif hasattr(child, 'text'):
+                block_text = child.text
+            
+            block_ref = {
+                "id": str(block_id),
+                "type": str(block_type).lower(),
+                "page": page_number,
+                "text_preview": block_text[:200] if block_text else "",
+            }
+            blocks.append(block_ref)
+    
+    return blocks
+
+
 def chunk_markdown_by_sections(
     markdown: str,
     doc_id: str,
     chunk_size: int = 1000,
     overlap: int = 200,
+    pages_metadata: list[dict] | None = None,
 ) -> list[dict]:
     """
     Chunk markdown text by sections for educational use.
@@ -145,9 +192,26 @@ def chunk_markdown_by_sections(
     - Section headers with content
     - Code blocks together
     - List items with context
+    
+    Args:
+        markdown: The markdown text to chunk
+        doc_id: Document identifier
+        chunk_size: Target chunk size in characters
+        overlap: Overlap between chunks in characters
+        pages_metadata: Optional list of page metadata with blocks
     """
     chunks = []
     chunk_idx = 0
+    
+    # Build block-to-page mapping if metadata provided
+    block_page_map: dict[str, int] = {}
+    if pages_metadata:
+        for page_meta in pages_metadata:
+            page_num = page_meta.get("page_number", 1)
+            for block in page_meta.get("blocks", []):
+                block_id = block.get("id")
+                if block_id:
+                    block_page_map[block_id] = page_num
     
     # Split by headers (##, ###)
     sections = re.split(r'\n(?=##+\s)', markdown)
@@ -160,6 +224,17 @@ def chunk_markdown_by_sections(
         title_match = re.match(r'##+\s*(.+?)\n', section)
         section_title = title_match.group(1) if title_match else "Untitled"
         
+        # Find associated blocks for this section (simplified heuristic)
+        section_blocks: list[str] = []
+        if pages_metadata:
+            # Check which blocks are in this section's text
+            section_start = markdown.find(section)
+            for page_meta in pages_metadata:
+                for block in page_meta.get("blocks", []):
+                    preview = block.get("text_preview", "")
+                    if preview and preview in section:
+                        section_blocks.append(block.get("id"))
+        
         # If section is small enough, keep as one chunk
         if len(section) <= chunk_size:
             chunks.append({
@@ -168,6 +243,7 @@ def chunk_markdown_by_sections(
                 "section": section_title,
                 "text": section.strip(),
                 "char_count": len(section),
+                "sourceBlockIds": section_blocks,
             })
             chunk_idx += 1
         else:
@@ -175,9 +251,22 @@ def chunk_markdown_by_sections(
             paragraphs = section.split('\n\n')
             current_chunk = []
             current_size = 0
+            current_blocks: list[str] = []
             
             for para in paragraphs:
                 para_size = len(para)
+                
+                # Track blocks in this paragraph
+                para_blocks = []
+                for block_id in section_blocks:
+                    # Simple heuristic: if block preview is in paragraph
+                    if pages_metadata:
+                        for page_meta in pages_metadata:
+                            for block in page_meta.get("blocks", []):
+                                if block.get("id") == block_id:
+                                    preview = block.get("text_preview", "")
+                                    if preview and preview in para:
+                                        para_blocks.append(block_id)
                 
                 if current_size + para_size > chunk_size and current_chunk:
                     # Save current chunk
@@ -187,6 +276,7 @@ def chunk_markdown_by_sections(
                         "section": section_title,
                         "text": '\n\n'.join(current_chunk).strip(),
                         "char_count": current_size,
+                        "sourceBlockIds": current_blocks,
                     })
                     chunk_idx += 1
                     
@@ -194,9 +284,11 @@ def chunk_markdown_by_sections(
                     overlap_text = '\n\n'.join(current_chunk[-2:]) if len(current_chunk) >= 2 else current_chunk[0]
                     current_chunk = [overlap_text, para]
                     current_size = len(overlap_text) + para_size
+                    current_blocks = para_blocks
                 else:
                     current_chunk.append(para)
                     current_size += para_size
+                    current_blocks.extend(para_blocks)
             
             # Don't forget last chunk
             if current_chunk:
@@ -206,6 +298,7 @@ def chunk_markdown_by_sections(
                     "section": section_title,
                     "text": '\n\n'.join(current_chunk).strip(),
                     "char_count": current_size,
+                    "sourceBlockIds": list(set(current_blocks)),
                 })
                 chunk_idx += 1
     

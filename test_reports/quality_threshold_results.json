@@ -1,0 +1,126 @@
+{
+  "text_quality_tests": {
+    "all_passed": true,
+    "test_count": 9,
+    "passed_count": 9,
+    "results": [
+      {
+        "description": "Normal readable text",
+        "expected": true,
+        "actual": true,
+        "coverage": 1.0,
+        "chars": 62,
+        "passed": true
+      },
+      {
+        "description": "SQL code",
+        "expected": true,
+        "actual": true,
+        "coverage": 0.9838709677419355,
+        "chars": 62,
+        "passed": true
+      },
+      {
+        "description": "Empty text",
+        "expected": false,
+        "actual": false,
+        "coverage": 0.0,
+        "chars": 0,
+        "passed": true
+      },
+      {
+        "description": "Whitespace only",
+        "expected": false,
+        "actual": false,
+        "coverage": 1.0,
+        "chars": 8,
+        "passed": true
+      },
+      {
+        "description": "Repeated dashes",
+        "expected": false,
+        "actual": false,
+        "coverage": 0.4,
+        "chars": 15,
+        "passed": true
+      },
+      {
+        "description": "Mixed content",
+        "expected": true,
+        "actual": true,
+        "coverage": 1.0,
+        "chars": 53,
+        "passed": true
+      },
+      {
+        "description": "Text with noise",
+        "expected": true,
+        "actual": true,
+        "coverage": 0.96875,
+        "chars": 64,
+        "passed": true
+      },
+      {
+        "description": "Too short",
+        "expected": false,
+        "actual": false,
+        "coverage": 1.0,
+        "chars": 2,
+        "passed": true
+      },
+      {
+        "description": "Normal paragraph",
+        "expected": true,
+        "actual": true,
+        "coverage": 1.0,
+        "chars": 313,
+        "passed": true
+      }
+    ]
+  },
+  "pdf_quality_tests": [
+    {
+      "pdf_name": "murachs-mysql-3rd-edition.pdf",
+      "preflight": {
+        "page_count": 646,
+        "has_embedded_text": true,
+        "text_coverage": 0.6209115980869767,
+        "ocr_needed": true,
+        "strategy": "ocrmypdf"
+      },
+      "extraction": {
+        "page_count": 646,
+        "total_chars": 1250774,
+        "coverage_score": 0.9939021757727615,
+        "meets_threshold": true
+      },
+      "passed": true,
+      "expected": {
+        "embedded_text": true,
+        "good_coverage": true
+      }
+    },
+    {
+      "pdf_name": "dbms-ramakrishnan-3rd-edition.pdf",
+      "preflight": {
+        "page_count": 1098,
+        "has_embedded_text": true,
+        "text_coverage": 0.6204510921727595,
+        "ocr_needed": true,
+        "strategy": "ocrmypdf"
+      },
+      "extraction": {
+        "page_count": 1098,
+        "total_chars": 2473319,
+        "coverage_score": 0.993165459045113,
+        "meets_threshold": true
+      },
+      "passed": true,
+      "expected": {
+        "embedded_text": true,
+        "good_coverage": true
+      }
+    }
+  ],
+  "all_passed": true
+}

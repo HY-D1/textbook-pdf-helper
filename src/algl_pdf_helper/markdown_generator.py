@@ -175,21 +175,34 @@ def is_pedagogical_format(concept: ConceptInfo) -> bool:
     return False
 
 
-def format_asset_reference(asset: AssetReference) -> str:
+def format_asset_reference(asset: AssetReference | Any) -> str:
     """Format an asset reference for markdown.
     
     Args:
-        asset: The asset reference
+        asset: The asset reference (AssetReference or ExtractedAsset)
         
     Returns:
         Markdown string for the asset reference
     """
+    # Handle both AssetReference (has .path and .pageNumber) 
+    # and ExtractedAsset (has .get_relative_path() and .page)
+    if hasattr(asset, 'path'):
+        # AssetReference style
+        path = asset.path
+        page = asset.pageNumber
+    elif hasattr(asset, 'get_relative_path'):
+        # ExtractedAsset style
+        path = asset.get_relative_path()
+        page = asset.page
+    else:
+        raise ValueError(f"Unknown asset type: {type(asset)}")
+    
     if asset.type == "image":
-        caption = asset.caption or f"Figure on page {asset.pageNumber}"
-        return f"![{caption}]({asset.path})"
+        caption = asset.caption or f"Figure on page {page}"
+        return f"![{caption}]({path})"
     else:  # table
         # Tables are embedded as HTML
-        return f"<iframe src=\"{asset.path}\" title=\"{asset.caption or 'Table'}\" frameborder=\"0\" width=\"100%\"></iframe>"
+        return f"<iframe src=\"{path}\" title=\"{asset.caption or 'Table'}\" frameborder=\"0\" width=\"100%\"></iframe>"
 
 
 def get_assets_for_section(
@@ -230,14 +243,24 @@ def get_assets_for_section(
     return assets
 
 
+def _get_asset_path_and_page(asset: Any) -> tuple[str, int]:
+    """Get path and page number from asset (handles both AssetReference and ExtractedAsset)."""
+    if hasattr(asset, 'path'):
+        return asset.path, asset.pageNumber
+    elif hasattr(asset, 'get_relative_path'):
+        return asset.get_relative_path(), asset.page
+    else:
+        raise ValueError(f"Unknown asset type: {type(asset)}")
+
+
 def generate_asset_markdown(
-    assets: list[AssetReference],
+    assets: list[Any],
     section_name: str | None = None,
 ) -> str:
     """Generate markdown for displaying assets.
     
     Args:
-        assets: List of assets to render
+        assets: List of assets to render (AssetReference or ExtractedAsset)
         section_name: Optional section name for context
         
     Returns:
@@ -262,9 +285,10 @@ def generate_asset_markdown(
     
     # Render tables (as links to HTML files)
     for asset in tables:
-        caption = asset.caption or f"Table on page {asset.pageNumber}"
+        path, page = _get_asset_path_and_page(asset)
+        caption = asset.caption or f"Table on page {page}"
         lines.append("")
-        lines.append(f"📊 [{caption}]({asset.path})")
+        lines.append(f"📊 [{caption}]({path})")
         lines.append("")
     
     return "\n".join(lines)
@@ -344,10 +368,11 @@ def generate_frontmatter(
         if all_assets:
             lines.append("assets:")
             for asset in all_assets:
+                path, page = _get_asset_path_and_page(asset)
                 lines.append(f'  - id: "{asset.id}"')
                 lines.append(f'    type: "{asset.type}"')
-                lines.append(f'    path: "{asset.path}"')
-                lines.append(f'    page: {asset.pageNumber}')
+                lines.append(f'    path: "{path}"')
+                lines.append(f'    page: {page}')
                 if asset.caption:
                     lines.append(f'    caption: "{asset.caption}"')
     

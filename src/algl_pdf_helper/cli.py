@@ -20,6 +20,7 @@ from .preflight import run_preflight, ExtractionStrategy
 from .quality_metrics import validate_text_quality
 from .structure_extractor import StructureExtractor
 from .mapping_generator import MappingGenerator
+from .mapping_workflow import MappingWorkflow
 
 app = typer.Typer(add_completion=False)
 

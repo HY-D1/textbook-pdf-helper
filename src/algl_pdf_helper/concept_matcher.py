@@ -343,12 +343,19 @@ class ConceptMatcher:
             List of match candidates sorted by score
         """
         candidates = []
+        # Skip headings with no text
+        if not heading.text:
+            return candidates
         heading_lower = heading.text.lower()
         heading_words = set(re.findall(r'\w+', heading_lower))
 
         for concept_id, entry in self.registry.items():
             score = 0.0
             match_type = 'none'
+
+            # Skip entries with no name
+            if not entry.name:
+                continue
 
             # 1. Exact name match
             if entry.name.lower() in heading_lower or heading_lower in entry.name.lower():
@@ -358,6 +365,8 @@ class ConceptMatcher:
             # 2. Keyword matching
             keyword_matches = 0
             for keyword in entry.keywords:
+                if not keyword:
+                    continue
                 if keyword.lower() in heading_lower:
                     keyword_matches += 1
                 # Also check if keyword words appear in heading
@@ -374,7 +383,7 @@ class ConceptMatcher:
             # 3. Category matching
             if entry.category and entry.category in self.category_keywords:
                 cat_keywords = self.category_keywords[entry.category]
-                cat_matches = sum(1 for kw in cat_keywords if kw in heading_lower)
+                cat_matches = sum(1 for kw in cat_keywords if kw and kw in heading_lower)
                 if cat_matches > 0:
                     cat_score = min(0.6, 0.3 + (cat_matches * 0.1))
                     if cat_score > score:
@@ -383,7 +392,7 @@ class ConceptMatcher:
 
             # 4. Fuzzy similarity (simple word overlap)
             concept_words = set(re.findall(r'\w+', entry.name.lower()))
-            concept_words.update(kw.lower() for kw in entry.keywords[:3])
+            concept_words.update(kw.lower() for kw in entry.keywords[:3] if kw)
 
             if concept_words and heading_words:
                 overlap = len(concept_words & heading_words)

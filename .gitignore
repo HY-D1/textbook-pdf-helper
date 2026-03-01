@@ -27,6 +27,9 @@ dist/
 # Temporary files
 .process_pid
 *.log
+AGENTS.md
+COMMIT_SUGGESTIONS.md
+CONTENT_QUALITY_RECOMMENDATIONS.md
 
 # Run scripts (temporary)
 run_*.sh

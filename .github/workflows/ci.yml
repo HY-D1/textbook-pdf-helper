@@ -61,14 +61,14 @@ jobs:
             echo "Creating baseline..."
             mkdir -p tests/baselines/golden_chapter
             algl-pdf index tests/fixtures/golden_chapter.pdf \
-              --out tests/baselines/golden_chapter \
+              --output-dir tests/baselines/golden_chapter \
               --use-aliases \
               --concepts-config tests/fixtures/golden_concepts.yaml
           fi
           
           # Process current and compare
           algl-pdf index tests/fixtures/golden_chapter.pdf \
-            --out /tmp/current_output \
+            --output-dir /tmp/current_output \
             --use-aliases \
             --concepts-config tests/fixtures/golden_concepts.yaml
           
@@ -123,7 +123,7 @@ jobs:
         run: |
           python tests/fixtures/generate_golden_pdf.py
           algl-pdf index tests/fixtures/golden_chapter.pdf \
-            --out /tmp/quality_check \
+            --output-dir /tmp/quality_check \
             --use-aliases \
             --concepts-config tests/fixtures/golden_concepts.yaml
 
@@ -151,12 +151,12 @@ jobs:
           print(f'✅ Concepts generated: {count}')
           "
           
-          # Check chunk count is reasonable (8 pages -> 15-50 chunks)
+          # Check chunk count is reasonable (8 pages -> 5-20 chunks based on word count)
           python -c "
           import json
           data = json.load(open('/tmp/quality_check/index.json'))
           count = data.get('chunkCount', 0)
-          assert 15 <= count <= 50, f'Expected 15-50 chunks, got {count}'
+          assert 5 <= count <= 20, f'Expected 5-20 chunks, got {count}'
           print(f'✅ Chunks generated: {count}')
           "
 

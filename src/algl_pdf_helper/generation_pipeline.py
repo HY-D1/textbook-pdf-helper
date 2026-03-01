@@ -51,6 +51,16 @@ M1_8GB_MODELS = {
         "ram_gb": 3,
         "recommended": True,
     },
+    "qwen2.5:3b-instruct": {
+        "description": "Fast, lightweight, instruct-tuned",
+        "ram_gb": 3,
+        "recommended": True,
+    },
+    "qwen:1.8b": {
+        "description": "Very fast, minimal RAM usage",
+        "ram_gb": 2,
+        "recommended": True,
+    },
     "qwen2.5-coder:3b": {
         "description": "Optimized for code generation",
         "ram_gb": 3,
@@ -64,6 +74,11 @@ M1_8GB_MODELS = {
     "gemma2:2b": {
         "description": "Very lightweight",
         "ram_gb": 2,
+        "recommended": True,
+    },
+    "phi4-mini:3.8b": {
+        "description": "Microsoft Phi-4 mini, good quality",
+        "ram_gb": 3,
         "recommended": True,
     },
 }

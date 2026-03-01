@@ -45,7 +45,7 @@ update-baselines: generate-golden install-dev
 	@echo "Updating baselines..."
 	mkdir -p tests/baselines/golden_chapter
 	algl-pdf index tests/fixtures/golden_chapter.pdf \
-		--out tests/baselines/golden_chapter \
+		--output-dir tests/baselines/golden_chapter \
 		--use-aliases \
 		--concepts-config tests/fixtures/golden_concepts.yaml
 	@echo "✅ Baseline updated: tests/baselines/golden_chapter"
@@ -63,7 +63,7 @@ regression-check: update-baselines
 	@echo "Checking for regressions..."
 	mkdir -p /tmp/current_output
 	algl-pdf index tests/fixtures/golden_chapter.pdf \
-		--out /tmp/current_output \
+		--output-dir /tmp/current_output \
 		--use-aliases \
 		--concepts-config tests/fixtures/golden_concepts.yaml
 	algl-pdf detect-regressions \

@@ -249,15 +249,21 @@ def validate_practice_schema(schema_name: str) -> bool:
     """
     Validate that a schema name is in the allowed list.
     
+    Handles both single schemas and comma-separated lists of schemas
+    (e.g., "users" or "users, orders").
+    
     Args:
-        schema_name: Name of the schema to validate
+        schema_name: Name of the schema(s) to validate
         
     Returns:
-        True if schema is allowed, False otherwise
+        True if all schemas are allowed, False otherwise
     """
     if not schema_name:
         return False
-    return schema_name.lower() in ALLOWED_SCHEMAS
+    
+    # Handle comma-separated schemas (e.g., "users, orders")
+    schemas = [s.strip().lower() for s in schema_name.split(",")]
+    return all(s in ALLOWED_SCHEMAS for s in schemas)
 
 
 def get_allowed_schemas() -> list[str]:

@@ -195,6 +195,7 @@ def build_concept_manifest(
     chunks: list[PdfIndexChunk],
     source_doc_id: str,
     created_at: str | None = None,
+    extraction_method: str = "pymupdf",
 ) -> ConceptManifest:
     """Build concept manifest from config and chunks.
     
@@ -203,9 +204,10 @@ def build_concept_manifest(
         chunks: All extracted chunks from the PDF
         source_doc_id: Primary document ID
         created_at: Optional timestamp (ISO format)
+        extraction_method: Method used for PDF extraction
         
     Returns:
-        ConceptManifest with mapped chunks
+        ConceptManifest with mapped chunks and provenance
     """
     if created_at is None:
         created_at = datetime.now(timezone.utc).isoformat()
@@ -227,9 +229,22 @@ def build_concept_manifest(
             page_nums = [int(p) for p in pages]
             section_chunks = get_chunks_for_pages(chunks, page_nums, source_doc_id)
             
+            # Extract block IDs from chunks for this section
+            section_blocks = []
+            for chunk in section_chunks:
+                if hasattr(chunk, 'sourceBlockIds') and chunk.sourceBlockIds:
+                    for block_id in chunk.sourceBlockIds:
+                        section_blocks.append({
+                            "id": block_id,
+                            "page": chunk.page,
+                            "type": "paragraph"
+                        })
+            
             sections[section_name] = ConceptSection(
                 chunkIds=[c.chunkId for c in section_chunks],
                 pageNumbers=page_nums,
+                sourceBlocks=section_blocks,
+                extractionMethod=extraction_method,
             )
             all_page_numbers.extend(page_nums)
         

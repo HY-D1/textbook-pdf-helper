@@ -78,6 +78,18 @@ class StructureExtractor:
     # Font size thresholds for heading detection (relative to body text)
     HEADING_SIZE_THRESHOLD = 1.2  # 20% larger than body
     SUBHEADING_SIZE_THRESHOLD = 1.1  # 10% larger than body
+    
+    # Minimum text length for valid headings (filter out noise)
+    MIN_HEADING_LENGTH = 5
+    
+    # Common words that indicate non-heading text
+    NON_HEADING_WORDS = {
+        'description', 'summary', 'details', 'page', 'chapter', 
+        'figure', 'table', 'note', 'example', 'exercise',
+    }
+    
+    # Pattern for detecting noise/artefacts
+    NOISE_PATTERN = re.compile(r'^[^\w]*$|^\d+$|^[-_.]+$|^\(.*\)$')
 
     def __init__(self):
         self.chapter_regexes = [re.compile(p, re.IGNORECASE) for p in self.CHAPTER_PATTERNS]
@@ -168,6 +180,10 @@ class StructureExtractor:
                         line_text = normalize_text(line_text).strip()
                         if not line_text or len(line_text) > 200:
                             continue
+                        
+                        # Filter out noise
+                        if self._is_noise_text(line_text):
+                            continue
 
                         # Determine if this is a heading
                         level, confidence = self._classify_heading(
@@ -252,8 +268,36 @@ class StructureExtractor:
 
         return level, max(0.0, min(1.0, confidence))
 
+    def _is_noise_text(self, text: str) -> bool:
+        """Check if text is noise/not a real heading.
+        
+        Returns True if text should be filtered out.
+        """
+        # Too short
+        if len(text) < self.MIN_HEADING_LENGTH:
+            return True
+        
+        # Just a number or special chars
+        if self.NOISE_PATTERN.match(text):
+            return True
+        
+        # Contains too many non-word characters (likely garbled)
+        word_chars = len(re.findall(r'\w', text))
+        total_chars = len(text.replace(' ', ''))
+        if total_chars > 0 and word_chars / total_chars < 0.5:
+            return True
+        
+        # Check for common non-heading words (case insensitive)
+        text_lower = text.lower()
+        words = set(re.findall(r'\w+', text_lower))
+        if words & self.NON_HEADING_WORDS:
+            # But allow if it looks like a section title (has pattern like "1.1")
+            if not re.match(r'^\d+[.\d]*\s+\w', text):
+                return True
+        
+        return False
+    
     def _deduplicate_headings(self, headings: list[Heading]) -> list[Heading]:
-        """Remove duplicate headings that appear on the same or adjacent pages."""
         if not headings:
             return headings
 

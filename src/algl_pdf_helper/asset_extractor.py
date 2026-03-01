@@ -59,6 +59,29 @@ class ExtractedAsset:
                 table_num = parts[-1]
                 return f"{page_str}-table-{table_num}.html"
             return f"{page_str}-{self.id}.html"
+    
+    def to_asset_reference(self) -> "AssetReference":
+        """Convert this extracted asset to an AssetReference for manifests."""
+        from .models import AssetReference
+        
+        ref = AssetReference(
+            id=self.id,
+            type=self.type,
+            path=self.get_relative_path(),
+            pageNumber=self.page,
+            caption=self.caption,
+        )
+        
+        # Add dimensions if available in metadata
+        if self.metadata:
+            if "width" in self.metadata:
+                ref.width = self.metadata["width"]
+            if "height" in self.metadata:
+                ref.height = self.metadata["height"]
+            if "extracted_text" in self.metadata:
+                ref.extractedText = self.metadata["extracted_text"]
+        
+        return ref
 
 
 class AssetExtractor:
