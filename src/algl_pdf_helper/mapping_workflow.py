@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,7 @@ class MappingWorkflow:
         Returns:
             ReviewPackage with all review information
         """
-        package_id = f"review-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+        package_id = f"review-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
         # Generate suggestions
         suggestions = self._generate_suggestions(draft_mapping)
@@ -92,7 +92,7 @@ class MappingWorkflow:
 
         return ReviewPackage(
             package_id=package_id,
-            created_at=datetime.utcnow().isoformat() + "Z",
+            created_at=datetime.now(timezone.utc).isoformat() + "Z",
             pdf_path=str(draft_mapping.pdf_path),
             pdf_name=draft_mapping.pdf_path.name,
             total_pages=draft_mapping.total_pages,
@@ -385,7 +385,7 @@ class MappingWorkflow:
         reviewed_ids = {c['id'] for c in reviewed}
 
         return {
-            'workflow_completed_at': datetime.utcnow().isoformat() + "Z",
+            'workflow_completed_at': datetime.now(timezone.utc).isoformat() + "Z",
             'original_draft': {
                 'total_concepts': len(draft.concepts),
                 'needs_review': sum(1 for c in draft.concepts if c.needs_review),

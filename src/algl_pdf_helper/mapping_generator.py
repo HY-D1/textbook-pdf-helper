@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -225,7 +225,7 @@ class MappingGenerator:
 
         return DraftMapping(
             pdf_path=pdf_path,
-            created_at=datetime.utcnow().isoformat() + "Z",
+            created_at=datetime.now(timezone.utc).isoformat() + "Z",
             total_pages=total_pages,
             detected_headings=len(headings),
             matched_concepts=len(concepts),
@@ -241,9 +241,9 @@ class MappingGenerator:
         total_pages: int
     ) -> list[int]:
         """Estimate the page range for a concept based on heading position."""
-        # Find next heading at same or higher level
-        start_page = heading.page
-        end_page = total_pages
+        # Ensure we always have at least the heading's page
+        start_page = max(1, heading.page) if heading.page > 0 else 1
+        end_page = min(start_page + 3, total_pages)  # Default to 3 pages
 
         heading_index = None
         for i, h in enumerate(all_headings):
@@ -254,11 +254,11 @@ class MappingGenerator:
         if heading_index is not None:
             for h in all_headings[heading_index + 1:]:
                 if h.level <= heading.level:
-                    end_page = h.page - 1
+                    end_page = min(h.page - 1, start_page + 10)
                     break
 
-        # Limit range to reasonable size
-        end_page = min(end_page, start_page + 10)
+        # Ensure valid range
+        end_page = max(start_page, min(end_page, total_pages))
 
         return list(range(start_page, end_page + 1))
 
