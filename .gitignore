@@ -54,3 +54,29 @@ test_output/
 *.tmp
 temp/
 tmp/
+
+# AI-generated test reports (not needed in repo)
+test_reports/*.md
+test_reports/*.json
+!test_reports/CLEANUP_FINAL_SUMMARY.md
+!test_reports/COMPREHENSIVE_TEST_SUMMARY.md
+!test_reports/FINAL_VALIDATION_REPORT.md
+
+# Output directories (generated content)
+output/
+test_output/
+
+# Archived docs (old versions)
+docs/archive/
+
+# Root-level test scripts (should be in tests/)
+/test_*.py
+
+# Baseline outputs (generated)
+tests/baselines/*/
+!tests/baselines/.gitkeep
+
+# Temporary test files
+temp/
+tmp/
+*.tmp
