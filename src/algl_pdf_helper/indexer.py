@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import typer
+
+from .optimized_indexer import (
+    fast_json_dump,
+    fast_json_dumps,
+    optimize_for_large_document,
+)
 
 from .chunker import chunk_page_words
 from .clean import normalize_text, strip_repeated_headers_footers
@@ -198,7 +204,6 @@ def extract_and_save_assets(
         
     except Exception as e:
         # Log warning but don't fail the index build
-        import warnings
         warnings.warn(f"Asset extraction failed for '{pdf_path.name}': {e}")
         return None
 
@@ -213,10 +218,7 @@ def save_asset_manifest(
         manifest: Asset manifest to save
         out_path: Output path for JSON file
     """
-    out_path.write_text(
-        json.dumps(manifest.model_dump(), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    fast_json_dump(manifest.model_dump(), out_path, indent=True)
 
 
 def build_index(
@@ -281,8 +283,7 @@ def build_index(
                         raise typer.Exit(1)
                     else:
                         # Auto-OCR was triggered but ocrmypdf not installed
-                        import warnings as _warnings
-                        _warnings.warn(
+                        warnings.warn(
                             f"Low quality text detected but ocrmypdf not installed. "
                             f"Install with: pip install -e '.[ocr]'"
                         )
@@ -308,8 +309,7 @@ def build_index(
             
             # Step 3: If quality is poor and we didn't OCR yet, retry with OCR
             if not quality_info["is_quality_good"] and not did_ocr and not ocr:
-                import warnings as _warnings
-                _warnings.warn(
+                warnings.warn(
                     f"Low quality extraction for '{filename}': {quality_info['reason']}. "
                     f"Retrying with OCR..."
                 )
@@ -327,8 +327,7 @@ def build_index(
                     )
                 except RuntimeError as e:
                     if "ocrmypdf is not installed" in str(e):
-                        import warnings as _warnings
-                        _warnings.warn(
+                        warnings.warn(
                             f"OCR recommended but ocrmypdf not installed. "
                             f"Install with: pip install -e '.[ocr]'"
                         )
@@ -452,18 +451,16 @@ def build_index(
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest.model_dump(), indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (out_dir / "chunks.json").write_text(
-        json.dumps([c.model_dump() for c in chunks], indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (out_dir / "index.json").write_text(
-        json.dumps(document.model_dump(), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    
+    # Get optimized settings based on document size
+    total_pages = sum(d.pageCount for d in source_docs)
+    optimize_settings = optimize_for_large_document(total_pages)
+    use_compact = optimize_settings.get("skip_pretty_print", False)
+    
+    # Use fast JSON serialization
+    fast_json_dump(manifest.model_dump(), out_dir / "manifest.json", indent=not use_compact)
+    fast_json_dump([c.model_dump() for c in chunks], out_dir / "chunks.json", indent=not use_compact)
+    fast_json_dump(document.model_dump(), out_dir / "index.json", indent=not use_compact)
 
     # Save asset manifests
     if asset_manifests:
@@ -520,7 +517,6 @@ def build_index(
             
         except Exception as e:
             # Log warning but don't fail the whole index build
-            import warnings
             warnings.warn(f"Failed to generate concepts: {e}")
 
     return document
