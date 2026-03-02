@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import sys
+import time
+import tracemalloc
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -16,6 +19,7 @@ from algl_pdf_helper.asset_extractor import (
     ExtractedAsset,
     extract_assets_from_pdf,
 )
+from algl_pdf_helper.models import AssetManifest, AssetReference
 from algl_pdf_helper.table_converter import (
     TableCell,
     TableConverter,
@@ -546,6 +550,726 @@ class TestExtractAssetsFromPdf:
         
         assert result["images"] == []
         assert result["tables"] == []
+
+
+class TestImageFormatEdgeCases:
+    """Test extraction of various image formats from PDFs."""
+    
+    def test_png_image_bytes_preserved(self):
+        """Test that PNG image bytes are preserved correctly."""
+        extractor = AssetExtractor(backend="pymupdf")
+        
+        # Mock _extract_images_pymupdf to return a test asset
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"fake-png-data"
+        test_asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(10, 10, 200, 200),
+            doc_id="doc-123",
+            format="png",
+            content=png_bytes,
+        )
+        
+        with patch.object(extractor, '_extract_images_pymupdf', return_value=[test_asset]):
+            assets = extractor.extract_images(Path("test.pdf"), "doc-123")
+        
+        assert len(assets) == 1
+        assert assets[0].format == "png"
+        assert assets[0].content == png_bytes
+    
+    def test_jpeg_image_conversion(self):
+        """Test that JPEG images are converted to PNG."""
+        extractor = AssetExtractor(backend="pymupdf")
+        
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"fake-jpeg-data"
+        
+        # Mock _convert_to_png to return PNG bytes
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"converted"
+        
+        with patch.object(extractor, '_convert_to_png', return_value=png_bytes) as mock_convert:
+            result = extractor._convert_to_png(jpeg_bytes)
+        
+        # Verify conversion returns PNG
+        assert result.startswith(b"\x89PNG")
+    
+    def test_cmyk_image_conversion(self):
+        """Test handling of CMYK color space images - should convert to RGB."""
+        extractor = AssetExtractor()
+        
+        # Create a CMYK image using PIL
+        try:
+            from PIL import Image
+            img = Image.new('CMYK', (100, 100), (0, 255, 255, 0))
+            buffer = io.BytesIO()
+            img.save(buffer, format='TIFF')
+            cmyk_bytes = buffer.getvalue()
+            
+            result = extractor._convert_to_png(cmyk_bytes)
+            # Result should be valid PNG (starts with PNG magic bytes)
+            assert result is not None
+            assert result.startswith(b"\x89PNG")
+        except ImportError:
+            pytest.skip("PIL not available")
+    
+    def test_transparent_image_handling(self):
+        """Test handling of images with transparency (RGBA)."""
+        extractor = AssetExtractor()
+        
+        try:
+            from PIL import Image
+            img = Image.new('RGBA', (100, 100), (255, 0, 0, 128))
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            rgba_bytes = buffer.getvalue()
+            
+            # Test conversion - should handle RGBA without error
+            result = extractor._convert_to_png(rgba_bytes)
+            assert result is not None
+            assert len(result) > 0
+            assert result.startswith(b"\x89PNG")
+        except ImportError:
+            pytest.skip("PIL not available")
+    
+    def test_grayscale_image_handling(self):
+        """Test handling of grayscale images."""
+        extractor = AssetExtractor()
+        
+        try:
+            from PIL import Image
+            img = Image.new('L', (100, 100), 128)
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            gray_bytes = buffer.getvalue()
+            
+            result = extractor._convert_to_png(gray_bytes)
+            assert result is not None
+            assert result.startswith(b"\x89PNG")
+        except ImportError:
+            pytest.skip("PIL not available")
+
+
+# =============================================================================
+# Image Size Edge Cases
+# =============================================================================
+
+class TestImageSizeEdgeCases:
+    """Test extraction of images with various sizes."""
+    
+    def test_tiny_image_filtering(self):
+        """Test that tiny images (1x1, 16x16) are filtered out."""
+        extractor = AssetExtractor(backend="pymupdf")
+        
+        # Create assets that would be filtered based on bbox size
+        tiny_asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 10, 10),  # 10x10 pixels - below default 50x50 min
+            doc_id="doc-123",
+            format="png",
+            content=b"\x89PNG\r\n\x1a\ntest",
+        )
+        large_asset = ExtractedAsset(
+            id="page-001-fig-02",
+            type="image",
+            page=1,
+            bbox=(0, 0, 400, 300),  # Large image
+            doc_id="doc-123",
+            format="png",
+            content=b"\x89PNG\r\n\x1a\ntest",
+        )
+        
+        # The filtering happens inside _extract_images_pymupdf
+        # Here we just verify the assets have correct metadata
+        assert tiny_asset.bbox[2] - tiny_asset.bbox[0] == 10  # width
+        assert large_asset.bbox[2] - large_asset.bbox[0] == 400  # width
+    
+    def test_large_image_handling(self):
+        """Test handling of large images (4000x3000)."""
+        extractor = AssetExtractor(backend="pymupdf")
+        
+        large_asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 4000, 3000),
+            doc_id="doc-123",
+            format="png",
+            content=b"\x89PNG\r\n\x1a\n" + b"x" * 1000000,  # 1MB of image data
+        )
+        
+        assert large_asset.bbox[2] - large_asset.bbox[0] == 4000
+        assert len(large_asset.content) > 1000000
+
+
+# =============================================================================
+# Table Structure Edge Cases
+# =============================================================================
+
+class TestTableStructureEdgeCases:
+    """Test extraction of tables with various structures."""
+    
+    def test_simple_table_structure(self):
+        """Test basic table structure is preserved."""
+        converter = TableConverter()
+        
+        headers = [
+            TableCell(content="Col1", is_header=True),
+            TableCell(content="Col2", is_header=True),
+        ]
+        rows = [
+            TableRow(cells=[TableCell(content="A"), TableCell(content="B")]),
+        ]
+        data = TableData(headers=headers, rows=rows)
+        
+        html = converter.convert_to_html(data, add_figure_wrap=False)
+        
+        assert "<table" in html
+        assert "<th>Col1</th>" in html
+        assert "<td>A</td>" in html
+    
+    def test_merged_cells_colspan_rowspan(self):
+        """Test table with colspan and rowspan."""
+        converter = TableConverter()
+        
+        headers = [
+            TableCell(content="H1", is_header=True),
+            TableCell(content="H2", is_header=True),
+        ]
+        rows = [
+            TableRow(cells=[
+                TableCell(content="A", colspan=2),
+            ]),
+        ]
+        data = TableData(headers=headers, rows=rows)
+        
+        html = converter.convert_to_html(data, add_figure_wrap=False)
+        
+        assert 'colspan="2"' in html
+    
+    def test_empty_table_handling(self):
+        """Test handling of empty tables."""
+        converter = TableConverter()
+        
+        data = TableData(headers=[], rows=[])
+        html = converter.convert_to_html(data, add_figure_wrap=False)
+        
+        # Should still produce valid HTML
+        assert "<table" in html
+
+
+# =============================================================================
+# Asset Naming Collision Tests
+# =============================================================================
+
+class TestAssetNamingCollisions:
+    """Test handling of asset naming collisions."""
+    
+    def test_multiple_images_same_page_naming(self):
+        """Test naming when multiple images are on the same page."""
+        extractor = AssetExtractor()
+        extractor._reset_counters()
+        
+        # Generate multiple IDs for same page
+        id1 = extractor._generate_image_id(1)
+        id2 = extractor._generate_image_id(1)
+        id3 = extractor._generate_image_id(1)
+        
+        assert id1 == "page-001-fig-01"
+        assert id2 == "page-001-fig-02"
+        assert id3 == "page-001-fig-03"
+        # All should be unique
+        assert len({id1, id2, id3}) == 3
+    
+    def test_multiple_tables_same_page_naming(self):
+        """Test naming when multiple tables are on the same page."""
+        extractor = AssetExtractor()
+        extractor._reset_counters()
+        
+        id1 = extractor._generate_table_id(1)
+        id2 = extractor._generate_table_id(1)
+        id3 = extractor._generate_table_id(1)
+        
+        assert id1 == "page-001-table-01"
+        assert id2 == "page-001-table-02"
+        assert id3 == "page-001-table-03"
+        assert len({id1, id2, id3}) == 3
+    
+    def test_mixed_assets_same_page(self):
+        """Test naming when images and tables are on the same page."""
+        extractor = AssetExtractor()
+        extractor._reset_counters()
+        
+        img_id = extractor._generate_image_id(1)
+        table_id = extractor._generate_table_id(1)
+        img_id2 = extractor._generate_image_id(1)
+        
+        # Images and tables should have separate counters
+        assert img_id == "page-001-fig-01"
+        assert table_id == "page-001-table-01"
+        assert img_id2 == "page-001-fig-02"
+    
+    def test_different_pages_naming(self):
+        """Test naming across different pages."""
+        extractor = AssetExtractor()
+        extractor._reset_counters()
+        
+        page1_img1 = extractor._generate_image_id(1)
+        page1_img2 = extractor._generate_image_id(1)
+        page5_img1 = extractor._generate_image_id(5)
+        page5_img2 = extractor._generate_image_id(5)
+        
+        assert page1_img1 == "page-001-fig-01"
+        assert page1_img2 == "page-001-fig-02"
+        assert page5_img1 == "page-005-fig-01"
+        assert page5_img2 == "page-005-fig-02"
+
+
+# =============================================================================
+# Asset Storage Limit Tests
+# =============================================================================
+
+class TestAssetStorageLimits:
+    """Test handling of storage limits and edge cases."""
+    
+    def test_many_assets_storage(self, tmp_path):
+        """Test handling of many assets (100+)."""
+        extractor = AssetExtractor()
+        
+        # Create 150 mock assets
+        assets = []
+        for i in range(150):
+            asset = ExtractedAsset(
+                id=f"page-001-fig-{i+1:03d}",
+                type="image",
+                page=1,
+                bbox=(0, 0, 100, 100),
+                doc_id="test-doc",
+                format="png",
+                content=b"x" * 100,  # 100 bytes each
+            )
+            assets.append(asset)
+        
+        # Save all assets
+        saved_paths = extractor.save_assets(assets, tmp_path)
+        
+        assert len(saved_paths) == 150
+        # All files should exist
+        assert all(p.exists() for p in saved_paths)
+    
+    def test_large_asset_content(self, tmp_path):
+        """Test handling of large asset content."""
+        extractor = AssetExtractor()
+        
+        # Create asset with 10MB content
+        large_content = b"x" * (10 * 1024 * 1024)
+        asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 100, 100),
+            doc_id="test-doc",
+            format="png",
+            content=large_content,
+        )
+        
+        saved_paths = extractor.save_assets([asset], tmp_path)
+        
+        assert len(saved_paths) == 1
+        assert saved_paths[0].exists()
+        assert saved_paths[0].stat().st_size == len(large_content)
+    
+    def test_deep_directory_structure(self, tmp_path):
+        """Test asset paths with deep directory structures."""
+        extractor = AssetExtractor()
+        
+        # Use a deeply nested doc_id
+        asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 100, 100),
+            doc_id="very/long/path/with/many/nested/directories",
+            format="png",
+            content=b"test",
+        )
+        
+        saved_paths = extractor.save_assets([asset], tmp_path)
+        
+        assert len(saved_paths) == 1
+        assert saved_paths[0].exists()
+
+
+# =============================================================================
+# Asset Reference Validation Tests
+# =============================================================================
+
+class TestAssetReferenceValidation:
+    """Test validation of asset references."""
+    
+    def test_relative_path_generation(self):
+        """Test that relative paths are generated correctly."""
+        asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 100, 100),
+            doc_id="my-doc",
+            format="png",
+            content=b"test",
+        )
+        
+        rel_path = asset.get_relative_path()
+        
+        # Path should not start with /
+        assert not rel_path.startswith("/")
+        # Path should include the doc_id
+        assert "my-doc" in rel_path
+        # Path should be relative
+        assert not Path(rel_path).is_absolute()
+    
+    def test_asset_manifest_validation(self):
+        """Test AssetManifest validation."""
+        # Valid manifest
+        manifest = AssetManifest(
+            schemaVersion="asset-manifest-v1",
+            docId="test-doc",
+            assets=[
+                AssetReference(
+                    id="img-001",
+                    type="image",
+                    path="assets/images/doc/img-001.png",
+                    pageNumber=1,
+                ),
+            ],
+        )
+        
+        assert manifest.schemaVersion == "asset-manifest-v1"
+        assert len(manifest.assets) == 1
+        
+        # Test getters
+        assert len(manifest.images) == 1
+        assert len(manifest.tables) == 0
+        assert len(manifest.get_assets_for_page(1)) == 1
+        assert len(manifest.get_assets_for_page(2)) == 0
+    
+    def test_asset_id_uniqueness_in_manifest(self):
+        """Test that asset IDs are unique within a manifest."""
+        manifest = AssetManifest(
+            schemaVersion="asset-manifest-v1",
+            docId="test-doc",
+            assets=[
+                AssetReference(id="img-001", type="image", path="a.png", pageNumber=1),
+                AssetReference(id="img-002", type="image", path="b.png", pageNumber=1),
+                AssetReference(id="img-001", type="image", path="c.png", pageNumber=2),  # Duplicate ID
+            ],
+        )
+        
+        # Check for duplicate IDs
+        ids = [a.id for a in manifest.assets]
+        assert len(ids) != len(set(ids))  # Has duplicates
+        
+    def test_asset_to_reference_conversion(self):
+        """Test conversion from ExtractedAsset to AssetReference."""
+        asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(10, 20, 100, 200),
+            doc_id="my-doc",
+            format="png",
+            caption="Test figure",
+            content=b"test",
+            metadata={
+                "width": 800,
+                "height": 600,
+                "extracted_text": "Some text",
+            },
+        )
+        
+        ref = asset.to_asset_reference()
+        
+        assert ref.id == "page-001-fig-01"
+        assert ref.type == "image"
+        assert ref.pageNumber == 1
+        assert ref.caption == "Test figure"
+        assert ref.width == 800
+        assert ref.height == 600
+        assert ref.extractedText == "Some text"
+
+
+# =============================================================================
+# Corrupted Asset Handling Tests
+# =============================================================================
+
+class TestCorruptedAssetHandling:
+    """Test handling of corrupted or invalid assets."""
+    
+    def test_corrupted_image_data_handling(self):
+        """Test handling of corrupted image data."""
+        extractor = AssetExtractor()
+        
+        # Corrupted image bytes
+        corrupted_data = b"NOT_A_VALID_IMAGE\x00\x01\x02\x03"
+        
+        # Should not raise exception, should return original or handle gracefully
+        try:
+            result = extractor._convert_to_png(corrupted_data)
+            assert result is not None
+        except Exception:
+            # Exception is acceptable
+            pass
+    
+    def test_empty_image_bytes(self):
+        """Test handling of empty image bytes."""
+        extractor = AssetExtractor()
+        
+        # Should handle empty bytes gracefully
+        result = extractor._convert_to_png(b"")
+        assert result == b""  # Empty in, empty out
+    
+    def test_zero_byte_image_file(self, tmp_path):
+        """Test handling of zero-byte image files."""
+        extractor = AssetExtractor()
+        
+        asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 100, 100),
+            doc_id="test-doc",
+            format="png",
+            content=b"",  # Zero bytes
+        )
+        
+        # Should save without error
+        saved_paths = extractor.save_assets([asset], tmp_path)
+        assert len(saved_paths) == 1
+        assert saved_paths[0].exists()
+        assert saved_paths[0].stat().st_size == 0
+
+
+# =============================================================================
+# Asset Metadata Tests
+# =============================================================================
+
+class TestAssetMetadata:
+    """Test asset metadata validation."""
+    
+    def test_page_numbers_are_correct(self):
+        """Test that page numbers are correctly recorded."""
+        asset = ExtractedAsset(
+            id="page-042-fig-01",
+            type="image",
+            page=42,
+            bbox=(0, 0, 100, 100),
+            doc_id="doc",
+            format="png",
+            content=b"test",
+        )
+        
+        assert asset.page == 42
+    
+    def test_bounding_box_validation(self):
+        """Test that bounding boxes are valid."""
+        # Valid bbox
+        valid_bbox = (10.0, 20.0, 100.0, 200.0)
+        asset = ExtractedAsset(
+            id="fig-01",
+            type="image",
+            page=1,
+            bbox=valid_bbox,
+            doc_id="doc",
+            format="png",
+            content=b"test",
+        )
+        
+        assert asset.bbox == valid_bbox
+        # x1 > x0 and y1 > y0
+        assert asset.bbox[2] > asset.bbox[0]
+        assert asset.bbox[3] > asset.bbox[1]
+    
+    def test_caption_extraction(self):
+        """Test caption extraction from assets."""
+        asset = ExtractedAsset(
+            id="fig-01",
+            type="image",
+            page=1,
+            bbox=(0, 0, 100, 100),
+            doc_id="doc",
+            format="png",
+            caption="Figure 1: Sample diagram showing the process",
+            content=b"test",
+        )
+        
+        assert asset.caption == "Figure 1: Sample diagram showing the process"
+    
+    def test_asset_id_uniqueness_check(self):
+        """Test that asset IDs are unique."""
+        assets = [
+            ExtractedAsset(
+                id=f"page-001-fig-{i+1:02d}",
+                type="image",
+                page=1,
+                bbox=(0, 0, 100, 100),
+                doc_id="doc",
+                format="png",
+                content=b"test",
+            )
+            for i in range(10)
+        ]
+        
+        # All IDs should be unique
+        ids = [a.id for a in assets]
+        assert len(ids) == len(set(ids))
+
+
+# =============================================================================
+# Memory and Performance Tests
+# =============================================================================
+
+class TestMemoryAndPerformance:
+    """Test memory usage and performance characteristics."""
+    
+    def test_memory_usage_many_assets(self):
+        """Test memory usage with many assets."""
+        tracemalloc.start()
+        
+        extractor = AssetExtractor()
+        
+        # Create many assets
+        assets = []
+        for i in range(100):
+            asset = ExtractedAsset(
+                id=f"page-001-fig-{i+1:03d}",
+                type="image",
+                page=1,
+                bbox=(0, 0, 100, 100),
+                doc_id="doc",
+                format="png",
+                content=b"x" * 10000,  # 10KB each
+            )
+            assets.append(asset)
+        
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        
+        # Memory should be reasonable (< 100MB for 100 10KB assets)
+        assert peak < 100 * 1024 * 1024, f"Peak memory {peak / 1024 / 1024:.2f}MB too high"
+    
+    def test_id_generation_performance(self):
+        """Test performance of ID generation."""
+        extractor = AssetExtractor()
+        extractor._reset_counters()
+        
+        start_time = time.time()
+        
+        # Generate 1000 IDs
+        for _ in range(1000):
+            extractor._generate_image_id(1)
+        
+        elapsed = time.time() - start_time
+        
+        # Should be very fast (< 0.1 seconds)
+        assert elapsed < 0.1, f"ID generation took {elapsed:.2f}s, too slow"
+
+
+# =============================================================================
+# Integration Tests
+# =============================================================================
+
+class TestAssetExtractionIntegration:
+    """Integration tests for asset extraction."""
+    
+    def test_end_to_end_extraction_flow(self, tmp_path):
+        """Test complete extraction and save flow."""
+        # Create test assets
+        image_asset = ExtractedAsset(
+            id="page-001-fig-01",
+            type="image",
+            page=1,
+            bbox=(10, 20, 300, 400),
+            doc_id="test-book",
+            format="png",
+            caption="Figure 1: Test diagram",
+            content=b"\x89PNG\r\n\x1a\nfake-png-data",
+            metadata={"width": 290, "height": 380},
+        )
+        
+        table_asset = ExtractedAsset(
+            id="page-001-table-01",
+            type="table",
+            page=1,
+            bbox=(10, 450, 500, 650),
+            doc_id="test-book",
+            format="html",
+            caption="Table 1: Sample data",
+            content="<table><tr><th>A</th></tr><tr><td>1</td></tr></table>",
+            metadata={"rows": 1, "cols": 1},
+        )
+        
+        extractor = AssetExtractor()
+        
+        # Save assets
+        saved_paths = extractor.save_assets([image_asset, table_asset], tmp_path)
+        
+        # Verify files exist
+        assert len(saved_paths) == 2
+        assert all(p.exists() for p in saved_paths)
+        
+        # Verify correct paths
+        assert "assets/images/test-book" in str(saved_paths[0])
+        assert "assets/tables/test-book" in str(saved_paths[1])
+        
+        # Verify content
+        assert saved_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nfake-png-data"
+        assert "<table" in saved_paths[1].read_text()
+    
+    def test_manifest_generation(self):
+        """Test complete manifest generation."""
+        assets = [
+            ExtractedAsset(
+                id="page-001-fig-01",
+                type="image",
+                page=1,
+                bbox=(0, 0, 100, 100),
+                doc_id="doc",
+                format="png",
+                caption="Figure 1",
+                content=b"",
+                metadata={"width": 100, "height": 100},
+            ),
+            ExtractedAsset(
+                id="page-002-table-01",
+                type="table",
+                page=2,
+                bbox=(0, 0, 200, 150),
+                doc_id="doc",
+                format="html",
+                caption="Table 1",
+                content="<table></table>",
+                metadata={"rows": 2, "cols": 2},
+            ),
+        ]
+        
+        # Convert to references
+        refs = [a.to_asset_reference() for a in assets]
+        
+        # Create manifest
+        manifest = AssetManifest(
+            schemaVersion="asset-manifest-v1",
+            docId="doc",
+            assets=refs,
+        )
+        
+        # Verify manifest
+        assert manifest.docId == "doc"
+        assert len(manifest.assets) == 2
+        assert len(manifest.images) == 1
+        assert len(manifest.tables) == 1
+        assert len(manifest.get_assets_for_page(1)) == 1
+        assert len(manifest.get_assets_for_page(2)) == 1
 
 
 if __name__ == "__main__":

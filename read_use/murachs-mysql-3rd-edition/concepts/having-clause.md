@@ -1,0 +1,47 @@
+# The HAVING Clause
+
+🟡 **Difficulty:** Intermediate
+⏱️ **Estimated Read Time:** 20 minutes
+
+## Overview
+
+Filtering grouped results based on aggregate conditions
+
+📖 *Source: Page 197, Page 198, Page 199, Page 200, Page 201*
+
+## Definition
+
+Chapter 6 How to code sum1ncary queries 177 A summary query that counts the number of invoices by vendor SELECT vendor_ id, COUNT(*) AS invoice_qty FROM invoices GROUP BY vendor_ id I vendor Jd lnvoice_Qty ► 34 2 37 3 48 1 72 2 (34 rows ) A summary query that calculates the number of invoices ""' Ice . - and the average invoice amount for the vendors in each state and city SELECT vendor_state, vendor_city, COUNT(*) AS invoice_qty, ROUND(AVG(invoice_total), 2) AS invoice_avg FROM invoices JOIN vendors ON invoices.vendor id= vendors.vendor id GROUP BY vendor_state, vendor_city ORDER BY vendor_state, vendor_city vendor _state vendor _city nvolce_qty inv01ce_avg - ► AZ. Phoenix 1 662.00 CA Fresno 19 1208.75 CA Los Angeles 1 503.20 CA Oxnard 3 188.00 (20 rows) A summary query that limits the groups to those with two or more invoices SELECT vendor_ state, vendor_city, COUNT(*) AS invoice_qty, ROUND(AVG(invoice_total), 2) AS invoice_avg FROM invoices JOIN vendors ON invoices.vendor_ id = vendors.vendor_id GROUP BY vendor_state, vendor_city HAVING COUNT(*) >= 2 ORDER BY vendor_state, vendor_city vendor state - - ► CA CA
+
+AS invoice_avg FROM invoices JOIN vendors ON invoices.vendor_ id = vendors.vendor_id GROUP BY vendor_state, vendor_city HAVING COUNT(*) >= 2 ORDER BY vendor_state, vendor_city vendor state - - ► CA CA CA (12 rows) Description vendor_dty Fresno Oxnard Pasadena Sacramento invoice_Qty 111voice_avg 19 1208.75 3 188,00 5 196. 12 7 253.00 I\ 1-- \I • With MySQL 8.0.12 and earlier, the GROUP BY clause sorted the columns in ascending sequence by default. Then, to change the sort sequence, you could code the DESC keyword after the column name in the GROUP BY clause. In addition, to get your results faster, you cot1ld code an ORDER BY NULL clause to prevent MySQL from sorting the rows in the GROUP BY clause. • With MySQL 8.0.13 and later, the columns in a GROUP BY clause are no longer sorted by default, and you can't code the ASC or DESC keyword on this clause. Instead, you must use the ORDER BY clause to specify the sort sequence. Figure 6-4 Queries that use the GROUP BY and HAVING clauses
+
+178 Section 2 More SQL skills cts you need them How the HAVING clause compares to the WHERE clause As you've seen, you can limit the groups included in a result set by coding a search condition in the HAVING clause. In addition, you can apply a search condition to each row before it's included in a group. To do that, you code the search condition in the WHERE clause just as you would for any SELECT state- ment. To make sure you understand the differences between search conditions coded in the HAVING and WHERE clauses, figure 6-5 presents two examples. The first example groups the invoices in the Invoices table by vendor name and calculates a count and average invoice amount for each group. Then, the HA VINO clause limits the groups in the result set to those that have an average invoice total greater than $500. In contrast, the second example includes a WHERE clause that limits the invoices included in the groups to those that have an invoice total greater than $500. In other words, the search
+
+the second example includes a WHERE clause that limits the invoices included in the groups to those that have an invoice total greater than $500. In other words, the search condition in this example is applied to every row. In the previous example, it was applied to each group of rows. As a result, these examples show that there are eight invoices for Zylka Design in the Invoices table, but only seven of them are over $500. Beyond this, there are two differences in the expressions that you can include in the WHERE and HAVING clauses. First, the HAVING clause can include aggregate functions as shown in the frrst example, but the WHERE clause can't. That's because the search condition in a WHERE clause is applied before the rows are grouped. Second, although the WHERE clause can refer to any column in the base tables, the HAVING clause can only refer to columns included in the SELECT clause. That's because it filters the summarized result set that's defmed by the SELECT, FROM, WHERE, and GROUP BY clauses. In other words,
+
+refer to columns included in the SELECT clause. That's because it filters the summarized result set that's defmed by the SELECT, FROM, WHERE, and GROUP BY clauses. In other words, it doesn't filter the base tables.
+
+## Syntax
+
+Chapter 6 How to code sum1ncary queries 179 A summary query with a search condition in the HAVING clause SELECT vendor_name, COUNT(*) AS invoice_qty, ROUND{AVG{invoice_total), 2) AS invoice_ avg FROM vendors JOIN invoices ON vendors.vendor_ id = invoices.vendor_ id GROUP BY vendor_ name HAVING AVG{invoice_total) > 500 ORDER BY invoice_qty DESC vendor_name invoice_qty lnvoice_avg ► United Parcel Service 9 2575.33 Zylka Design 8 867.53 Maftoy lithographing Inc 5 23978.48 IBM 2 600.06 (19 rows) A summary query with a search condition in the WHERE clause SELECT vendor_name, COUNT{*) AS invoice_qty, ROUND(AVG(invoice_total), 2) AS invoice_avg FROM vendors JOIN invoices ON vendors.vendor_ id = invoices.vendor_id WHERE invoice_total > 500 GROUP BY vendor_ name ORDER BY invoice_qty DESC vendor _name invoice_qty • • nvotCe_avg ► Unrted Parcel Service 9 2575.33 Zylka Design 7 9~.67 MaDoy lithographing Inc 5 23978.48 Ingram 2 1on.21 {20 rows) Description I\ - .,__ • When you include a WHERE clat1se in a SELECT statement that uses grouping and aggregates, MySQL applies the search condition before it groups the rows and calculates the aggregates. • When you include a
+
+WHERE clat1se in a SELECT statement that uses grouping and aggregates, MySQL applies the search condition before it groups the rows and calculates the aggregates. • When you include a HAVING clause in a SELECT statement that uses grouping and aggregates, MySQL applies the search condition after it groups the rows and calculates the aggregates. • A WHERE clause can refer to any colwnn in the base tables. • A HAVING clause can only refer to a column included in the SELECT clause. • A WHERE clause can't contain aggregate ft1nctions. • A HAVING clause can contain aggregate functions. Figure 6-5 How the HAVING clause compares to the WHERE clause I
+
+## Examples
+
+180 Section 2 More SQL skills cts you need them How to code compound search conditions You can code compound search conditions in a HAVING clause just as you can in a WHERE clause. The first example in figure 6-6 shows how this works. This query groups invoices by invoice date and calculates a count of the invoices and the sum of the invoice totals for each date. In addition, the HA YING clause specifies three conditions. First, the invoice date must be between 5/1/2018 and 5/31/2018. Second, the invoice count must be greater than 1. And third, the sum of the invoice totals must be greater than $100. In the HAVING clause of this query, the second and third conditions include aggregate functions. As a result, they must be coded in the HAVING clause. The frrst condition, however, doesn't include an aggregate function, so it could be coded in either the HAVING or WHERE clause. The second example shows this condition coded in the WHERE clause. Either way, both queries return the same result set. So, where should you
+
+either the HAVING or WHERE clause. The second example shows this condition coded in the WHERE clause. Either way, both queries return the same result set. So, where should you code your search conditions? In general, I think queries are easier to 1·ead when they include al] the search conditions in the HAVING clause. However, if you prefer to code non-aggregate search conditions in the WHERE clause, that's OK too.
+
+Chapter 6 How to code sum1ncary queries 181 A summary query with a compound condition in the HAVING clause SELECT invoice_date, COUNT(*) AS invoice_qty, SUM(invoice total) AS invoice_ sum FROM invoices GROUP BY invoice_date HAVING invoice_date BETWEEN '2018-05-01' AND '2018-05-31' AND COUNT(*) > 1 AND SUM(invoice_total) > 100 ORDER BY invoice_date DESC The same query coded with a WHERE clause SELECT invoice_date, COUNT(*) AS invoice_qty, SUM(invoice_total) AS invoice_ sum FROM invoices WHERE invoice_ date BETWEEN '2018-05-01' AND '2018-05-31' GROUP BY invoice_date HAVING COUNT(*) > 1 AND SUM(invoice_total) > 100 ORDER BY invoice_ date DESC The result set returned by both queries invoice_date invoice_qty • • mvo,ce_sum ► 2018-05-31 2 453.75 2018-05-25 3 220L15 2018-05-23 2 347. 75 2018-05-21 2 8078.44 2018-05-13 3 1888.95 2018-05-11 2 5009.51 2018-05-03 2 866.87 (7 rows) Description • You can use the AND and OR operators to code compound search conditions in a HAVING clause just as you can in a WHERE clause. • If a search condition includes an aggregate function, it must be coded in the HAVING clause. Otherwise, it can be coded
+
+just as you can in a WHERE clause. • If a search condition includes an aggregate function, it must be coded in the HAVING clause. Otherwise, it can be coded in either the HAVING or the WHERE clause. Figure 6-6 How to code compound search conditions
+
+## Related Concepts
+
+- [aggregate-functions](./aggregate-functions.md)
+- [group-by](./group-by.md)
+
+---
+
+**Tags:** `sql` `having` `filtering` `aggregation`
