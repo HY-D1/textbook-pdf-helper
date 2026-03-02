@@ -178,15 +178,64 @@ def sha256_file(path: Path) -> str:
 
 
 def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
-    doc = fitz.open(pdf_path)
+    """Extract text pages from a PDF using PyMuPDF.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        
+    Returns:
+        List of (page_number, text) tuples
+        
+    Raises:
+        FileNotFoundError: If the PDF file does not exist
+        PermissionError: If the path is a directory or permission denied
+        RuntimeError: If the PDF is corrupted, invalid, or password-protected
+    """
+    # Check if file exists
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+    
+    # Check if it's a file (not a directory)
+    if pdf_path.is_dir():
+        raise PermissionError(f"Path is a directory, not a file: {pdf_path}")
+    
+    try:
+        doc = fitz.open(pdf_path)
+    except fitz.FileDataError as e:
+        error_msg = str(e).lower()
+        if "password" in error_msg or "encrypted" in error_msg or "crypt" in error_msg:
+            raise RuntimeError(
+                f"PDF is password-protected or encrypted: {pdf_path}. "
+                f"Please provide a password or decrypt the file first."
+            ) from e
+        elif "no file" in error_msg or "is no file" in error_msg:
+            raise RuntimeError(
+                f"Invalid PDF file (may be corrupted or not a PDF): {pdf_path}. "
+                f"Please check the file format and try again."
+            ) from e
+        else:
+            raise RuntimeError(
+                f"Failed to open PDF file: {pdf_path}. Error: {e}"
+            ) from e
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "password" in error_msg or "encrypted" in error_msg:
+            raise RuntimeError(
+                f"PDF is password-protected or encrypted: {pdf_path}"
+            ) from e
+        raise RuntimeError(
+            f"Failed to open PDF file: {pdf_path}. The file may be corrupted, "
+            f"truncated, or not a valid PDF. Error: {e}"
+        ) from e
+    
     pages: list[tuple[int, str]] = []
     try:
         for i in range(doc.page_count):
             page = doc.load_page(i)
             text = page.get_text("text")
             text = normalize_text(text)
-            if text:
-                pages.append((i + 1, text))
+            # Include empty pages to maintain stable page numbering
+            pages.append((i + 1, text))
     finally:
         doc.close()
     return pages

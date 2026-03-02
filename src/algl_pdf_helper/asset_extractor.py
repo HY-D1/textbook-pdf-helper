@@ -237,22 +237,34 @@ class AssetExtractor:
         return None
     
     def _convert_to_png(self, image_bytes: bytes) -> bytes:
-        """Convert image bytes to PNG format."""
+        """Convert image bytes to PNG format.
+        
+        Handles various image modes including CMYK, RGBA, and palette-based images.
+        CMYK images are converted to RGB since PNG doesn't support CMYK.
+        """
         try:
             from PIL import Image
             import io
             
             img = Image.open(io.BytesIO(image_bytes))
             
-            # Convert to RGB if necessary
-            if img.mode in ("RGBA", "P"):
+            # Convert to RGB if necessary (PNG only supports RGB/RGBA/L modes)
+            # CMYK must be converted to RGB since PNG doesn't support CMYK
+            if img.mode == "RGBA":
+                # Preserve transparency by creating RGB with white background
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])  # 3 is alpha channel
+                img = background
+            elif img.mode in ("CMYK", "P", "LA", "L"):
+                # Convert all other modes to RGB
                 img = img.convert("RGB")
             
             output = io.BytesIO()
             img.save(output, format="PNG")
             return output.getvalue()
-        except ImportError:
-            # PIL not available, return original
+        except Exception:
+            # If conversion fails for any reason, return original bytes
+            # This ensures we don't lose data even if conversion fails
             return image_bytes
     
     def _find_caption(

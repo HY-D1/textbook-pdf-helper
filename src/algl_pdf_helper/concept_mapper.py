@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import json
 import re
-import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .models import ConceptInfo, ConceptManifest, ConceptSection, PdfIndexChunk
+from .optimized_indexer import fast_json_dump
 
 
 def _match_pdf_to_textbook(pdf_path: Path, textbooks: dict[str, Any]) -> str | None:
@@ -298,9 +299,7 @@ def save_concept_manifest(
         },
     }
     
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(manifest_dict, f, indent=2)
-        f.write("\n")
+    fast_json_dump(manifest_dict, out_path, indent=True)
 
 
 def find_concepts_config(input_path: Path) -> Path | None:

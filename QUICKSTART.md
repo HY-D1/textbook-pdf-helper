@@ -1,5 +1,11 @@
 # Quick Start Guide - Generate Educational Outputs
 
+> ⚠️ **PARTIALLY OUTDATED**: This guide contains some outdated CLI command references. 
+> The `algl-pdf edu` subcommands require the educational dependencies to be installed.
+> For the most current CLI usage, see `README.md` or run `algl-pdf --help`.
+> 
+> **Last reviewed:** 2026-03-01
+
 ## Three-Layer Concept Mapping System
 
 The outputs integrate with SQL-Engage's three-layer concept mapping:

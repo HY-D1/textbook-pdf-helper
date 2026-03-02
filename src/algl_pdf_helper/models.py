@@ -165,7 +165,7 @@ class PdfSourceDoc(BaseModel):
 class PdfIndexChunk(BaseModel):
     chunkId: str
     docId: str
-    page: int
+    page: int = Field(ge=1, description="Page number (1-indexed, must be >= 1)")
     text: str
     embedding: list[float] | None = None
 

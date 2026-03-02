@@ -404,7 +404,7 @@ def get_validation_summary(results: dict[str, ValidationResult]) -> dict[str, An
 # JSON PARSING HELPERS
 # =============================================================================
 
-def safe_parse_json(text: str) -> tuple[bool, dict[str, Any] | None, str]:
+def safe_parse_json(text: str) -> tuple[bool, Any | None, str]:
     """
     Safely parse JSON from text, handling common LLM output issues.
     
@@ -419,43 +419,44 @@ def safe_parse_json(text: str) -> tuple[bool, dict[str, Any] | None, str]:
     
     text = text.strip()
     
-    # Try to extract JSON from markdown code blocks
-    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    # Try to extract JSON from markdown code blocks (handle both objects and arrays)
+    json_match = re.search(r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```', text, re.DOTALL)
     if json_match:
         text = json_match.group(1)
     
-    # Try to find JSON object directly
-    if text.startswith("{") and text.endswith("}"):
+    # Try to find JSON object or array directly
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
         try:
             data = json.loads(text)
             return True, data, ""
         except json.JSONDecodeError as e:
             return False, None, f"JSON parse error: {e}"
     
-    # Try to extract JSON object from text
-    json_pattern = r'\{[\s\S]*\}'
-    match = re.search(json_pattern, text)
-    if match:
-        try:
-            data = json.loads(match.group(0))
-            return True, data, ""
-        except json.JSONDecodeError as e:
-            return False, None, f"JSON parse error: {e}"
+    # Try to extract JSON object or array from text
+    # Try object first, then array
+    for json_pattern in [r'\{[\s\S]*\}', r'\[[\s\S]*\]']:
+        match = re.search(json_pattern, text)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+                return True, data, ""
+            except json.JSONDecodeError:
+                continue
     
-    return False, None, "No JSON object found in text"
+    return False, None, "No JSON object or array found in text"
 
 
-def extract_json_from_llm_output(text: str) -> dict[str, Any] | None:
+def extract_json_from_llm_output(text: str) -> Any | None:
     """
     Extract and parse JSON from LLM output text.
     
-    Handles various formats that LLMs might produce.
+    Handles various formats that LLMs might produce (objects or arrays).
     
     Args:
         text: Raw LLM output text
         
     Returns:
-        Parsed dictionary or None if parsing failed
+        Parsed dictionary, list, or None if parsing failed
     """
     success, data, _ = safe_parse_json(text)
     return data if success else None

@@ -80,3 +80,17 @@ tests/baselines/*/
 temp/
 tmp/
 *.tmp
+
+# Process ID files
+.process_pid
+
+# Environment files (contain secrets)
+.env
+
+# Generated content quality reports
+content_quality_report*.json
+
+# Generated mapping and review files
+draft-mapping.yaml
+review-package.yaml
+review-package.json
