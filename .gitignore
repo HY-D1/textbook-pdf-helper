@@ -85,13 +85,27 @@ docs/archive/
 # Baseline outputs (generated)
 tests/baselines/*/
 !tests/baselines/.gitkeep
+
 # Generated processed content
 read_use/
-output/
-test_output/
 
 # Test scripts not ready for commit
 test_reports/performance_test.py
 test_reports/quick_performance_test.py
 smart_process.sh
 
+# ============================================================================
+# MARKDOWN FILES - LOCAL ONLY (except root README.md)
+# ============================================================================
+
+# All markdown files by default
+*.md
+
+# Except root README.md
+!README.md
+
+# All docs/ markdown files are local-only
+docs/**/*.md
+
+# Ensure no other markdown exceptions
+AGENTS.md
