@@ -1,0 +1,809 @@
+# SQL-Engage Concept Registry
+# Standard SQL concepts for automatic textbook mapping
+
+version: "1.0.0"
+description: "Standard SQL concepts for concept mapping"
+
+categories:
+  dql:
+    - query
+    - select
+    - retrieve
+    - fetch
+    - data query language
+  dml:
+    - modify
+    - insert
+    - update
+    - delete
+    - data manipulation language
+  ddl:
+    - schema
+    - create
+    - alter
+    - drop
+    - define
+    - structure
+    - data definition language
+  dcl:
+    - grant
+    - revoke
+    - permission
+    - security
+    - data control language
+  tcl:
+    - transaction
+    - commit
+    - rollback
+    - transaction control
+  advanced:
+    - optimization
+    - performance
+    - concurrency
+    - procedure
+    - trigger
+
+concepts:
+  # Data Query Language (DQL) - Beginner
+  - id: select-basic
+    name: SELECT Statement Basics
+    definition: Retrieves data from one or more tables using the SELECT statement
+    keywords:
+      - select
+      - from
+      - column
+      - retrieve
+      - query
+      - fetch
+      - projection
+      - distinct
+      - all
+      - asterisk
+      - "*"
+    related_concepts:
+      - where-clause
+      - order-by
+      - alias
+    prerequisites: []
+    difficulty: beginner
+    category: dql
+
+  - id: where-clause
+    name: WHERE Clause
+    definition: Filters rows based on specified conditions using comparison and logical operators
+    keywords:
+      - where
+      - filter
+      - condition
+      - predicate
+      - criteria
+      - comparison
+      - logical operator
+      - and
+      - or
+      - not
+    related_concepts:
+      - select-basic
+      - comparison-operators
+      - null-handling
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dql
+
+  - id: order-by
+    name: ORDER BY Clause
+    definition: Sorts query results in ascending or descending order based on specified columns
+    keywords:
+      - order by
+      - sort
+      - asc
+      - desc
+      - ascending
+      - descending
+      - sequence
+      - ordering
+      - collation
+    related_concepts:
+      - select-basic
+      - where-clause
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dql
+
+  - id: alias
+    name: Column and Table Aliases
+    definition: Temporary names assigned to columns or tables in a query for readability
+    keywords:
+      - alias
+      - as
+      - rename
+      - temporary name
+      - column alias
+      - table alias
+      - correlation name
+    related_concepts:
+      - select-basic
+      - join
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dql
+
+  - id: distinct
+    name: DISTINCT Keyword
+    definition: Eliminates duplicate rows from query results
+    keywords:
+      - distinct
+      - unique
+      - eliminate duplicates
+      - no duplicates
+    related_concepts:
+      - select-basic
+      - aggregate-functions
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dql
+
+  # Comparison and Filtering
+  - id: comparison-operators
+    name: Comparison Operators
+    definition: Operators for comparing values (=, <>, !=, <, >, <=, >=, BETWEEN, IN, LIKE)
+    keywords:
+      - "="
+      - "<>"
+      - "!="
+      - "<"
+      - ">"
+      - "<="
+      - ">="
+      - equal
+      - not equal
+      - less than
+      - greater than
+      - comparison
+      - between
+      - in
+      - like
+      - pattern matching
+    related_concepts:
+      - where-clause
+      - null-handling
+    prerequisites:
+      - where-clause
+    difficulty: beginner
+    category: dql
+
+  - id: null-handling
+    name: NULL Handling
+    definition: Working with NULL values using IS NULL, IS NOT NULL, and COALESCE functions
+    keywords:
+      - null
+      - is null
+      - is not null
+      - coalesce
+      - nvl
+      - ifnull
+      - missing value
+      - unknown
+      - three-valued logic
+    related_concepts:
+      - where-clause
+      - comparison-operators
+    prerequisites:
+      - where-clause
+    difficulty: beginner
+    category: dql
+
+  - id: pattern-matching
+    name: Pattern Matching with LIKE
+    definition: Using wildcard patterns to match string values
+    keywords:
+      - like
+      - wildcard
+      - percent
+      - underscore
+      - pattern
+      - match
+      - "%"
+      - "_"
+    related_concepts:
+      - where-clause
+      - comparison-operators
+    prerequisites:
+      - where-clause
+    difficulty: beginner
+    category: dql
+
+  # Joins - Intermediate
+  - id: join
+    name: JOIN Operations
+    definition: Combining rows from two or more tables based on related columns
+    keywords:
+      - join
+      - inner join
+      - outer join
+      - left join
+      - right join
+      - full join
+      - cross join
+      - natural join
+      - self join
+      - combine tables
+      - table combination
+    related_concepts:
+      - select-basic
+      - alias
+      - table-relationships
+    prerequisites:
+      - select-basic
+      - alias
+    difficulty: intermediate
+    category: dql
+
+  - id: inner-join
+    name: INNER JOIN
+    definition: Returns only rows that have matching values in both tables
+    keywords:
+      - inner join
+      - equi-join
+      - natural join
+      - matching rows
+    related_concepts:
+      - join
+      - outer-join
+    prerequisites:
+      - join
+    difficulty: intermediate
+    category: dql
+
+  - id: outer-join
+    name: OUTER JOIN
+    definition: Returns all rows from one table and matching rows from another
+    keywords:
+      - outer join
+      - left join
+      - right join
+      - full outer join
+      - preserve rows
+    related_concepts:
+      - join
+      - inner-join
+    prerequisites:
+      - join
+    difficulty: intermediate
+    category: dql
+
+  - id: self-join
+    name: Self JOIN
+    definition: Joining a table to itself to compare rows within the same table
+    keywords:
+      - self join
+      - self-join
+      - recursive join
+      - same table
+    related_concepts:
+      - join
+      - alias
+    prerequisites:
+      - join
+    difficulty: intermediate
+    category: dql
+
+  # Aggregation - Intermediate
+  - id: aggregate-functions
+    name: Aggregate Functions
+    definition: Functions that operate on sets of rows (COUNT, SUM, AVG, MIN, MAX)
+    keywords:
+      - count
+      - sum
+      - avg
+      - average
+      - min
+      - max
+      - aggregate
+      - aggregation
+      - group function
+      - summary
+      - statistical
+    related_concepts:
+      - group-by
+      - having
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: dql
+
+  - id: group-by
+    name: GROUP BY Clause
+    definition: Groups rows sharing a property for aggregate calculations
+    keywords:
+      - group by
+      - grouping
+      - group
+      - aggregate groups
+      - summary by group
+      - categorization
+    related_concepts:
+      - aggregate-functions
+      - having
+    prerequisites:
+      - aggregate-functions
+    difficulty: intermediate
+    category: dql
+
+  - id: having
+    name: HAVING Clause
+    definition: Filters groups based on aggregate conditions
+    keywords:
+      - having
+      - filter groups
+      - group condition
+      - aggregate filter
+      - post-aggregation filter
+    related_concepts:
+      - group-by
+      - aggregate-functions
+      - where-clause
+    prerequisites:
+      - group-by
+    difficulty: intermediate
+    category: dql
+
+  # Subqueries - Intermediate
+  - id: subquery
+    name: Subqueries
+    definition: Queries nested inside another query to retrieve intermediate results
+    keywords:
+      - subquery
+      - subqueries
+      - nested query
+      - inner query
+      - correlated subquery
+      - in subquery
+      - exists
+      - scalar subquery
+      - derived table
+    related_concepts:
+      - select-basic
+      - join
+      - where-clause
+    prerequisites:
+      - select-basic
+      - where-clause
+    difficulty: intermediate
+    category: dql
+
+  - id: correlated-subquery
+    name: Correlated Subqueries
+    definition: Subqueries that reference columns from the outer query
+    keywords:
+      - correlated subquery
+      - correlated
+      - outer reference
+      - dependent subquery
+    related_concepts:
+      - subquery
+      - exists
+    prerequisites:
+      - subquery
+    difficulty: advanced
+    category: dql
+
+  # Set Operations
+  - id: set-operations
+    name: Set Operations
+    definition: Combining results of multiple queries using UNION, INTERSECT, and EXCEPT
+    keywords:
+      - union
+      - intersect
+      - except
+      - minus
+      - union all
+      - combine results
+      - set operation
+      - set theory
+    related_concepts:
+      - select-basic
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: dql
+
+  # Data Manipulation Language (DML)
+  - id: insert
+    name: INSERT Statement
+    definition: Adds new rows to a table
+    keywords:
+      - insert
+      - insert into
+      - values
+      - add row
+      - create row
+      - append
+      - bulk insert
+    related_concepts:
+      - select-basic
+      - update
+      - delete
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dml
+
+  - id: update
+    name: UPDATE Statement
+    definition: Modifies existing rows in a table
+    keywords:
+      - update
+      - set
+      - modify
+      - change
+      - edit row
+      - update rows
+    related_concepts:
+      - insert
+      - delete
+      - where-clause
+    prerequisites:
+      - insert
+      - where-clause
+    difficulty: beginner
+    category: dml
+
+  - id: delete
+    name: DELETE Statement
+    definition: Removes rows from a table
+    keywords:
+      - delete
+      - delete from
+      - remove row
+      - drop row
+      - truncate table
+    related_concepts:
+      - insert
+      - update
+      - where-clause
+    prerequisites:
+      - update
+    difficulty: beginner
+    category: dml
+
+  - id: merge
+    name: MERGE Statement
+    definition: Performs insert, update, or delete operations based on conditions
+    keywords:
+      - merge
+      - upsert
+      - insert or update
+      - synchronize
+    related_concepts:
+      - insert
+      - update
+      - delete
+    prerequisites:
+      - insert
+      - update
+    difficulty: advanced
+    category: dml
+
+  # Data Definition Language (DDL)
+  - id: create-table
+    name: CREATE TABLE
+    definition: Creates a new table with specified columns and constraints
+    keywords:
+      - create table
+      - table definition
+      - ddl
+      - data definition
+      - new table
+      - define table
+      - schema object
+    related_concepts:
+      - constraints
+      - data-types
+      - alter-table
+    prerequisites: []
+    difficulty: beginner
+    category: ddl
+
+  - id: alter-table
+    name: ALTER TABLE
+    definition: Modifies the structure of an existing table
+    keywords:
+      - alter table
+      - add column
+      - drop column
+      - modify column
+      - change table
+      - rename table
+    related_concepts:
+      - create-table
+      - constraints
+    prerequisites:
+      - create-table
+    difficulty: intermediate
+    category: ddl
+
+  - id: drop-table
+    name: DROP TABLE
+    definition: Removes a table and all its data permanently
+    keywords:
+      - drop table
+      - delete table
+      - remove table
+      - destroy table
+      - cascade
+    related_concepts:
+      - create-table
+      - truncate-table
+    prerequisites:
+      - create-table
+    difficulty: beginner
+    category: ddl
+
+  - id: truncate-table
+    name: TRUNCATE TABLE
+    definition: Quickly removes all rows from a table without logging
+    keywords:
+      - truncate
+      - truncate table
+      - delete all rows
+      - fast delete
+    related_concepts:
+      - delete
+      - drop-table
+    prerequisites:
+      - delete
+    difficulty: intermediate
+    category: ddl
+
+  - id: constraints
+    name: Constraints
+    definition: Rules enforced on data columns to ensure data integrity
+    keywords:
+      - constraint
+      - primary key
+      - foreign key
+      - unique
+      - check
+      - not null
+      - default
+      - referential integrity
+      - data integrity
+    related_concepts:
+      - create-table
+      - alter-table
+      - table-relationships
+    prerequisites:
+      - create-table
+    difficulty: intermediate
+    category: ddl
+
+  - id: primary-key
+    name: Primary Key
+    definition: Uniquely identifies each row in a table
+    keywords:
+      - primary key
+      - unique identifier
+      - table id
+      - pk
+    related_concepts:
+      - constraints
+      - foreign-key
+    prerequisites:
+      - constraints
+    difficulty: beginner
+    category: ddl
+
+  - id: foreign-key
+    name: Foreign Key
+    definition: Establishes relationships between tables by referencing primary keys
+    keywords:
+      - foreign key
+      - reference
+      - relationship
+      - referential integrity
+      - fk
+    related_concepts:
+      - constraints
+      - primary-key
+      - join
+    prerequisites:
+      - constraints
+    difficulty: intermediate
+    category: ddl
+
+  # Indexes and Views
+  - id: index
+    name: Indexes
+    definition: Database objects that improve query performance for data retrieval
+    keywords:
+      - index
+      - create index
+      - b-tree
+      - unique index
+      - composite index
+      - performance
+      - query optimization
+      - search speed
+    related_concepts:
+      - create-table
+      - query-optimization
+    prerequisites:
+      - create-table
+    difficulty: intermediate
+    category: ddl
+
+  - id: view
+    name: Views
+    definition: Virtual tables based on the result of a stored query
+    keywords:
+      - view
+      - create view
+      - virtual table
+      - named query
+      - drop view
+      - updatable view
+    related_concepts:
+      - select-basic
+      - subquery
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: ddl
+
+  # Transactions
+  - id: transaction
+    name: Transactions
+    definition: ACID-compliant units of work (COMMIT, ROLLBACK, SAVEPOINT)
+    keywords:
+      - transaction
+      - commit
+      - rollback
+      - savepoint
+      - acid
+      - atomicity
+      - consistency
+      - isolation
+      - durability
+    related_concepts:
+      - concurrency-control
+      - locking
+    prerequisites: []
+    difficulty: advanced
+    category: tcl
+
+  - id: isolation-levels
+    name: Transaction Isolation Levels
+    definition: Controls the degree to which transactions are isolated from each other
+    keywords:
+      - isolation level
+      - read uncommitted
+      - read committed
+      - repeatable read
+      - serializable
+      - dirty read
+      - phantom read
+    related_concepts:
+      - transaction
+      - concurrency-control
+    prerequisites:
+      - transaction
+    difficulty: advanced
+    category: tcl
+
+  # Advanced Topics
+  - id: stored-procedure
+    name: Stored Procedures
+    definition: Precompiled SQL statements stored in the database for reuse
+    keywords:
+      - stored procedure
+      - procedure
+      - routine
+      - pl/sql
+      - t-sql
+      - execute
+      - call
+    related_concepts:
+      - function
+      - trigger
+    prerequisites:
+      - transaction
+    difficulty: advanced
+    category: advanced
+
+  - id: function
+    name: User-Defined Functions
+    definition: Custom functions created to perform specific operations
+    keywords:
+      - function
+      - user-defined function
+      - udf
+      - return value
+      - scalar function
+      - table function
+    related_concepts:
+      - stored-procedure
+    prerequisites:
+      - stored-procedure
+    difficulty: advanced
+    category: advanced
+
+  - id: trigger
+    name: Triggers
+    definition: Automatic actions executed in response to specific database events
+    keywords:
+      - trigger
+      - event
+      - automatic
+      - before
+      - after
+      - instead of
+      - dml trigger
+      - ddl trigger
+    related_concepts:
+      - stored-procedure
+      - transaction
+    prerequisites:
+      - stored-procedure
+    difficulty: advanced
+    category: advanced
+
+  - id: cursor
+    name: Cursors
+    definition: Database objects for row-by-row processing of query results
+    keywords:
+      - cursor
+      - fetch
+      - open
+      - close
+      - row-by-row
+      - iterative processing
+    related_concepts:
+      - stored-procedure
+    prerequisites:
+      - stored-procedure
+    difficulty: advanced
+    category: advanced
+
+  # Normalization
+  - id: normalization
+    name: Database Normalization
+    definition: Process of organizing data to reduce redundancy and improve integrity
+    keywords:
+      - normalization
+      - normal form
+      - 1nf
+      - 2nf
+      - 3nf
+      - bcnf
+      - fourth normal form
+      - denormalization
+    related_concepts:
+      - constraints
+      - functional-dependency
+    prerequisites:
+      - constraints
+    difficulty: advanced
+    category: advanced
+
+  # Security
+  - id: grant-revoke
+    name: Data Control Language (DCL)
+    definition: Managing database access permissions with GRANT and REVOKE
+    keywords:
+      - grant
+      - revoke
+      - permission
+      - privilege
+      - security
+      - access control
+      - authorization
+    related_concepts:
+      - user-management
+    prerequisites: []
+    difficulty: intermediate
+    category: dcl

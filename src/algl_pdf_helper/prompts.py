@@ -1021,3 +1021,355 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Demo complete!")
     print("=" * 60)
+
+
+# =============================================================================
+# STRICT JSON PROMPTS FOR PHASE 4 (PEDAGOGICAL GENERATION)
+# =============================================================================
+# These prompts enforce valid JSON output with complete schema documentation.
+# Use these when calling LLMs for structured pedagogical content generation.
+
+# JSON Schema documentation for PedagogicalConcept
+PEDAGOGICAL_CONCEPT_JSON_SCHEMA = """
+{
+  "type": "object",
+  "required": ["concept_id", "title", "definition", "key_points", "examples", "common_mistakes"],
+  "properties": {
+    "concept_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "minLength": 1, "maxLength": 100},
+    "title": {"type": "string", "minLength": 3, "maxLength": 200},
+    "difficulty": {"type": "string", "enum": ["beginner", "intermediate", "advanced"]},
+    "definition": {"type": "string", "minLength": 50, "maxLength": 1000},
+    "key_points": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {"type": "string", "minLength": 5}
+    },
+    "examples": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["description", "query", "explanation", "schema_used"],
+        "properties": {
+          "description": {"type": "string", "minLength": 10, "maxLength": 500},
+          "query": {"type": "string", "minLength": 5, "maxLength": 2000},
+          "explanation": {"type": "string", "minLength": 20, "maxLength": 1000},
+          "schema_used": {"type": "string", "minLength": 1, "maxLength": 100},
+          "difficulty": {"type": "string", "enum": ["beginner", "intermediate", "advanced"]}
+        }
+      }
+    },
+    "common_mistakes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["error_type", "incorrect_sql", "correct_sql", "explanation"],
+        "properties": {
+          "error_type": {"type": "string", "minLength": 5, "maxLength": 200},
+          "incorrect_sql": {"type": "string", "minLength": 5, "maxLength": 1000},
+          "correct_sql": {"type": "string", "minLength": 5, "maxLength": 1000},
+          "explanation": {"type": "string", "minLength": 20, "maxLength": 1000},
+          "error_message": {"type": "string", "maxLength": 500},
+          "key_takeaway": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "practice_references": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["problem_id"],
+        "properties": {
+          "problem_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 50},
+          "title": {"type": "string", "maxLength": 200},
+          "difficulty": {"type": "string", "enum": ["beginner", "intermediate", "advanced"]},
+          "concept_alignment": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "estimated_time_minutes": {"type": "integer", "minimum": 5, "maximum": 120},
+    "prerequisites": {"type": "array", "maxItems": 10, "items": {"type": "string"}},
+    "tags": {"type": "array", "maxItems": 10, "items": {"type": "string"}}
+  }
+}
+"""
+
+
+STRICT_PEDAGOGICAL_CONCEPT_PROMPT = """
+You are an expert SQL educator. Generate a complete pedagogical concept for students.
+
+CONCEPT TO TEACH: {concept_title}
+CONCEPT ID: {concept_id}
+DIFFICULTY: {difficulty}
+
+RAW TEXTBOOK CONTENT:
+{raw_text}
+
+AVAILABLE PRACTICE SCHEMAS:
+{practice_schemas}
+
+STRICT JSON OUTPUT REQUIREMENTS:
+1. Respond with valid JSON ONLY - no markdown, no explanations outside JSON
+2. Your ENTIRE response must be a single JSON object matching the schema below
+3. Do NOT wrap the JSON in markdown code blocks (no ```json)
+4. Do NOT include any text before or after the JSON
+
+REQUIRED JSON SCHEMA:
+{json_schema}
+
+CONTENT REQUIREMENTS:
+1. definition: 150-250 words explaining the concept clearly
+2. key_points: 3-7 bullet points of key takeaways
+3. examples: 1-3 SQL examples using ONLY the practice schemas above
+   - Each query MUST end with a semicolon
+   - Use realistic scenarios (e.g., user data, orders, products)
+4. common_mistakes: 2-3 realistic mistakes students make
+   - incorrect_sql: The broken code
+   - correct_sql: The fixed code (must end with semicolon)
+   - explanation: Why it happens and how to avoid it
+5. practice_references: Link to relevant practice problems if known
+
+SQL RULES:
+- Use only these tables: {allowed_tables}
+- All queries must be valid SQLite syntax
+- SELECT queries should be realistic and return useful data
+- Include comments in SQL using -- for complex parts
+
+EXAMPLE OF VALID OUTPUT:
+{{
+  "concept_id": "{concept_id}",
+  "title": "{concept_title}",
+  "difficulty": "{difficulty}",
+  "definition": "A JOIN combines rows from two or more tables based on related columns...",
+  "key_points": [
+    "JOINs link tables using related columns",
+    "INNER JOIN returns only matching rows",
+    "Always specify the ON clause"
+  ],
+  "examples": [
+    {{
+      "description": "Find users and their orders",
+      "query": "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id;",
+      "explanation": "This joins the users and orders tables using the user_id relationship.",
+      "schema_used": "users, orders",
+      "difficulty": "beginner"
+    }}
+  ],
+  "common_mistakes": [
+    {{
+      "error_type": "Missing ON clause",
+      "incorrect_sql": "SELECT * FROM users JOIN orders;",
+      "correct_sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id;",
+      "explanation": "Without ON, you get a Cartesian product (every row matches every row).",
+      "error_message": "ambiguous column name: id",
+      "key_takeaway": "Always specify ON with the join condition"
+    }}
+  ],
+  "practice_references": [],
+  "estimated_time_minutes": 20,
+  "prerequisites": [],
+  "tags": ["sql", "join"]
+}}
+
+CRITICAL: Respond with valid JSON ONLY. Do not include markdown formatting, explanations, or any text outside the JSON object.
+"""
+
+
+STRICT_SQL_EXAMPLE_PROMPT = """
+Generate a SQL example for the concept: {concept_title}
+
+SCENARIO: {scenario}
+DIFFICULTY: {difficulty}
+
+AVAILABLE TABLES:
+{practice_schemas}
+
+STRICT JSON OUTPUT:
+Respond with ONLY a JSON object matching this schema:
+{{
+  "description": "string (10-500 chars)",
+  "query": "string (5-2000 chars, must end with ;)",
+  "explanation": "string (20-1000 chars)",
+  "schema_used": "string (1-100 chars)",
+  "difficulty": "beginner|intermediate|advanced"
+}}
+
+RULES:
+- Query MUST end with semicolon
+- Use ONLY tables from: {allowed_tables}
+- Query must demonstrate: {concept_title}
+- No markdown, no explanation outside JSON
+"""
+
+
+STRICT_COMMON_MISTAKES_PROMPT = """
+Generate common mistakes for the concept: {concept_title}
+
+STRICT JSON OUTPUT:
+Respond with ONLY a JSON array of 2-3 mistake objects:
+[
+  {{
+    "error_type": "string (5-200 chars)",
+    "incorrect_sql": "string (5-1000 chars)",
+    "correct_sql": "string (5-1000 chars, must end with ;)",
+    "explanation": "string (20-1000 chars)",
+    "error_message": "string (max 500 chars)",
+    "key_takeaway": "string (max 300 chars)"
+  }}
+]
+
+ERROR PATTERNS TO CONSIDER:
+{error_patterns}
+
+RULES:
+- Each correct_sql MUST end with semicolon
+- Mistakes must be realistic for {difficulty} level students
+- Use practice schemas: {allowed_tables}
+- No markdown, no explanation outside JSON
+"""
+
+
+# =============================================================================
+# STRICT PROMPT BUILDER FUNCTIONS
+# =============================================================================
+
+def build_strict_pedagogical_prompt(
+    concept_id: str,
+    concept_title: str,
+    difficulty: str,
+    raw_text: str,
+    practice_schemas: dict | None = None,
+) -> str:
+    """
+    Build a strict JSON prompt for generating complete pedagogical content.
+    
+    Args:
+        concept_id: Unique identifier for the concept
+        concept_title: Human-readable title
+        difficulty: "beginner", "intermediate", or "advanced"
+        raw_text: Raw textbook content to base generation on
+        practice_schemas: Optional custom practice schemas
+        
+    Returns:
+        Strict JSON-formatted prompt ready for LLM
+    """
+    schemas = practice_schemas or PRACTICE_SCHEMAS
+    schema_text = format_schema_for_prompt(schemas)
+    allowed_tables = ", ".join(schemas.keys())
+    
+    return STRICT_PEDAGOGICAL_CONCEPT_PROMPT.format(
+        concept_id=concept_id,
+        concept_title=concept_title,
+        difficulty=difficulty,
+        raw_text=raw_text[:4000],  # Limit to prevent token overflow
+        practice_schemas=schema_text,
+        json_schema=PEDAGOGICAL_CONCEPT_JSON_SCHEMA,
+        allowed_tables=allowed_tables,
+    )
+
+
+def build_strict_sql_example_prompt(
+    concept_title: str,
+    scenario: str,
+    difficulty: str,
+    practice_schemas: dict | None = None,
+) -> str:
+    """
+    Build a strict JSON prompt for generating a SQL example.
+    
+    Args:
+        concept_title: Concept being demonstrated
+        scenario: Description of the scenario
+        difficulty: Difficulty level
+        practice_schemas: Optional custom schemas
+        
+    Returns:
+        Strict JSON-formatted prompt
+    """
+    schemas = practice_schemas or PRACTICE_SCHEMAS
+    schema_text = format_schema_for_prompt(schemas)
+    allowed_tables = ", ".join(schemas.keys())
+    
+    return STRICT_SQL_EXAMPLE_PROMPT.format(
+        concept_title=concept_title,
+        scenario=scenario,
+        difficulty=difficulty,
+        practice_schemas=schema_text,
+        allowed_tables=allowed_tables,
+    )
+
+
+def build_strict_mistakes_prompt(
+    concept_title: str,
+    difficulty: str,
+    concept_id: str = "",
+    practice_schemas: dict | None = None,
+) -> str:
+    """
+    Build a strict JSON prompt for generating common mistakes.
+    
+    Args:
+        concept_title: Concept being taught
+        difficulty: Difficulty level
+        concept_id: Optional concept ID for error pattern lookup
+        practice_schemas: Optional custom schemas
+        
+    Returns:
+        Strict JSON-formatted prompt
+    """
+    schemas = practice_schemas or PRACTICE_SCHEMAS
+    allowed_tables = ", ".join(schemas.keys())
+    
+    # Get error patterns if concept_id provided
+    error_patterns_list = []
+    if concept_id:
+        error_patterns_list = get_error_patterns_for_concept(concept_id)
+    
+    error_patterns_text = "\n".join(f"- {p}" for p in error_patterns_list[:5]) if error_patterns_list else "See difficulty guidelines"
+    
+    return STRICT_COMMON_MISTAKES_PROMPT.format(
+        concept_title=concept_title,
+        difficulty=difficulty,
+        error_patterns=error_patterns_text,
+        allowed_tables=allowed_tables,
+    )
+
+
+# =============================================================================
+# EXAMPLE OF VALID/INVALID OUTPUT FOR LLM TRAINING
+# =============================================================================
+
+VALID_OUTPUT_EXAMPLE = """
+✅ VALID (JSON only):
+{"concept_id": "joins-intro", "title": "Introduction to JOINs", "difficulty": "beginner", ...}
+
+❌ INVALID (markdown wrapper):
+```json
+{"concept_id": "joins-intro", ...}
+```
+
+❌ INVALID (extra text):
+Here is the JSON you requested:
+{"concept_id": "joins-intro", ...}
+I hope this helps!
+
+❌ INVALID (missing fields):
+{"concept_id": "joins-intro", "title": "Introduction to JOINs"}
+"""
+
+
+def get_output_format_instructions() -> str:
+    """Get instructions for proper JSON output format."""
+    return """
+OUTPUT FORMAT INSTRUCTIONS:
+1. Respond with valid JSON ONLY
+2. No markdown code blocks (no ```json)
+3. No text before or after the JSON
+4. Ensure all strings are properly escaped
+5. All SQL queries must end with semicolons
+"""

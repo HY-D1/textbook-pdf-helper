@@ -1,0 +1,497 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://algl.io/schemas/textbook-static-v1.json",
+  "title": "Textbook Static Output Specification v1",
+  "description": "Complete contract for ALGL PDF Helper output to SQL-Adapt web app integration",
+  "version": "1.0.0",
+  "type": "object",
+  "definitions": {
+    "AssetReference": {
+      "type": "object",
+      "description": "Reference to an extracted asset (image or table)",
+      "required": ["id", "type", "path", "pageNumber"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique asset identifier (e.g., img-p45-001, table-p45-002)"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["image", "table"],
+          "description": "Asset type"
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative path from textbook-static root (e.g., assets/images/sql-textbook/img-p45-001.png)"
+        },
+        "pageNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Page number where asset appears"
+        },
+        "caption": {
+          "type": "string",
+          "description": "Optional caption or description"
+        },
+        "width": {
+          "type": "integer",
+          "description": "Width in pixels (for images)"
+        },
+        "height": {
+          "type": "integer",
+          "description": "Height in pixels (for images)"
+        },
+        "extractedText": {
+          "type": "string",
+          "description": "OCR'd text or table content as markdown"
+        }
+      }
+    },
+    "ChunkReference": {
+      "type": "object",
+      "description": "Reference to a text chunk",
+      "required": ["chunkId", "docId", "page"],
+      "properties": {
+        "chunkId": {
+          "type": "string",
+          "description": "Unique chunk identifier (format: {docId}:p{page}:c{index})"
+        },
+        "docId": {
+          "type": "string",
+          "description": "Document identifier"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Page number"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text content of the chunk"
+        },
+        "embedding": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Vector embedding for semantic search"
+        }
+      }
+    },
+    "ConceptSection": {
+      "type": "object",
+      "description": "Sections within a concept (definition, examples, etc.)",
+      "required": ["chunkIds", "pageNumbers"],
+      "properties": {
+        "chunkIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Chunk IDs containing this section content"
+        },
+        "pageNumbers": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "Page numbers for this section"
+        }
+      }
+    },
+    "ConceptInfo": {
+      "type": "object",
+      "description": "A single concept with metadata and chunk references",
+      "required": ["id", "title"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "URL-safe concept identifier (e.g., select-basic, where-clause)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable concept title"
+        },
+        "definition": {
+          "type": "string",
+          "description": "Brief definition of the concept",
+          "default": ""
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "description": "Difficulty level",
+          "default": "beginner"
+        },
+        "estimatedReadTime": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Estimated reading time in minutes",
+          "default": 5
+        },
+        "pageReferences": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "All page numbers where this concept appears",
+          "default": []
+        },
+        "sections": {
+          "type": "object",
+          "description": "Content sections mapped to chunks",
+          "additionalProperties": { "$ref": "#/definitions/ConceptSection" },
+          "default": {}
+        },
+        "relatedConcepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of related concepts",
+          "default": []
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tags for categorization",
+          "default": []
+        },
+        "practiceProblemIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Linked practice problem IDs",
+          "default": []
+        },
+        "assetIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of associated assets",
+          "default": []
+        }
+      }
+    },
+    "ConceptMapEntry": {
+      "type": "object",
+      "description": "Entry for concept-map.json (SQL-Adapt format)",
+      "required": ["title", "definition"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Concept title"
+        },
+        "definition": {
+          "type": "string",
+          "description": "Brief definition"
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "default": "beginner"
+        },
+        "pageNumbers": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "default": []
+        },
+        "chunkIds": {
+          "type": "object",
+          "description": "Section name to chunk IDs mapping",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "default": {}
+        },
+        "relatedConcepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "practiceProblemIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "sourceDocId": {
+          "type": "string",
+          "description": "Source document ID"
+        }
+      }
+    },
+    "PdfSourceDoc": {
+      "type": "object",
+      "description": "Source PDF document metadata",
+      "required": ["docId", "filename", "sha256", "pageCount"],
+      "properties": {
+        "docId": {
+          "type": "string",
+          "description": "Document identifier (doc-<sha12> or alias like sql-textbook)"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Original filename"
+        },
+        "sha256": {
+          "type": "string",
+          "description": "Full SHA256 hash of the PDF file"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of pages"
+        }
+      }
+    }
+  },
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "description": "textbook-manifest.json structure",
+      "required": [
+        "schemaVersion",
+        "schemaId",
+        "indexId",
+        "createdAt",
+        "sourceName",
+        "chunkerVersion",
+        "embeddingModelId",
+        "sourceDocs",
+        "docCount",
+        "chunkCount"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0.0",
+          "description": "Schema version"
+        },
+        "schemaId": {
+          "type": "string",
+          "const": "textbook-static-v1",
+          "description": "Schema identifier"
+        },
+        "indexId": {
+          "type": "string",
+          "description": "Unique index identifier"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp"
+        },
+        "sourceName": {
+          "type": "string",
+          "description": "Source name/description"
+        },
+        "chunkerVersion": {
+          "type": "string",
+          "description": "Chunker algorithm version",
+          "default": "word-window-180-overlap-30-v1"
+        },
+        "embeddingModelId": {
+          "type": "string",
+          "description": "Embedding model identifier",
+          "default": "hash-embedding-v1"
+        },
+        "sourceDocs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/PdfSourceDoc" },
+          "description": "Source documents"
+        },
+        "docCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of documents"
+        },
+        "chunkCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total chunks"
+        }
+      }
+    },
+    "conceptMap": {
+      "type": "object",
+      "description": "concept-map.json structure",
+      "required": ["version", "generatedAt", "sourceDocIds", "concepts"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "const": "1.0.0",
+          "description": "Concept map version"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp"
+        },
+        "sourceDocIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of source document IDs"
+        },
+        "concepts": {
+          "type": "object",
+          "description": "Concept ID to ConceptMapEntry mapping",
+          "additionalProperties": { "$ref": "#/definitions/ConceptMapEntry" }
+        }
+      }
+    },
+    "chunks": {
+      "type": "array",
+      "description": "chunks.json structure - array of chunk references",
+      "items": { "$ref": "#/definitions/ChunkReference" }
+    },
+    "conceptManifest": {
+      "type": "object",
+      "description": "concept-manifest.json structure",
+      "required": ["schemaVersion", "sourceDocId", "createdAt", "conceptCount", "concepts"],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "concept-manifest-v1",
+          "description": "Concept manifest schema version"
+        },
+        "sourceDocId": {
+          "type": "string",
+          "description": "Primary document ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp"
+        },
+        "conceptCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of concepts"
+        },
+        "concepts": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/ConceptInfo" },
+          "description": "Concept ID to ConceptInfo mapping"
+        }
+      }
+    },
+    "assetManifest": {
+      "type": "object",
+      "description": "asset-manifest.json structure",
+      "required": ["schemaVersion", "docId", "createdAt", "assets"],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "asset-manifest-v1",
+          "description": "Asset manifest schema version"
+        },
+        "docId": {
+          "type": "string",
+          "description": "Document ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp"
+        },
+        "assets": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/AssetReference" },
+          "description": "List of extracted assets"
+        }
+      }
+    }
+  },
+  "folderStructure": {
+    "description": "Required folder layout for textbook-static output",
+    "root": "textbook-static/",
+    "required": [
+      "textbook-manifest.json",
+      "concept-map.json",
+      "chunks.json",
+      "concepts/",
+      "concepts/README.md"
+    ],
+    "optional": [
+      "concept-manifest.json",
+      "chunks-metadata.json",
+      "assets/",
+      "assets/images/<docId>/",
+      "assets/tables/<docId>/",
+      "assets/asset-manifest.json"
+    ],
+    "structure": {
+      "textbook-static/": {
+        "description": "Root output directory (SQL_ADAPT_PUBLIC_DIR/textbook-static/)",
+        "files": {
+          "textbook-manifest.json": "Main manifest with metadata and source docs",
+          "concept-map.json": "Concept ID to chunk/asset mappings for web app",
+          "chunks.json": "All text chunks with embeddings",
+          "concept-manifest.json": "Internal concept manifest (optional)",
+          "chunks-metadata.json": "Per-document chunk metadata (optional)"
+        },
+        "dirs": {
+          "concepts/": {
+            "README.md": "Index of all concepts with links",
+            "{concept-id}.md": "Individual concept markdown files"
+          },
+          "assets/": {
+            "images/": {
+              "{docId}/": "Extracted images (PNG format)"
+            },
+            "tables/": {
+              "{docId}/": "Extracted tables (CSV or MD format)"
+            },
+            "asset-manifest.json": "Asset metadata and references"
+          }
+        }
+      }
+    }
+  },
+  "markdownFrontmatter": {
+    "description": "YAML frontmatter schema for concept .md files",
+    "required": ["id", "title"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Concept ID (matches filename)"
+      },
+      "title": {
+        "type": "string",
+        "description": "Concept title"
+      },
+      "definition": {
+        "type": "string",
+        "description": "Brief definition"
+      },
+      "difficulty": {
+        "type": "string",
+        "enum": ["beginner", "intermediate", "advanced"]
+      },
+      "estimatedReadTime": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "pageReferences": {
+        "type": "array",
+        "items": { "type": "integer", "minimum": 1 },
+        "description": "Page numbers as array"
+      },
+      "pageNumbers": {
+        "type": "string",
+        "description": "Comma-separated page numbers (alternative format)"
+      },
+      "chunkIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "All chunk IDs for this concept"
+      },
+      "relatedConcepts": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "tags": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "practiceProblemIds": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "sourceDocId": {
+        "type": "string",
+        "description": "Source document ID"
+      }
+    },
+    "example": "---\nid: select-basic\ntitle: SELECT Statement Basics\ndefinition: Retrieves data from one or more tables\ndifficulty: beginner\nestimatedReadTime: 5\npageReferences: [45, 46]\nchunkIds: [sql-textbook:p45:c1, sql-textbook:p45:c2]\nrelatedConcepts: [where-clause, order-by]\ntags: [sql, query, dql]\nsourceDocId: sql-textbook\n---"
+  }
+}

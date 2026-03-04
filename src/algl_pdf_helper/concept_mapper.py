@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import json
 import re
-import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .models import ConceptInfo, ConceptManifest, ConceptSection, PdfIndexChunk
+from .optimized_indexer import fast_json_dump
 
 
 def _match_pdf_to_textbook(pdf_path: Path, textbooks: dict[str, Any]) -> str | None:
@@ -195,6 +196,7 @@ def build_concept_manifest(
     chunks: list[PdfIndexChunk],
     source_doc_id: str,
     created_at: str | None = None,
+    extraction_method: str = "pymupdf",
 ) -> ConceptManifest:
     """Build concept manifest from config and chunks.
     
@@ -203,9 +205,10 @@ def build_concept_manifest(
         chunks: All extracted chunks from the PDF
         source_doc_id: Primary document ID
         created_at: Optional timestamp (ISO format)
+        extraction_method: Method used for PDF extraction
         
     Returns:
-        ConceptManifest with mapped chunks
+        ConceptManifest with mapped chunks and provenance
     """
     if created_at is None:
         created_at = datetime.now(timezone.utc).isoformat()
@@ -227,9 +230,22 @@ def build_concept_manifest(
             page_nums = [int(p) for p in pages]
             section_chunks = get_chunks_for_pages(chunks, page_nums, source_doc_id)
             
+            # Extract block IDs from chunks for this section
+            section_blocks = []
+            for chunk in section_chunks:
+                if hasattr(chunk, 'sourceBlockIds') and chunk.sourceBlockIds:
+                    for block_id in chunk.sourceBlockIds:
+                        section_blocks.append({
+                            "id": block_id,
+                            "page": chunk.page,
+                            "type": "paragraph"
+                        })
+            
             sections[section_name] = ConceptSection(
                 chunkIds=[c.chunkId for c in section_chunks],
                 pageNumbers=page_nums,
+                sourceBlocks=section_blocks,
+                extractionMethod=extraction_method,
             )
             all_page_numbers.extend(page_nums)
         
@@ -283,9 +299,7 @@ def save_concept_manifest(
         },
     }
     
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(manifest_dict, f, indent=2)
-        f.write("\n")
+    fast_json_dump(manifest_dict, out_path, indent=True)
 
 
 def find_concepts_config(input_path: Path) -> Path | None:
