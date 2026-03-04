@@ -1,117 +1,84 @@
-# algl-pdf-helper
+# Adaptive Textbook Helper
 
-Helper project for **ALGL SQL-Adapt** that turns PDFs (including scanned PDFs) into a
-`PdfIndexDocument` compatible with the existing client-side retrieval system.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Schema: v2](https://img.shields.io/badge/schema-v2.0.0-green.svg)](docs/OUTPUT_SPEC.md)
 
-## What it does
+> **Transform static PDFs into dynamic, inspectable knowledge substrates for interaction-driven SQL learning.**
 
-1. (Optional) OCR scanned PDFs using `ocrmypdf` + Tesseract.
-2. Extract per-page text.
-3. Clean/normalize text.
-4. Chunk into word windows (default: 180 words, overlap 30).
-5. Build lightweight 24-dim hash embeddings per chunk.
-6. Emit JSON that matches the app contract:
-   - `manifest.json`
-   - `chunks.json`
-   - `index.json` (full `PdfIndexDocument`)
+This project treats textbooks not as static sequences of chapters, but as **versioned content substrates** that can be re-assembled into adaptive instructional artifacts—micro-hints, worked examples, explanations, and reflective notes—based on learner traces and support needs.
 
-## Install
+## 🎯 What It Does
+
+The Adaptive Textbook Helper addresses the **"assistance dilemma"** in tutoring systems: when to provide hints versus when to escalate to deeper explanations. It combines:
+
+- **📄 Document Pack:** PDF → clean chunks with hash embeddings
+- **🗺️ Domain Pack:** Concept maps with prerequisite DAGs
+- **📊 Trace Pack:** Complete event logging (xAPI/Caliper aligned)
+- **⚙️ Policy Pack:** Adaptive escalation rules and bandit policies
+
+### The Four Packs
+
+| Pack | Purpose | Key Output |
+|------|---------|------------|
+| **Document** | PDF extraction and chunking | `chunks.json` with page-level citations |
+| **Domain** | Knowledge graph construction | `concept-map.json` + `prereq-dag.json` |
+| **Trace** | Interaction logging | HDI, CSI, APS, RQS metrics |
+| **Policy** | Escalation control | `escalation-ladder.yaml` |
+
+---
+
+## 🚀 Quick Start
+
+### Installation
 
 ```bash
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# Basic install (no OCR)
-pip install -e .
-
-# With OCR support (recommended)
-pip install -e '.[ocr]'
-
-# With all optional features
+# Install with all features
 pip install -e '.[server,ocr,test]'
-```
 
-### OCR Dependencies
-
-For OCR support, you need both **Python packages** and **system binaries**:
-
-#### Python OCR Packages (auto-installed with `[ocr]`)
-- `ocrmypdf>=16.0` - OCR pipeline for PDFs
-- `tqdm>=4.66` - Progress bars for batch processing
-
-#### System OCR Binaries (must install separately)
-- `tesseract` - OCR engine (required by ocrmypdf)
-- `ghostscript` - PDF processing (required by ocrmypdf)
-
-**macOS (Homebrew):**
-```bash
+# Install system OCR dependencies (macOS)
 brew install tesseract ghostscript
-```
 
-**Ubuntu/Debian:**
-```bash
+# Install system OCR dependencies (Ubuntu)
 sudo apt-get install tesseract-ocr ghostscript
 ```
 
-**Windows:**
-- Install Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
-- Install Ghostscript: https://www.ghostscript.com/download/gsdnld.html
-
-## CLI usage
-
-### Build an index from a PDF
+### Process Your First PDF
 
 ```bash
-algl-pdf index ./my.pdf --out ./out/pdf-index
+# Basic processing
+algl-pdf index ./SQL_Textbook.pdf --out ./output --use-aliases
+
+# With OCR for scanned PDFs
+algl-pdf index ./scanned_book.pdf --out ./output --ocr --use-aliases
+
+# Generate all four packs
+algl-pdf index ./textbook.pdf --out ./output \
+  --use-aliases \
+  --with-domain-pack \
+  --with-policy-pack
 ```
 
-### Force OCR first (recommended for scanned PDFs)
+### Export to SQL-Adapt
 
 ```bash
-algl-pdf index ./scan.pdf --out ./out/pdf-index --ocr
+# Export processed PDF
+algl-pdf export ./output/sql-textbook
+
+# Full educational pipeline with LLM
+algl-pdf export-edu ./textbook.pdf \
+  --output-dir ./output \
+  --llm-provider kimi
 ```
 
-### Process a directory of PDFs
+### Interactive Processing
 
 ```bash
-algl-pdf index ./pdfs --out ./out/pdf-index
-```
-
-### Generate concept-based learning materials (NEW)
-
-Create a `concepts.yaml` file to define concepts and their page ranges (see `concepts.yaml.example`),
-then run:
-
-```bash
-algl-pdf index ./SQL_Textbook.pdf --out ./out/pdf-index --use-aliases
-```
-
-This generates:
-
-```
-out/pdf-index/
-├── manifest.json           # Index metadata
-├── chunks.json            # Raw chunks with embeddings
-├── index.json             # Full document
-├── concept-manifest.json  # NEW: Concept metadata and chunk mappings
-└── concepts/              # NEW: Readable markdown files
-    ├── README.md          # Index of all concepts
-    ├── select-basic.md    # Individual concept content
-    ├── where-clause.md
-    └── ...
-```
-
-Concept files include:
-- Structured content (definition, examples, common mistakes)
-- Page references for source citation
-- Difficulty levels and estimated read times
-- Links to related concepts
-
-### Interactive Processing with `./start.sh` (NEW)
-
-Use the menu-driven script for easier PDF processing:
-
-```bash
+# Menu-driven interface
 ./start.sh
 ```
 
@@ -119,64 +86,250 @@ Features:
 - 📄 Process single or all PDFs
 - 🔄 Re-process existing PDFs
 - 📋 List PDFs with status
-- 📤 Export to SQL-Adapt format
+- 📤 Export to SQL-Adapt
 - ⚙️ Configure OCR, chunk size, aliases
 
-Place PDFs in `raw_pdf/` folder, outputs go to `read_use/<pdf-name>/`.
+---
 
-### Export to SQL-Adapt (NEW)
+## 📁 Output Structure
 
-Export processed PDFs to the main SQL-Adapt application:
-
-```bash
-# Command line
-algl-pdf export ./read_use/sql-textbook
-
-# Or use the interactive script
-./start.sh
-# → 6) 📤 Export to SQL-Adapt
+```
+output/
+├── document-pack/              # Document artifacts
+│   ├── raw/
+│   │   └── sql-textbook/
+│   │       └── source.pdf
+│   ├── derived/
+│   │   └── sql-textbook/
+│   │       └── pages/
+│   └── index/
+│       └── sql-textbook/
+│           ├── chunks.jsonl
+│           └── index.faiss
+│
+├── domain-pack/                # Knowledge graph
+│   ├── concepts/
+│   │   ├── concept-map.json
+│   │   └── select-basic.md
+│   └── prerequisites/
+│       └── prereq-dag.json
+│
+├── trace-pack/                 # Event infrastructure
+│   ├── events/
+│   │   └── attempt_submitted.schema.json
+│   └── derived/
+│       ├── hdi-calculator.json
+│       └── csi-calculator.json
+│
+├── policy-pack/                # Escalation rules
+│   ├── profiles/
+│   │   ├── fast-escalator.json
+│   │   └── slow-escalator.json
+│   └── thresholds/
+│       └── escalation-ladder.yaml
+│
+└── textbook-static/            # SQL-Adapt export
+    ├── textbook-manifest.json
+    ├── concept-map.json
+    ├── prereq-dag.json
+    └── concepts/
+        └── sql-textbook/
+            └── select-basic.md
 ```
 
-This generates SQL-Adapt compatible files:
-- `concept-map.json` - Concept metadata and chunk mappings
-- `concepts/*.md` - Formatted markdown files for each concept
+---
 
-Output location: `adaptive-instructional-artifacts/apps/web/public/textbook-static/`
+## 🔧 CLI Commands
 
-### OCR for Scanned PDFs
-
-For PDFs that are images/scans without selectable text, enable OCR:
+### Document Pack
 
 ```bash
-# Command line
-algl-pdf index ./scanned.pdf --out ./out --ocr --use-aliases
+# Check PDF extraction quality
+algl-pdf check-quality ./my.pdf --detailed
 
-# Or use the interactive script
-./start.sh
-# → 6) Advanced Options → Toggle OCR mode → Process All PDFs
+# Run preflight analysis
+algl-pdf preflight ./my.pdf
+
+# Extract text with specific strategy
+algl-pdf extract ./my.pdf --strategy ocrmypdf
 ```
 
-**Note:** OCR requires system dependencies (`tesseract` and `ghostscript`).
-
-## Server usage (optional)
+### Domain Pack
 
 ```bash
+# Auto-generate concept mapping draft
+algl-pdf suggest-mapping ./textbook.pdf --output ./concepts.yaml
+
+# Create review package for human validation
+algl-pdf review-mapping ./textbook.pdf --output ./review-package.json
+
+# Extract document structure
+algl-pdf extract-structure ./textbook.pdf
+```
+
+### Trace Pack
+
+```bash
+# Evaluate processing quality
+algl-pdf evaluate ./output --threshold 0.75
+
+# Detect regressions
+algl-pdf detect-regressions ./baseline ./current
+```
+
+### Policy Pack
+
+```bash
+# Validate escalation ladder
+algl-pdf validate-policy ./escalation-ladder.yaml
+
+# Run counterfactual replay
+algl-pdf replay ./logs/session.json --policy slow-escalator
+```
+
+### Server Mode
+
+```bash
+# Start HTTP server
 algl-pdf serve --host 127.0.0.1 --port 7345
+
+# Endpoint: POST /v1/index (multipart form with pdf file)
+# Returns: { document, manifest, chunks, conceptMap }
 ```
 
-Endpoints:
+---
 
-- `POST /v1/index`  (multipart form field: `pdf`)
-  - returns `{ document, manifest, chunks }`
+## 🧠 Adaptive Escalation
 
-## Output format notes
+The system implements four escalation profiles:
 
-- Schema version: `pdf-index-schema-v2`
-- Chunker version: `word-window-180-overlap-30-v1`
-- Embedding model ID: `hash-embedding-v1`
+| Profile | Strategy | Use Case |
+|---------|----------|----------|
+| **Fast Escalator** | Lower thresholds; prioritize time-to-clarity | Time-constrained learners |
+| **Slow Escalator** | Higher thresholds; enforce productive struggle | Deep learning focus |
+| **Explanation-First** | Bypass ladder for prerequisite violations | Known knowledge gaps |
+| **Adaptive Bandit** | Learn optimal per-learner | General population |
 
-Doc IDs:
+### Escalation Ladder
 
-- Upload-mode doc IDs: `doc-<sha256[:12]>`
-- Disk-mode doc IDs (optional): stable aliases (e.g. `sql-textbook`) via `--use-aliases`
+```
+Hint Level 1 (Nudge)
+    ↓ (after 3 errors or 3 min)
+Hint Level 2 (Directed Hint)
+    ↓ (after 5 errors or 5 min)
+Explanation
+    ↓ (after 7 errors or 10 min)
+Worked Example
+```
 
+Safety overrides:
+- Repeated prerequisite failure → jump to explanation
+- Learner explicit request → escalate one level
+
+---
+
+## 📊 Derived Metrics
+
+The system computes four key metrics from interaction traces:
+
+| Metric | Description | Use Case |
+|--------|-------------|----------|
+| **HDI** (Hint Dependency) | Help-seeking behavior patterns | Detect hint over-reliance |
+| **CSI** (Cognitive Strain) | Interaction-based load proxy | Detect cognitive overload |
+| **APS** (Affective Proxy) | Predicted affective state | Detect frustration/boredom |
+| **RQS** (Reflection Quality) | Self-explanation quality | Assess note-taking depth |
+
+---
+
+## 🔬 Research Foundation
+
+This project is grounded in established learning science:
+
+- **Assistance Dilemma** (Koedinger et al.): Balancing help and productive struggle
+- **Retrieval-Augmented Generation** (RAG): Grounded, traceable LLM outputs
+- **Cognitive Load Theory** (Sweller): Managing intrinsic/extraneous load
+- **Productive Failure** (Kapur): Initial struggle benefits learning
+- **Self-Explanation** (Chi): Constructive engagement improves understanding
+- **Retrieval Practice** (Roediger & Karpicke): Testing improves retention
+
+---
+
+## 📖 Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
+| **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
+| **[Output Spec](docs/OUTPUT_SPEC.md)** | JSON schemas, four-pack formats |
+| **[Event Logging](docs/EVENT_LOGGING_SPEC.md)** | xAPI/Caliper event taxonomy |
+| **[Provenance](docs/PROVENANCE_ARCHITECTURE.md)** | PROV-DM reproducibility |
+| **[AI Agent Guide](AGENTS.md)** | Development guidelines |
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run CI-specific tests
+make test-ci
+
+# Run integration tests
+make test-integration
+
+# Update baselines
+make update-baselines
+
+# Run evaluation
+make evaluate
+```
+
+---
+
+## 🤝 Integration
+
+### SQL-Adapt Integration
+
+```typescript
+// Load concept map with prerequisites
+const conceptMap = await fetch('/textbook-static/concept-map.json').then(r => r.json());
+const prereqDAG = await fetch('/textbook-static/prereq-dag.json').then(r => r.json());
+
+// Check prerequisites before showing hint
+function checkPrerequisites(conceptId: string): string[] {
+  const dag = prereqDAG;
+  return dag.edges
+    .filter(e => e.to === conceptId)
+    .map(e => e.from);
+}
+
+// Log interaction event
+function logEvent(event: AttemptSubmittedEvent) {
+  event.trace_id = generateUUID();
+  event.code_version = 'git:abc123';
+  sendToTelemetry(event);
+}
+```
+
+---
+
+## 📜 License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+This project integrates with:
+- **SQL-Adapt** - Adaptive SQL learning platform
+- **Cybernetic Sabotage** - Game-based SQL practice
+- **SQLBeyond Official** - Official SQL curriculum
+- **HintWise** - Intelligent hint system
+- **SQL-Engage Dataset** - Error taxonomy backbone
+
+---
+
+*The Adaptive Textbook Helper: Making every PDF a substrate for personalized, research-grounded learning.*

@@ -71,6 +71,38 @@ from .prompts import (
     ERROR_PATTERNS,
 )
 
+# =============================================================================
+# PHASE 4 INTEGRATION: Safe, Consistent, and Cheap Pedagogical Generation
+# =============================================================================
+# These imports enable the new multi-pass generation pipeline with:
+# - Strict JSON output validation
+# - SQL validation
+# - Quality gates (90%+ pass rate target)
+# - 8GB M1 Mac optimization (qwen2.5:3b default)
+from .pedagogical_models import (
+    PedagogicalConcept,
+    GenerationResult,
+    QualityGateResult,
+)
+from .validators import (
+    validate_concept_json,
+    validate_sql_snippet,
+    safe_parse_json,
+    extract_json_from_llm_output,
+)
+from .generation_pipeline import (
+    MultiPassGenerator,
+    check_ollama_available,
+    get_recommended_model,
+    M1_8GB_MODELS,
+)
+from .quality_gates import (
+    QualityGate,
+    QualityGateConfig,
+    generate_quality_report,
+    print_quality_report,
+)
+
 
 class LLMProvider:
     """Supported LLM providers."""
@@ -660,14 +692,20 @@ class EducationalNoteGenerator:
     - Kimi/Moonshot AI (Kimi Chat 8K/32K/128K)
     """
     
-    # Default Ollama models for M1 Pro 16GB
+    # Default Ollama models for 8GB M1 Mac (Phase 4: Safe, Consistent, and Cheap)
+    # Prioritizes small, fast models with low memory footprint
     OLLAMA_MODELS = {
-        "llama3.2:3b": {"desc": "Fast, lightweight", "ram_gb": 4},
-        "qwen2.5:7b": {"desc": "Good Chinese/English", "ram_gb": 8},
-        "phi4": {"desc": "Microsoft, good reasoning", "ram_gb": 10},
-        "mistral:7b": {"desc": "Balanced performance", "ram_gb": 8},
-        "gemma2:9b": {"desc": "Google, high quality", "ram_gb": 10},
-        "llama3.1:8b": {"desc": "Meta, general purpose", "ram_gb": 8},
+        "qwen2.5:3b": {"desc": "Fast, lightweight, good for education (RECOMMENDED)", "ram_gb": 3},
+        "qwen2.5-coder:3b": {"desc": "Optimized for code generation (RECOMMENDED)", "ram_gb": 3},
+        "llama3.2:3b": {"desc": "Fast, efficient", "ram_gb": 3},
+        "gemma2:2b": {"desc": "Very lightweight", "ram_gb": 2},
+        # 7B models available but with memory warnings
+        "qwen2.5:7b": {"desc": "Better quality, may cause memory pressure on 8GB", "ram_gb": 7, "warning": "Close other apps before using"},
+        "qwen2.5-coder:7b": {"desc": "Best for code, requires more RAM", "ram_gb": 7, "warning": "May cause memory pressure on 8GB"},
+        "mistral:7b": {"desc": "Balanced quality/speed", "ram_gb": 7, "warning": "May cause memory pressure on 8GB"},
+        "phi4": {"desc": "Microsoft, good reasoning", "ram_gb": 10, "warning": "Not recommended for 8GB systems"},
+        "gemma2:9b": {"desc": "Google, high quality", "ram_gb": 10, "warning": "Not recommended for 8GB systems"},
+        "llama3.1:8b": {"desc": "Meta, general purpose", "ram_gb": 8, "warning": "May cause memory pressure on 8GB"},
     }
     
     def __init__(

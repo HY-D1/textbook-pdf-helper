@@ -11,6 +11,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .provenance import (
+    BlockRef,
+    ProvenanceRecord,
+    ProvenanceTracker,
+    create_provenance_from_concept_section,
+)
+
 
 # =============================================================================
 # PRACTICE SCHEMAS - Standardized schemas for all SQL examples
@@ -851,9 +858,10 @@ class PedagogicalContentGenerator:
             row_str = " | ".join(str(val) if val is not None else "NULL" for val in row_data)
             rows.append(row_str)
         
+        rows_str = '\n| '.join(rows)
         return f"""| {header} |
 | {separator} |
-| {' |\n| '.join(rows)} |"""
+| {rows_str} |"""
     
     def generate_pedagogical_concept(
         self,
@@ -861,6 +869,8 @@ class PedagogicalContentGenerator:
         concept_title: str,
         raw_chunks: list[dict],
         practice_problem_links: list[str] | None = None,
+        tracker: ProvenanceTracker | None = None,
+        extraction_method: str = "pymupdf",
     ) -> dict[str, Any]:
         """
         Generate complete pedagogical concept from raw PDF chunks.
@@ -870,10 +880,38 @@ class PedagogicalContentGenerator:
             concept_title: Human-readable title
             raw_chunks: List of raw text chunks from PDF extraction
             practice_problem_links: Optional list of problem IDs to link
+            tracker: Optional ProvenanceTracker to record source information
+            extraction_method: Method used for PDF extraction
             
         Returns:
-            Complete pedagogical concept structure
+            Complete pedagogical concept structure with provenance
         """
+        # Extract chunk IDs and metadata for provenance
+        chunk_ids = []
+        source_pages = []
+        source_blocks = []
+        
+        for chunk in raw_chunks:
+            if isinstance(chunk, dict):
+                chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+                if chunk_id:
+                    chunk_ids.append(chunk_id)
+                page = chunk.get("page")
+                if page and page not in source_pages:
+                    source_pages.append(page)
+                # Extract block references
+                block_ids = chunk.get("sourceBlockIds") or chunk.get("source_block_ids", [])
+                for block_id in block_ids:
+                    if isinstance(block_id, str):
+                        source_blocks.append(BlockRef(
+                            block_id=block_id,
+                            page=page or 0,
+                            block_type="paragraph"
+                        ))
+            else:
+                # Handle string chunks (legacy format)
+                chunk_ids.append(str(chunk))
+        
         # Combine raw chunks
         combined_text = "\n\n".join(
             chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
@@ -934,6 +972,47 @@ class PedagogicalContentGenerator:
                 "estimated_time_minutes": self._estimate_time(concept_id),
                 "source_chunks": len(raw_chunks),
             }
+        }
+        
+        # Record provenance if tracker provided
+        if tracker:
+            # Record provenance for definition section
+            tracker.record_section_provenance(
+                concept_id=concept_id,
+                section_type="definition",
+                source_chunks=chunk_ids,
+                source_pages=source_pages,
+                source_blocks=source_blocks,
+                confidence=0.95,
+            )
+            
+            # Record provenance for examples section
+            tracker.record_section_provenance(
+                concept_id=concept_id,
+                section_type="examples",
+                source_chunks=chunk_ids,
+                source_pages=source_pages,
+                source_blocks=source_blocks,
+                confidence=0.90,
+            )
+            
+            # Record provenance for common mistakes (uses same chunks)
+            tracker.record_section_provenance(
+                concept_id=concept_id,
+                section_type="common_mistakes",
+                source_chunks=chunk_ids,
+                source_pages=source_pages,
+                source_blocks=source_blocks,
+                confidence=0.85,
+            )
+        
+        # Add provenance to concept structure
+        concept["provenance"] = {
+            "chunks": chunk_ids,
+            "pages": source_pages,
+            "blocks": [b.model_dump() for b in source_blocks],
+            "extraction_method": extraction_method,
+            "confidence": 0.90,
         }
         
         return concept

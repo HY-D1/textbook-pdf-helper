@@ -54,7 +54,7 @@ def test_load_concepts_config_invalid() -> None:
         config_path = Path(f.name)
     
     try:
-        with pytest.raises(ValueError, match="must have 'concepts' key"):
+        with pytest.raises(ValueError, match="must have 'concepts' or 'textbooks' key"):
             load_concepts_config(config_path)
     finally:
         config_path.unlink()
@@ -175,10 +175,13 @@ def test_find_concepts_config_with_directory(tmp_path: Path) -> None:
     assert found == config_path
 
 
-def test_find_concepts_config_not_found(tmp_path: Path) -> None:
+def test_find_concepts_config_not_found(tmp_path: Path, monkeypatch) -> None:
     """Test finding concepts config when it doesn't exist."""
     pdf_path = tmp_path / "test.pdf"
     pdf_path.write_text("dummy")
+    
+    # Change to temp directory to avoid finding project's concepts.yaml
+    monkeypatch.chdir(tmp_path)
     
     found = find_concepts_config(pdf_path)
     assert found is None
