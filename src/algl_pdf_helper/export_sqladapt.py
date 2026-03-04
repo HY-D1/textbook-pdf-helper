@@ -278,6 +278,11 @@ No specific mistakes documented in textbook.
     # Build related concepts list (namespaced)
     namespaced_related = [f"{doc_id}/{rid}" if "/" not in rid else rid for rid in concept.relatedConcepts]
     
+    # Pre-build list strings to avoid backslashes in f-string expressions (Python 3.10 compatibility)
+    chunk_ids_str = ''.join([f"\n  - {cid}" for cid in all_chunk_ids])
+    related_str = ''.join([f"\n  - {rid}" for rid in namespaced_related])
+    tags_str = ''.join([f"\n  - {tag}" for tag in concept.tags])
+    
     markdown = f"""---
 id: {concept.id}
 title: {concept.title}
@@ -285,9 +290,9 @@ definition: {concept.definition or "No definition available."}
 difficulty: {concept.difficulty}
 estimatedReadTime: {concept.estimatedReadTime}
 pageReferences: {concept.pageReferences}
-chunkIds:{''.join([f"\n  - {cid}" for cid in all_chunk_ids])}
-relatedConcepts:{''.join([f"\n  - {rid}" for rid in namespaced_related])}
-tags:{''.join([f"\n  - {tag}" for tag in concept.tags])}
+chunkIds:{chunk_ids_str}
+relatedConcepts:{related_str}
+tags:{tags_str}
 sourceDocId: {doc_id}
 ---
 
