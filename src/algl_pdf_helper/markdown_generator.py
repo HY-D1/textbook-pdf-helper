@@ -203,7 +203,9 @@ def generate_frontmatter(
     lines.append(f'estimated_read_time: {concept.estimatedReadTime}')
     
     if concept.tags:
-        lines.append(f"tags: [{', '.join(f'\"{t}\"' for t in concept.tags)}]")
+        tags_quoted = [f'"{t}"' for t in concept.tags]
+        tags_str = ', '.join(tags_quoted)
+        lines.append(f"tags: [{tags_str}]")
     
     if concept.pageReferences:
         pages_str = ", ".join(str(p) for p in concept.pageReferences)

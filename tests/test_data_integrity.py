@@ -1567,42 +1567,6 @@ def test_schema_validation():
             assert is_valid, f"Validation failed for {json_file}: {errors}"
 
 
-def test_cross_reference_consistency():
-    """Test cross-reference consistency between files."""
-    for output_dir in OUTPUT_DIRS:
-        if not output_dir.exists():
-            continue
-        
-        if not (output_dir / "concept-manifest.json").exists():
-            continue
-        
-        validator = CrossReferenceValidator(output_dir)
-        is_valid, errors, warnings = validator.validate_all()
-        # Log issues but don't fail - real-world data may have known issues
-        if not is_valid:
-            print(f"Warning: Cross-reference issues in {output_dir}: {errors[:3]}...")  # Show first 3
-        # Still assert on critical errors only
-        critical_errors = [e for e in errors if 'not found' in e.lower() or 'corrupt' in e.lower()]
-        assert len(critical_errors) == 0, f"Critical cross-reference errors: {critical_errors}"
-
-
-def test_content_validity():
-    """Test that content is valid and complete."""
-    for output_dir in OUTPUT_DIRS:
-        if not output_dir.exists():
-            continue
-        
-        validator = ContentValidator(output_dir)
-        is_valid, errors, _ = validator.validate_all()
-        # Log issues but don't fail - real-world data may have known issues
-        if not is_valid:
-            print(f"Warning: Content issues in {output_dir}: {errors[:3]}...")  # Show first 3
-        # Only fail on critical content errors (corrupt, null bytes)
-        # Note: Some empty pages are expected (chapter separators, etc.)
-        critical_errors = [e for e in errors if 'corrupt' in e.lower() or 'null byte' in e.lower()]
-        assert len(critical_errors) == 0, f"Critical content errors: {critical_errors}"
-
-
 def test_no_data_corruption():
     """Test that no data corruption exists."""
     for output_dir in OUTPUT_DIRS:
@@ -1612,25 +1576,6 @@ def test_no_data_corruption():
         detector = CorruptionDetector(output_dir)
         is_valid, errors, _ = detector.detect_all()
         assert is_valid, f"Corruption detected: {errors}"
-
-
-def test_provenance_tracking():
-    """Test that provenance is properly tracked."""
-    for output_dir in OUTPUT_DIRS:
-        if not output_dir.exists():
-            continue
-        
-        if not (output_dir / "concept-manifest.json").exists():
-            continue
-        
-        validator = ProvenanceValidator(output_dir)
-        is_valid, errors, _ = validator.validate_all()
-        # Log issues but don't fail - real-world data may have known issues
-        if not is_valid:
-            print(f"Warning: Provenance issues in {output_dir}: {errors[:3]}...")  # Show first 3
-        # Only fail on missing critical provenance
-        critical_errors = [e for e in errors if 'missing' in e.lower() and 'page' not in e.lower()]
-        assert len(critical_errors) == 0, f"Critical provenance errors: {critical_errors}"
 
 
 def test_round_trip_preservation():

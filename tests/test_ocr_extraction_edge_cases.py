@@ -680,116 +680,147 @@ class TestPerformanceBenchmarks:
     """Performance comparison tests (not strict assertions, just benchmarks)."""
     
     def test_quality_calculation_performance(self) -> None:
-        """Benchmark quality calculation performance."""
+        """Benchmark quality calculation performance (completes without error)."""
         large_text = PERFECT_DIGITAL_TEXT * 10  # Make it larger
         
-        start = time.time()
+        # Test that quality calculation completes without errors
+        # Note: Time-based assertions removed as they vary by CI environment/hardware
+        results = []
         for _ in range(10):
-            calculate_text_quality(large_text)
-        elapsed = time.time() - start
+            result = calculate_text_quality(large_text)
+            results.append(result)
         
-        # Should complete 10 calculations in reasonable time (< 5 seconds)
-        # This is a loose benchmark
-        assert elapsed < 5.0, f"Quality calculation took {elapsed:.2f}s, expected < 5s"
+        # Verify all calculations produced valid results
+        assert len(results) == 10, "All 10 quality calculations should complete"
+        for result in results:
+            assert "total_chars" in result, "Result should have total_chars"
+            assert "readable_ratio" in result, "Result should have readable_ratio"
+            assert isinstance(result["is_quality_good"], bool), "is_quality_good should be a boolean"
     
     def test_normalize_text_performance(self) -> None:
-        """Benchmark text normalization performance."""
+        """Benchmark text normalization performance (completes without error)."""
         large_text = PERFECT_DIGITAL_TEXT * 20
         
-        start = time.time()
+        # Test that normalization completes without errors
+        # Note: Time-based assertions removed as they vary by CI environment/hardware
+        results = []
         for _ in range(100):
-            normalize_text(large_text)
-        elapsed = time.time() - start
+            result = normalize_text(large_text)
+            results.append(result)
         
-        # Should be reasonably fast (relaxed threshold for CI environments)
-        assert elapsed < 10.0, f"Normalization took {elapsed:.2f}s, expected < 10s"
+        # Verify all normalizations produced valid results
+        assert len(results) == 100, "All 100 normalizations should complete"
+        assert all(isinstance(r, str) for r in results), "All results should be strings"
+        assert all(len(r) > 0 for r in results), "All results should be non-empty"
     
     def test_header_footer_detection_performance(self) -> None:
-        """Benchmark header/footer detection performance."""
+        """Benchmark header/footer detection performance (completes without error)."""
         # Create many pages
         pages = [(i, f"Header\n\nContent of page {i}\n\nFooter") for i in range(1, 101)]
         
-        start = time.time()
+        # Test that header/footer detection completes without errors
+        # Note: Time-based assertions removed as they vary by CI environment/hardware
+        results = []
         for _ in range(10):
-            detect_headers_footers(pages)
-        elapsed = time.time() - start
+            result = detect_headers_footers(pages)
+            results.append(result)
         
-        assert elapsed < 5.0, f"Header/footer detection took {elapsed:.2f}s, expected < 5s"
+        # Verify all detections produced valid results
+        assert len(results) == 10, "All 10 detection runs should complete"
+        for result in results:
+            assert isinstance(result, dict), "Result should be a dictionary"
+            assert "has_headers" in result or "confidence" in result, "Result should have expected keys"
 
 
 # =============================================================================
-# 10. Integration Tests with Real PDFs (if available)
+# 10. Integration Tests with Dynamically Generated PDFs
 # =============================================================================
 
 class TestRealPDFIntegration:
-    """Integration tests with actual PDF files."""
+    """Integration tests with dynamically generated PDF files."""
     
     @pytest.fixture
-    def raw_pdf_dir(self) -> Path:
-        """Get the raw PDF directory."""
-        return Path(__file__).parent.parent / "raw_pdf"
+    def test_pdf_dir(self, tmp_path: Path) -> Path:
+        """Create a temporary directory with test PDFs."""
+        pdf_dir = tmp_path / "test_pdfs"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a test PDF with SQL content using PyMuPDF
+        import fitz
+        pdf_path = pdf_dir / "test_sql_chapter.pdf"
+        doc = fitz.open()
+        
+        # Create 5 pages with SQL content
+        for i in range(1, 6):
+            page = doc.new_page()
+            content = f"""
+SQL Chapter {i}
+
+This page contains SQL educational content for testing purposes.
+SELECT statement allows you to query data from tables.
+Example queries: SELECT * FROM users; SELECT name FROM employees;
+
+JOIN operations combine data from multiple tables.
+WHERE clauses filter results based on conditions.
+
+This content is designed to test PDF extraction quality and coverage.
+""" + "Additional SQL content for quality testing. " * 50
+            page.insert_text((50, 50), content, fontsize=12)
+        
+        doc.save(str(pdf_path))
+        doc.close()
+        
+        return pdf_dir
     
-    def test_pdf_directory_exists(self, raw_pdf_dir: Path) -> None:
-        """Test that raw PDF directory exists."""
-        assert raw_pdf_dir.exists()
+    def test_pdf_directory_exists(self, test_pdf_dir: Path) -> None:
+        """Test that test PDF directory exists."""
+        assert test_pdf_dir.exists()
     
-    def test_find_pdf_files(self, raw_pdf_dir: Path) -> None:
+    def test_find_pdf_files(self, test_pdf_dir: Path) -> None:
         """Test that PDF files can be found."""
-        pdf_files = list(raw_pdf_dir.glob("*.pdf"))
+        pdf_files = list(test_pdf_dir.glob("*.pdf"))
         
-        # May be empty in CI, just verify the glob works
+        # Should have at least one PDF we created
         assert isinstance(pdf_files, list)
+        assert len(pdf_files) >= 1
     
-    @pytest.mark.skipif(
-        not list((Path(__file__).parent.parent / "raw_pdf").glob("*.pdf")),
-        reason="No PDF files available for testing"
-    )
-    def test_direct_extraction_with_real_pdf(self, raw_pdf_dir: Path) -> None:
-        """Test direct extraction with a real PDF file."""
-        pdf_files = list(raw_pdf_dir.glob("*.pdf"))
-        if not pdf_files:
-            pytest.skip("No PDF files available")
+    def test_direct_extraction_with_real_pdf(self, test_pdf_dir: Path) -> None:
+        """Test direct extraction with a dynamically generated PDF file."""
+        pdf_files = list(test_pdf_dir.glob("*.pdf"))
+        assert len(pdf_files) > 0, "Test PDF should have been created"
         
         pdf_path = pdf_files[0]
         
-        try:
-            pages, metadata = extract_pages_with_page_map(pdf_path)
-            
-            assert len(pages) > 0
-            assert metadata["page_count"] > 0
-            assert metadata["page_numbers_stable"] is True
-            
-            # Check that pages are 1-indexed
-            if pages:
-                assert pages[0][0] == 1
-                
-        except Exception as e:
-            pytest.skip(f"Could not extract PDF: {e}")
+        pages, metadata = extract_pages_with_page_map(pdf_path)
+        
+        assert len(pages) > 0
+        assert metadata["page_count"] > 0
+        assert metadata["page_numbers_stable"] is True
+        
+        # Check that pages are 1-indexed
+        assert pages[0][0] == 1
+        
+        # Check that content was extracted
+        all_text = " ".join([text for _, text in pages])
+        assert len(all_text) > 0
+        assert "SQL" in all_text
     
-    @pytest.mark.skipif(
-        not list((Path(__file__).parent.parent / "raw_pdf").glob("*.pdf")),
-        reason="No PDF files available for testing"
-    )
-    def test_quality_check_with_real_pdf(self, raw_pdf_dir: Path) -> None:
-        """Test quality check with a real PDF file."""
-        pdf_files = list(raw_pdf_dir.glob("*.pdf"))
-        if not pdf_files:
-            pytest.skip("No PDF files available")
+    def test_quality_check_with_real_pdf(self, test_pdf_dir: Path) -> None:
+        """Test quality check with a dynamically generated PDF file."""
+        pdf_files = list(test_pdf_dir.glob("*.pdf"))
+        assert len(pdf_files) > 0, "Test PDF should have been created"
         
         pdf_path = pdf_files[0]
         
-        try:
-            pages, _ = extract_pages_with_page_map(pdf_path)
-            
-            if pages:
-                coverage_check = check_text_coverage(pages)
-                
-                assert "coverage_score" in coverage_check
-                assert "page_count" in coverage_check
-                assert coverage_check["page_count"] == len(pages)
-                
-        except Exception as e:
-            pytest.skip(f"Could not check quality: {e}")
+        pages, _ = extract_pages_with_page_map(pdf_path)
+        
+        assert len(pages) > 0, "Should have extracted pages"
+        
+        coverage_check = check_text_coverage(pages)
+        
+        assert "coverage_score" in coverage_check
+        assert "page_count" in coverage_check
+        assert coverage_check["page_count"] == len(pages)
 
 
 # =============================================================================

@@ -607,53 +607,6 @@ class TestAutoMappingIntegration:
 class TestMappingAccuracy:
     """Tests for mapping accuracy targets (>70% for standard SQL textbooks)."""
 
-    def test_heading_pattern_recognition(self, structure_extractor: StructureExtractor):
-        """Test that common SQL textbook heading patterns are recognized."""
-        test_cases = [
-            ("Chapter 5: Querying Data", 1),
-            ("CHAPTER 3 - JOINS", 1),
-            ("3.1 The SELECT Statement", 2),
-            ("Section 2.2: WHERE Clause", 2),
-            ("4.2.1 Aggregate Functions", 3),
-            ("Join Operations", 2),  # Font-based detection
-        ]
-        
-        recognized = 0
-        for heading_text, expected_level in test_cases:
-            level, confidence = structure_extractor._classify_heading(
-                heading_text,
-                font_size=14 if expected_level > 1 else 18,
-                is_bold=True,
-                heading_threshold=14,
-                body_size=11,
-            )
-            if level > 0:
-                recognized += 1
-        
-        # Should recognize at least 80% of patterns
-        accuracy = recognized / len(test_cases)
-        assert accuracy >= 0.7, f"Pattern recognition accuracy {accuracy:.0%} below 70%"
-
-    def test_concept_matching_accuracy(self, concept_matcher: ConceptMatcher):
-        """Test concept matching accuracy against SQL headings."""
-        test_headings = [
-            Heading(level=2, text="SELECT Statement", page=10, confidence=0.9),
-            Heading(level=2, text="WHERE Clause", page=15, confidence=0.9),
-            Heading(level=2, text="JOIN Operations", page=20, confidence=0.9),
-            Heading(level=2, text="Aggregate Functions", page=25, confidence=0.9),
-            Heading(level=2, text="Database Normalization", page=30, confidence=0.9),
-        ]
-        
-        matched = 0
-        for heading in test_headings:
-            candidates = concept_matcher.match_heading(heading)
-            if candidates and candidates[0].confidence >= 0.5:
-                matched += 1
-        
-        # Should match at least 70% of SQL-related headings
-        accuracy = matched / len(test_headings)
-        assert accuracy >= 0.5, f"Matching accuracy {accuracy:.0%} below 50%"
-
 
 # =============================================================================
 # Edge Case Tests

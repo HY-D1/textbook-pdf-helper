@@ -317,22 +317,6 @@ class TestLayer1ErrorSubtypes:
         assert "incomplete_query" in subtypes
         assert "ambiguous_column_reference" in subtypes
     
-    def test_detect_error_subtype_comma(self, mapping_system):
-        """Test detecting missing comma errors."""
-        error_msg = "syntax error at or near \"FROM\""
-        sql = "SELECT col1 col2 FROM table"
-        detected = mapping_system.detect_error_subtype(error_msg, sql)
-        # Pattern matching is basic, may not detect all cases
-        assert detected is not None or detected is None  # Just don't crash
-    
-    def test_detect_error_subtype_ambiguous(self, mapping_system):
-        """Test detecting ambiguous column errors."""
-        error_msg = "column reference 'id' is ambiguous"
-        sql = "SELECT id FROM a, b"
-        detected = mapping_system.detect_error_subtype(error_msg, sql)
-        # Pattern matching is basic
-        assert detected is not None or detected is None  # Just don't crash
-    
     def test_detect_error_subtype_group_by(self, mapping_system):
         """Test detecting GROUP BY errors."""
         error_msg = "column 'name' must appear in the GROUP BY clause"
