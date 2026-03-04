@@ -80,18 +80,18 @@ def test_generate_concept_markdown() -> None:
     assert "Estimated Read Time:** 5 minutes" in markdown
     
     # Check overview
-    assert "## Overview" in markdown
+    assert "## 📚 Overview" in markdown
     assert "Retrieves data from tables." in markdown
     
-    # Check sections
-    assert "## Definition" in markdown
+    # Check sections (section titles include emoji prefixes)
+    assert "## 📚 Definition" in markdown
     assert "This is the definition." in markdown
-    assert "## Examples" in markdown
+    assert "## 📝 Examples" in markdown
     assert "Example 1 code here." in markdown
     assert "Example 2 code here." in markdown
     
     # Check related concepts
-    assert "## Related Concepts" in markdown
+    assert "## 🔗 Related Concepts" in markdown
     assert "[where-clause]" in markdown
     
     # Check tags
@@ -183,13 +183,18 @@ def test_generate_index_readme(tmp_path: Path) -> None:
     content = out_path.read_text()
     
     # Check header
-    assert "# Concept Library" in content
+    assert "# 📚 SQL Concept Library" in content
     assert "**Total Concepts:** 3" in content
     
     # Check difficulty sections
     assert "### 🟢 Beginner" in content
     assert "### 🟡 Intermediate" in content
     assert "### 🔴 Advanced" in content
+    
+    # Check difficulty descriptions
+    assert "Beginner - No prior knowledge needed" in content
+    assert "Intermediate - Some SQL experience recommended" in content
+    assert "Advanced - Solid SQL foundation required" in content
     
     # Check concept links
     assert "[SELECT Basics]" in content

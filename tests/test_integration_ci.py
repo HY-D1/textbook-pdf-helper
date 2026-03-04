@@ -130,7 +130,8 @@ def test_chunker_version_stable(processed_golden_doc: tuple[PdfIndexDocument, Pa
     """Assert chunker version is as expected."""
     doc, _ = processed_golden_doc
     
-    expected_version = "word-window-180-overlap-30-v1"
+    # The chunker version uses 150 words as default (changed from 180 for better learning)
+    expected_version = "word-window-150-overlap-30-v1"
     assert doc.chunkerVersion == expected_version, \
         f"Chunker version changed: expected {expected_version}, got {doc.chunkerVersion}"
 
