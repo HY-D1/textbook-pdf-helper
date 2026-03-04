@@ -14,7 +14,7 @@ TEXTBOOK_STATIC_VERSION = "1.0.0"
 TEXTBOOK_STATIC_SCHEMA_ID = "textbook-static-v1"
 CONCEPT_MANIFEST_VERSION = "concept-manifest-v1"
 ASSET_MANIFEST_VERSION = "asset-manifest-v1"
-CHUNKER_VERSION = "word-window-180-overlap-30-v1"
+CHUNKER_VERSION = "word-window-150-overlap-30-v1"
 EMBEDDING_MODEL_ID = "hash-embedding-v1"
 
 # Legacy schema versions for backward compatibility
@@ -314,7 +314,7 @@ class IndexBuildOptions(BaseModel):
     schemaVersion: str = Field(default=PDF_INDEX_SCHEMA_V2)
     chunkerVersion: str = Field(default=CHUNKER_VERSION)
     embeddingModelId: str = Field(default=EMBEDDING_MODEL_ID)
-    chunkWords: int = Field(default=180, ge=20, le=2000)
+    chunkWords: int = Field(default=150, ge=20, le=2000)
     overlapWords: int = Field(default=30, ge=0, le=1999)
     embeddingDim: int = Field(default=24, ge=4, le=4096)
 

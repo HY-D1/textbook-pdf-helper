@@ -15,8 +15,12 @@ from .optimized_indexer import (
     optimize_for_large_document,
 )
 
-from .chunker import chunk_page_words
-from .clean import normalize_text, strip_repeated_headers_footers
+from .chunker import chunk_for_learning, chunk_page_words
+from .clean import (
+    clean_pages_for_students,
+    normalize_text,
+    strip_repeated_headers_footers,
+)
 from .embedding import build_hash_embedding
 from .extract import (
     check_extraction_quality,
@@ -233,6 +237,7 @@ def build_index(
     concepts_config: Path | None = None,
     extract_assets: bool = True,
     asset_backend: Literal["pymupdf", "marker"] = "pymupdf",
+    smart_skip_threshold: float = 0.90,
 ) -> PdfIndexDocument:
     """Build index from PDF(s).
     
@@ -247,6 +252,8 @@ def build_index(
         concepts_config: Path to concepts config file
         extract_assets: Whether to extract images and tables
         asset_backend: Backend to use for asset extraction
+        smart_skip_threshold: Quality threshold above which OCR is skipped
+                             even if ocr=True (default 0.90 = 90%)
         
     Returns:
         The generated index document
@@ -269,11 +276,13 @@ def build_index(
         
         try:
             # Step 1: Try without OCR first (unless force OCR)
+            # SMART SKIP: High quality PDFs skip OCR even when ocr=True
             try:
                 pdf_to_use, did_ocr = maybe_ocr_pdf(
                     pdf_path,
                     force=ocr,
                     auto=auto_ocr,
+                    smart_skip_threshold=smart_skip_threshold,
                 )
             except RuntimeError as e:
                 if "ocrmypdf is not installed" in str(e):
@@ -318,12 +327,13 @@ def build_index(
                 if pdf_to_use != pdf_path:
                     cleanup_temp_pdf(pdf_to_use)
                 
-                # Force OCR
+                # Force OCR (but still respect smart skip for very high quality)
                 try:
                     pdf_to_use, did_ocr = maybe_ocr_pdf(
                         pdf_path,
                         force=True,
                         auto=False,
+                        smart_skip_threshold=1.0,  # Disable smart skip when we really need OCR
                     )
                 except RuntimeError as e:
                     if "ocrmypdf is not installed" in str(e):
@@ -350,8 +360,8 @@ def build_index(
                 )
 
             if strip_headers:
-                pages = strip_repeated_headers_footers(pages)
-                pages = [(p, normalize_text(t)) for p, t in pages]
+                # Use student-optimized cleaning
+                pages = clean_pages_for_students(pages)
 
             source_docs.append(
                 PdfSourceDoc(

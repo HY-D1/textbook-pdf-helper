@@ -282,19 +282,65 @@ def maybe_ocr_pdf(
     force: bool,
     auto: bool,
     min_total_chars: int = 800,
+    smart_skip_threshold: float = 0.90,
 ) -> tuple[Path, bool]:
-    """Return (path_to_use, did_ocr)."""
+    """Return (path_to_use, did_ocr).
+    
+    Args:
+        pdf_path: Path to the PDF file
+        force: Force OCR even if direct extraction seems to work
+        auto: Automatically try OCR if direct extraction quality is poor
+        min_total_chars: Minimum total characters threshold for auto mode
+        smart_skip_threshold: Quality threshold above which OCR is skipped
+                             even if force=True (0.0-1.0, default 0.90)
+                             Set to 1.0 to disable smart skip.
+                             
+    Returns:
+        Tuple of (path_to_use, did_ocr)
+        
+    Note:
+        When force=True but the PDF has excellent text quality (above
+        smart_skip_threshold), OCR will be skipped with a warning.
+        This prevents OCR errors on digital PDFs that don't need it.
+    """
     if not (force or auto):
         return pdf_path, False
 
+    # Always check quality first to determine if OCR is actually needed
+    try:
+        pages = extract_pages_fitz(pdf_path)
+        quality = check_extraction_quality(pages)
+        coverage = check_text_coverage(pages)
+    except Exception:
+        pages = []
+        quality = {"is_quality_good": False, "total_chars": 0}
+        coverage = {"coverage_score": 0.0, "meets_threshold": False}
+
     if auto and not force:
-        try:
-            pages = extract_pages_fitz(pdf_path)
-        except Exception:
-            pages = []
         total = sum(len(t) for _, t in pages)
-        if total >= min_total_chars:
+        if total >= min_total_chars and quality["is_quality_good"]:
             return pdf_path, False
+
+    # SMART OCR SKIP: If PDF has excellent text quality, skip OCR even if forced
+    # This prevents Tesseract errors on digital PDFs that don't need OCR
+    if force and coverage["coverage_score"] >= smart_skip_threshold:
+        import warnings
+        warnings.warn(
+            f"OCR was requested but PDF has excellent text quality "
+            f"({coverage['coverage_score']:.1%} coverage). "
+            f"Skipping OCR to avoid unnecessary processing and potential Tesseract errors. "
+            f"Use --smart-skip-threshold=1.0 to force OCR anyway."
+        )
+        return pdf_path, False
+    
+    # Additional warning if OCR is forced on good quality PDF
+    if force and quality["is_quality_good"]:
+        import warnings
+        warnings.warn(
+            f"OCR is being forced on a PDF that already has good text quality "
+            f"({quality['readable_ratio']:.1%} readable). "
+            f"This may cause Tesseract errors and is usually unnecessary for digital PDFs."
+        )
 
     try:
         import ocrmypdf  # type: ignore
@@ -309,16 +355,37 @@ def maybe_ocr_pdf(
 
     # Minimal safe defaults: deskew + rotate pages.
     # force_ocr=True allows OCR on PDFs that already have text
-    ocrmypdf.ocr(
-        str(pdf_path),
-        str(out_path),
-        deskew=True,
-        rotate_pages=True,
-        optimize=1,
-        output_type="pdf",
-        progress_bar=False,
-        force_ocr=True,
-    )
+    try:
+        ocrmypdf.ocr(
+            str(pdf_path),
+            str(out_path),
+            deskew=True,
+            rotate_pages=True,
+            optimize=1,
+            output_type="pdf",
+            progress_bar=False,
+            force_ocr=True,
+        )
+    except Exception as e:
+        # Clean up temp directory on error
+        cleanup_temp_pdf(out_path)
+        error_msg = str(e).lower()
+        
+        # Provide helpful error messages for common Tesseract issues
+        if "tesseract" in error_msg or "diacritics" in error_msg:
+            raise RuntimeError(
+                f"OCR failed with Tesseract error: {e}\n\n"
+                f"This usually happens when trying to OCR a PDF that already has good text. "
+                f"The PDF text quality was: {coverage['coverage_score']:.1%} coverage.\n\n"
+                f"RECOMMENDATION: Process this PDF WITHOUT OCR using:\n"
+                f"  algl-pdf index {pdf_path} --out <output-dir> --use-aliases\n\n"
+                f"If you still need OCR, try:\n"
+                f"  1. Check if Tesseract is properly installed: tesseract --version\n"
+                f"  2. Update Tesseract to the latest version\n"
+                f"  3. Process only specific pages that need OCR"
+            ) from e
+        else:
+            raise RuntimeError(f"OCR failed: {e}") from e
 
     return out_path, True
 
@@ -326,25 +393,49 @@ def maybe_ocr_pdf(
 def ocr_pdf_with_validation(
     pdf_path: Path,
     min_coverage: float = None,
+    smart_skip_threshold: float = 0.90,
 ) -> tuple[Path, dict]:
     """OCR a PDF and validate the output quality.
     
     Creates a searchable PDF using OCRmyPDF and validates that
     the text extraction meets quality thresholds.
     
+    SMART SKIP: If the PDF has excellent text quality (above smart_skip_threshold),
+    OCR will be skipped and the original PDF will be returned.
+    
     Args:
         pdf_path: Path to source PDF
         min_coverage: Minimum text coverage threshold
+        smart_skip_threshold: Quality threshold above which OCR is skipped
+                             even if requested (default 0.90 = 90%)
         
     Returns:
         Tuple of (output_path, validation_result)
+        validation_result includes a 'skipped' flag if OCR was skipped
+        due to high quality text.
         
     Raises:
-        RuntimeError: If ocrmypdf is not installed
-        ValueError: If OCR output doesn't meet quality thresholds
+        RuntimeError: If ocrmypdf is not installed or OCR fails
     """
     if min_coverage is None:
         min_coverage = MIN_TEXT_COVERAGE
+    
+    # Check quality first - maybe OCR isn't needed
+    pages, _ = extract_pages_with_page_map(pdf_path)
+    coverage_check = check_text_coverage(pages, min_coverage)
+    
+    # SMART SKIP: If PDF has excellent text quality, skip OCR
+    if coverage_check["coverage_score"] >= smart_skip_threshold:
+        import warnings
+        warnings.warn(
+            f"OCR skipped: PDF has excellent text quality "
+            f"({coverage_check['coverage_score']:.1%} coverage). "
+            f"Processing without OCR to avoid Tesseract errors."
+        )
+        # Return original PDF with modified coverage check showing it was skipped
+        coverage_check["skipped"] = True
+        coverage_check["skip_reason"] = "high_quality_text"
+        return pdf_path, coverage_check
     
     try:
         import ocrmypdf  # type: ignore
@@ -359,20 +450,42 @@ def ocr_pdf_with_validation(
 
     # OCR with safe defaults that preserve page structure
     # force_ocr=True allows OCR on PDFs that already have text
-    ocrmypdf.ocr(
-        str(pdf_path),
-        str(out_path),
-        deskew=True,
-        rotate_pages=True,
-        optimize=1,
-        output_type="pdf",
-        progress_bar=False,
-        force_ocr=True,
-    )
+    try:
+        ocrmypdf.ocr(
+            str(pdf_path),
+            str(out_path),
+            deskew=True,
+            rotate_pages=True,
+            optimize=1,
+            output_type="pdf",
+            progress_bar=False,
+            force_ocr=True,
+        )
+    except Exception as e:
+        # Clean up temp directory on error
+        cleanup_temp_pdf(out_path)
+        error_msg = str(e).lower()
+        
+        # Provide helpful error messages for common Tesseract issues
+        if "tesseract" in error_msg or "diacritics" in error_msg:
+            raise RuntimeError(
+                f"OCR failed with Tesseract error: {e}\n\n"
+                f"This usually happens when trying to OCR a PDF that already has good text. "
+                f"The PDF text quality was: {coverage_check['coverage_score']:.1%} coverage.\n\n"
+                f"RECOMMENDATION: Process this PDF WITHOUT OCR using:\n"
+                f"  algl-pdf index {pdf_path} --out <output-dir> --use-aliases\n\n"
+                f"If you still need OCR, try:\n"
+                f"  1. Check if Tesseract is properly installed: tesseract --version\n"
+                f"  2. Update Tesseract to the latest version\n"
+                f"  3. Process only specific pages that need OCR"
+            ) from e
+        else:
+            raise RuntimeError(f"OCR failed: {e}") from e
 
     # Validate OCR quality
     pages, _ = extract_pages_with_page_map(out_path)
     coverage_check = check_text_coverage(pages, min_coverage)
+    coverage_check["skipped"] = False
     
     return out_path, coverage_check
 
@@ -383,6 +496,7 @@ def extract_with_strategy(
     min_coverage: float = None,
     force_ocr: bool = False,
     auto_ocr: bool = True,
+    smart_skip_threshold: float = 0.90,
 ) -> tuple[list[tuple[int, str]], dict]:
     """Extract PDF text using specified strategy with quality validation.
     
@@ -391,12 +505,18 @@ def extract_with_strategy(
     - "ocrmypdf": OCR with OCRmyPDF (creates searchable PDF first)
     - "marker": Use Marker library (if available)
     
+    SMART OCR SKIP: When force_ocr=True but the PDF has excellent text quality
+    (above smart_skip_threshold), OCR will be skipped to avoid Tesseract errors
+    on digital PDFs that don't need OCR.
+    
     Args:
         pdf_path: Path to PDF file
         strategy: Extraction strategy to use
         min_coverage: Minimum text coverage threshold (default: 0.70)
         force_ocr: Force OCR even if direct extraction seems to work
         auto_ocr: Automatically try OCR if direct extraction quality is poor
+        smart_skip_threshold: Quality threshold above which OCR is skipped
+                             even if force_ocr=True (default 0.90 = 90%)
         
     Returns:
         Tuple of (pages, extraction_info) where:
@@ -417,6 +537,8 @@ def extract_with_strategy(
     extraction_info = {
         "strategy": strategy,
         "ocr_applied": False,
+        "ocr_skipped": False,
+        "skip_reason": None,
         "page_count": 0,
         "coverage_score": 0.0,
         "meets_threshold": False,
@@ -436,45 +558,84 @@ def extract_with_strategy(
             extraction_info["coverage_score"] = coverage_check["coverage_score"]
             extraction_info["meets_threshold"] = coverage_check["meets_threshold"]
             
+            # SMART SKIP: If quality is excellent and OCR is forced, skip OCR
+            if force_ocr and coverage_check["coverage_score"] >= smart_skip_threshold:
+                extraction_info["warnings"].append(
+                    f"⚠️ OCR was requested but PDF has excellent text quality "
+                    f"({coverage_check['coverage_score']:.1%} coverage). "
+                    f"Skipping OCR to avoid Tesseract errors on digital PDFs."
+                )
+                extraction_info["ocr_skipped"] = True
+                extraction_info["skip_reason"] = "high_quality_text"
+                # Continue with direct extraction results
+            
             # If quality is poor and auto_ocr is enabled, retry with OCR
-            if not coverage_check["meets_threshold"] and auto_ocr and not force_ocr:
+            elif not coverage_check["meets_threshold"] and auto_ocr and not force_ocr:
                 extraction_info["warnings"].append(
                     f"Direct extraction quality poor ({coverage_check['coverage_score']:.1%}), "
                     "retrying with OCR..."
                 )
                 
                 temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
-                    pdf_path, min_coverage
+                    pdf_path, min_coverage, smart_skip_threshold
                 )
                 
-                pages, metadata = extract_pages_with_page_map(temp_pdf_path)
-                extraction_info["ocr_applied"] = True
-                extraction_info["coverage_score"] = ocr_validation["coverage_score"]
-                extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
+                # Check if OCR was skipped due to high quality
+                if ocr_validation.get("skipped"):
+                    extraction_info["warnings"].append(
+                        "OCR was auto-skipped: PDF has excellent text quality"
+                    )
+                    extraction_info["ocr_skipped"] = True
+                    extraction_info["skip_reason"] = ocr_validation.get("skip_reason")
+                else:
+                    pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+                    extraction_info["ocr_applied"] = True
+                    extraction_info["coverage_score"] = ocr_validation["coverage_score"]
+                    extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
                 
-                if not extraction_info["meets_threshold"]:
+                if not extraction_info["meets_threshold"] and not extraction_info["ocr_skipped"]:
                     extraction_info["warnings"].append(
                         f"OCR extraction also failed quality threshold: "
                         f"{extraction_info['coverage_score']:.1%} < {min_coverage:.1%}"
                     )
             
-            elif force_ocr:
-                # Force OCR even if direct extraction was okay
+            elif force_ocr and not extraction_info.get("ocr_skipped"):
+                # Force OCR even if direct extraction was okay (unless smart skip kicked in)
                 temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
-                    pdf_path, min_coverage
+                    pdf_path, min_coverage, smart_skip_threshold
                 )
-                pages, metadata = extract_pages_with_page_map(temp_pdf_path)
-                extraction_info["ocr_applied"] = True
-                extraction_info["coverage_score"] = ocr_validation["coverage_score"]
-                extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
+                
+                # Check if OCR was skipped due to high quality
+                if ocr_validation.get("skipped"):
+                    extraction_info["warnings"].append(
+                        "OCR was auto-skipped: PDF has excellent text quality"
+                    )
+                    extraction_info["ocr_skipped"] = True
+                    extraction_info["skip_reason"] = ocr_validation.get("skip_reason")
+                else:
+                    pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+                    extraction_info["ocr_applied"] = True
+                    extraction_info["coverage_score"] = ocr_validation["coverage_score"]
+                    extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
         
         elif strategy == "ocrmypdf":
-            # Always use OCR
+            # Always use OCR (but respect smart skip)
             temp_pdf_path, ocr_validation = ocr_pdf_with_validation(
-                pdf_path, min_coverage
+                pdf_path, min_coverage, smart_skip_threshold
             )
-            pages, metadata = extract_pages_with_page_map(temp_pdf_path)
-            extraction_info["ocr_applied"] = True
+            
+            # Check if OCR was skipped due to high quality
+            if ocr_validation.get("skipped"):
+                extraction_info["warnings"].append(
+                    "OCR was auto-skipped: PDF has excellent text quality"
+                )
+                extraction_info["ocr_skipped"] = True
+                extraction_info["skip_reason"] = ocr_validation.get("skip_reason")
+                pages, metadata = extract_pages_with_page_map(pdf_path)
+            else:
+                pages, metadata = extract_pages_with_page_map(temp_pdf_path)
+                extraction_info["ocr_applied"] = True
+            
             extraction_info["page_count"] = metadata["page_count"]
             extraction_info["coverage_score"] = ocr_validation["coverage_score"]
             extraction_info["meets_threshold"] = ocr_validation["meets_threshold"]
@@ -499,7 +660,7 @@ def extract_with_strategy(
             raise ValueError(f"Unknown extraction strategy: {strategy}")
         
         # Final validation
-        if not extraction_info["meets_threshold"]:
+        if not extraction_info["meets_threshold"] and not extraction_info.get("ocr_skipped"):
             # Still return pages but warn
             extraction_info["warnings"].append(
                 f"Text coverage {extraction_info['coverage_score']:.1%} "
@@ -510,7 +671,7 @@ def extract_with_strategy(
     
     finally:
         # Cleanup temp file if we created one
-        if temp_pdf_path is not None:
+        if temp_pdf_path is not None and temp_pdf_path != pdf_path:
             cleanup_temp_pdf(temp_pdf_path)
 
 

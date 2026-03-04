@@ -71,8 +71,20 @@ def index(
         None,
         help="Path to concepts.yaml config (auto-detected if not specified)",
     ),
+    smart_skip_threshold: float = typer.Option(
+        0.90,
+        help="Quality threshold above which OCR is skipped (0.0-1.0). "
+             "PDFs with text coverage above this threshold will skip OCR even when --ocr is used. "
+             "Set to 1.0 to disable smart skip and always use OCR when requested.",
+    ),
 ):
-    """Build PDF index to textbook-static format."""
+    """Build PDF index to textbook-static format.
+    
+    SMART OCR SKIP (default enabled):
+    When --ocr is used but the PDF has excellent text quality (>90% coverage),
+    OCR will be automatically skipped to avoid Tesseract errors on digital PDFs.
+    Use --smart-skip-threshold=1.0 to force OCR regardless of quality.
+    """
     out = resolve_output_dir(output_dir)
     
     opts = IndexBuildOptions(
@@ -89,6 +101,7 @@ def index(
         use_aliases=use_aliases,
         strip_headers=strip_headers,
         concepts_config=concepts_config,
+        smart_skip_threshold=smart_skip_threshold,
     )
     typer.echo(f"✅ Wrote PDF index to: {out}")
     typer.echo(f"   Index ID: {doc.indexId}")
