@@ -1,110 +1,312 @@
-# ALGL PDF Helper - AI Agent Guide
+# Adaptive Textbook Helper - AI Agent Guide
+
+**Version:** 2.0.0  
+**Last Updated:** 2026-03-03  
+**Status:** Current
+
+---
 
 ## Project Overview
 
-`algl-pdf-helper` is a Python CLI tool and optional HTTP service that processes PDFs (including scanned documents) and converts them into a structured `PdfIndexDocument` format compatible with the ALGL SQL-Adapt project's client-side retrieval system.
+The **Adaptive Textbook Helper** is a research-grade Python CLI tool and HTTP service that transforms PDFs into structured knowledge substrates for interaction-driven SQL learning. It treats textbooks not as static content, but as **versioned substrates** that can be re-assembled into adaptive instructional artifacts based on learner traces.
 
-The pipeline performs:
-1. **Automatic quality detection** - Checks if text extraction is readable
-2. **Auto-OCR fallback** - Retries with OCR if quality is poor (scanned PDFs)
-3. Per-page text extraction using PyMuPDF
-4. Text cleaning and normalization
-5. Word-window chunking (default: 180 words, 30-word overlap)
-6. Lightweight 24-dimensional hash-based embeddings per chunk
-7. Output of JSON artifacts (`manifest.json`, `chunks.json`, `index.json`)
-8. Concept-based learning material generation from `concepts.yaml` config
+### Core Philosophy
+
+1. **Four-Pack Separation**: Domain-independent architecture through Document, Domain, Trace, and Policy packs
+2. **Retrieval-First Generation**: All LLM outputs are grounded in retrieved chunks with full provenance
+3. **Complete Observability**: Every action is logged for debugging, replay, and evaluation
+4. **Reproducibility**: Deterministic processing with content-addressed artifacts
+
+---
 
 ## Technology Stack
 
 - **Language**: Python 3.10+
-- **Build System**: setuptools (configured in `pyproject.toml`)
-- **Core Dependencies**:
-  - `pydantic>=2.6` - Data validation and serialization
-  - `typer>=0.12` - CLI framework
-  - `pymupdf>=1.23` - PDF text extraction (PyMuPDF)
-  - `pyyaml>=6.0` - YAML parsing for concept configuration
-- **Optional Dependencies**:
-  - `ocrmypdf>=16.0` - OCR capability (install with `pip install -e '.[ocr]'`)
-  - `fastapi>=0.110`, `uvicorn[standard]>=0.27`, `python-multipart>=0.0.9` - HTTP server (install with `pip install -e '.[server]'`)
-  - `pytest>=8.0` - Testing (install with `pip install -e '.[test]'`)
-- **External System Dependencies** (for OCR):
-  - `tesseract` - OCR engine
-  - `ghostscript` - PDF processing
-  - macOS install: `brew install tesseract ghostscript`
+- **Build System**: setuptools (pyproject.toml)
+- **CLI Framework**: Typer >= 0.12
+- **Data Validation**: Pydantic v2 >= 2.6
+- **PDF Processing**: PyMuPDF >= 1.23
+- **Embeddings**: Hash-based 24-dim (deterministic)
+
+### Optional Dependencies
+
+| Feature | Package | Install |
+|---------|---------|---------|
+| OCR | `ocrmypdf>=16.0` | `pip install -e '.[ocr]'` |
+| HTTP Server | `fastapi>=0.110` | `pip install -e '.[server]'` |
+| Testing | `pytest>=8.0` | `pip install -e '.[test]'` |
+
+### System Dependencies (OCR)
+
+- `tesseract` - OCR engine
+- `ghostscript` - PDF processing
+
+macOS: `brew install tesseract ghostscript`  
+Ubuntu: `sudo apt-get install tesseract-ocr ghostscript`
+
+---
+
+## The Four Packs
+
+### Document Pack
+
+**Purpose:** Transform PDFs into content-addressed, retrievable artifacts.
+
+**Key Files:**
+- `extract.py` - PDF extraction and OCR
+- `clean.py` - Text normalization
+- `chunker.py` - Deterministic word-window chunking
+- `embedding.py` - Hash-based 24-dim embeddings
+
+**Output Structure:**
+```
+document-pack/
+├── raw/{docId}/source.pdf          # SHA256-addressed
+├── derived/{docId}/pages/{n}.txt   # Per-page extraction
+└── index/{docId}/
+    ├── chunks.jsonl                # Chunk content
+    └── embeddings.jsonl            # Hash vectors
+```
+
+**Key Requirements:**
+- Content-addressed IDs (SHA256)
+- Deterministic chunking (same input + config → same chunks)
+- Page-level citations preserved
+- Quality scores logged per page
+
+### Domain Pack
+
+**Purpose:** Structure content as inspectable, editable knowledge graphs.
+
+**Key Files:**
+- `concept_mapper.py` - Map chunks to concepts
+- `prereq_validator.py` - Prerequisite DAG validation
+- `markdown_generator.py` - Generate concept markdown
+
+**Output Structure:**
+```
+domain-pack/
+├── concepts/
+│   ├── concept-map.json            # Concept nodes
+│   └── {concept-id}.md             # Concept content
+└── prerequisites/
+    └── prereq-dag.json             # DAG edges
+```
+
+**Key Requirements:**
+- Canonical concept IDs (e.g., `sql.select.basic`)
+- Explicit prerequisite edges (not flat coverage)
+- Versioned DAG changes
+- Evidence pointers for every node/edge
+
+### Trace Pack
+
+**Purpose:** Capture complete interaction history for debugging and evaluation.
+
+**Key Files:**
+- `event_logger.py` - xAPI/Caliper event logging
+- `metric_engines.py` - HDI, CSI, APS, RQS calculators
+- `telemetry.py` - OpenTelemetry integration
+
+**Output Structure:**
+```
+trace-pack/
+├── events/                         # Event schemas
+├── derived/                        # Metric calculators
+└── manifests/                      # Run manifests
+```
+
+**Key Requirements:**
+- xAPI/Caliper/PROV-aligned schemas
+- OpenTelemetry correlation IDs
+- Non-negotiable fields in every event
+
+### Policy Pack
+
+**Purpose:** Control escalation and adaptive support delivery.
+
+**Key Files:**
+- `policy_engine.py` - Escalation decision logic
+- `bandit_learner.py` - Multi-armed bandit implementation
+- `threshold_manager.py` - Threshold configuration
+
+**Output Structure:**
+```
+policy-pack/
+├── profiles/                       # Escalation profiles
+├── thresholds/                     # Ladder configuration
+└── bandit/                         # Bandit parameters
+```
+
+**Key Requirements:**
+- Four profiles: fast, slow, explanation-first, adaptive
+- Explicit reward functions
+- Safety constraints (prereq override)
+- Logged propensities for off-policy evaluation
+
+---
 
 ## Project Structure
 
 ```
 .
-├── pyproject.toml           # Package configuration and dependencies
-├── README.md                # Human-readable documentation
-├── LICENSE                  # MIT License
-├── .gitignore              # Git ignore patterns
-├── concepts.yaml.example   # Example concept configuration
-├── src/
-│   └── algl_pdf_helper/    # Main package
-│       ├── __init__.py     # Package version
-│       ├── models.py       # Pydantic data models (includes Concept models)
-│       ├── cli.py          # CLI entry point (Typer)
-│       ├── server.py       # FastAPI HTTP server
-│       ├── extract.py      # PDF extraction and OCR logic
-│       ├── clean.py        # Text normalization and header/footer stripping
-│       ├── chunker.py      # Word-window chunking algorithm
-│       ├── embedding.py    # Hash-based embedding generation
-│       ├── indexer.py      # Main indexing orchestrator
-│       ├── concept_mapper.py    # NEW: Maps chunks to concepts from YAML config
-│       └── markdown_generator.py # NEW: Generates readable markdown per concept
+├── pyproject.toml              # Package configuration
+├── README.md                   # User-facing documentation
+├── AGENTS.md                   # This file
+├── docs/
+│   ├── PROJECT_BLUEPRINT.md    # Architectural vision
+│   ├── ARCHITECTURE.md         # System architecture
+│   ├── OUTPUT_SPEC.md          # Output formats
+│   ├── EVENT_LOGGING_SPEC.md   # Event taxonomy
+│   └── PROVENANCE_ARCHITECTURE.md  # PROV-DM spec
+├── src/algl_pdf_helper/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── cli.py                  # CLI entry point
+│   ├── server.py               # FastAPI server
+│   │
+│   ├── Document Pack
+│   │   ├── extract.py
+│   │   ├── clean.py
+│   │   ├── chunker.py
+│   │   └── embedding.py
+│   │
+│   ├── Domain Pack
+│   │   ├── concept_mapper.py
+│   │   ├── prereq_validator.py
+│   │   └── markdown_generator.py
+│   │
+│   ├── Trace Pack
+│   │   ├── event_logger.py
+│   │   ├── metric_engines.py
+│   │   └── telemetry.py
+│   │
+│   ├── Policy Pack
+│   │   ├── policy_engine.py
+│   │   ├── bandit_learner.py
+│   │   └── threshold_manager.py
+│   │
+│   ├── Shared
+│   │   ├── models.py           # Pydantic models
+│   │   ├── validators.py       # Validation logic
+│   │   ├── quality_gates.py    # Quality checks
+│   │   └── provenance.py       # PROV tracking
+│   │
+│   └── Export
+│       ├── export_sqladapt.py
+│       └── educational_pipeline.py
+│
 └── tests/
-    ├── conftest.py         # pytest configuration (adds src to path)
-    ├── test_chunker.py     # Tests for chunking logic
-    ├── test_embedding_parity.py  # Tests for embedding determinism
-    ├── test_concept_mapper.py    # Tests for concept mapping
-    ├── test_markdown_generator.py # Tests for markdown generation
-    └── test_quality_check.py      # Tests for text quality detection
+    ├── test_chunker.py
+    ├── test_embedding_parity.py
+    ├── test_concept_mapper.py
+    ├── test_event_logging.py
+    ├── test_provenance.py
+    └── test_integration_ci.py
 ```
+
+---
+
+## Module Responsibilities
+
+### Document Pack Modules
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `extract.py` | PDF extraction | `extract_pages_fitz()`, `check_extraction_quality()` |
+| `clean.py` | Text normalization | `remove_headers()`, `fix_ocr_errors()` |
+| `chunker.py` | Word-window chunking | `chunk_text()`, `generate_chunk_id()` |
+| `embedding.py` | Hash embeddings | `build_hash_embedding()`, `l2_normalize()` |
+
+### Domain Pack Modules
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `concept_mapper.py` | Concept mapping | `load_concepts()`, `map_chunks_to_concepts()` |
+| `prereq_validator.py` | DAG validation | `validate_dag()`, `detect_cycles()` |
+| `markdown_generator.py` | Markdown output | `generate_concept_md()`, `create_readme()` |
+
+### Trace Pack Modules
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `event_logger.py` | Event logging | `log_event()`, `validate_event()` |
+| `metric_engines.py` | Metric calculation | `calculate_hdi()`, `calculate_csi()` |
+| `telemetry.py` | OpenTelemetry | `start_span()`, `set_attribute()` |
+
+### Policy Pack Modules
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `policy_engine.py` | Escalation logic | `should_escalate()`, `get_current_level()` |
+| `bandit_learner.py` | Bandit algorithm | `select_arm()`, `update_rewards()` |
+| `threshold_manager.py` | Threshold config | `load_thresholds()`, `apply_profile()` |
+
+---
 
 ## Code Organization
 
-### Module Responsibilities
+### Data Models (Pydantic)
 
-| Module | Purpose |
-|--------|---------|
-| `models.py` | Pydantic models: `PdfSourceDoc`, `PdfIndexChunk`, `PdfIndexDocument`, `PdfIndexManifest`, `IndexBuildOptions`, `ConceptInfo`, `ConceptManifest`, `ConceptSection` |
-| `extract.py` | PDF text extraction via PyMuPDF, SHA256 hashing, OCR handling via ocrmypdf, quality detection, temp file cleanup |
-| `clean.py` | Text normalization (whitespace, null bytes), heuristic header/footer removal |
-| `chunker.py` | Sliding word-window chunker with configurable overlap; chunk IDs: `{docId}:p{page}:c{chunkIndex}` |
-| `embedding.py` | Tokenization, hash-based vectorization, L2 normalization; produces deterministic embeddings |
-| `indexer.py` | Main orchestrator: discovers PDFs, coordinates pipeline, generates unique index ID, writes JSON outputs, triggers concept generation |
-| `concept_mapper.py` | Reads `concepts.yaml`, maps page ranges to chunk IDs, builds `ConceptManifest` |
-| `markdown_generator.py` | Generates readable `.md` files per concept from chunks, creates concept library README |
-| `cli.py` | Typer CLI with `index` and `serve` commands |
-| `server.py` | FastAPI server with `POST /v1/index` endpoint for PDF upload |
+```python
+# Document Pack
+class PdfSourceDoc(BaseModel):
+    doc_id: str  # SHA256 or alias
+    filename: str
+    page_count: int
+    source_hash: str
 
-### Key Data Flow
+class PdfIndexChunk(BaseModel):
+    chunk_id: str  # {docId}:p{page}:c{index}
+    doc_id: str
+    page: int
+    text: str
+    embedding: list[float]
 
+# Domain Pack
+class ConceptNode(BaseModel):
+    id: str
+    canonical_name: str  # sql.select.basic
+    title: str
+    definition: str
+    prerequisites: list[str]
+    teaches: list[str]
+    evidence: ConceptEvidence
+
+class PrereqEdge(BaseModel):
+    from_: str = Field(alias="from")
+    to: str
+    type: str = "prerequisite"
+    confidence: float
+    validated: bool
+
+# Trace Pack
+class AttemptSubmittedEvent(BaseModel):
+    event_type: Literal["attempt_submitted"]
+    timestamp: datetime
+    trace_id: UUID
+    payload: AttemptPayload
+
+class HDIMetric(BaseModel):
+    learner_id: str
+    window_start: datetime
+    hint_requests: int
+    attempts: int
+    hdi_score: float
+
+# Policy Pack
+class EscalationLadder(BaseModel):
+    levels: list[EscalationLevel]
+    safety_overrides: list[SafetyOverride]
+    profiles: dict[str, ProfileConfig]
+
+class BanditConfig(BaseModel):
+    arms: list[str]
+    reward_function: str
+    update_schedule: str
 ```
-Input PDF(s)
-    ↓
-extract.py: PyMuPDF text extraction
-    ↓
-Quality Check: Is text readable?
-    ├─ NO → Auto-OCR retry
-    └─ YES → Continue
-    ↓
-clean.py: normalize text → strip headers/footers
-    ↓
-chunker.py: word-window chunking
-    ↓
-embedding.py: hash embedding per chunk
-    ↓
-indexer.py: assemble → write manifest.json, chunks.json, index.json
-    ↓
-(concepts.yaml exists?)
-    ↓ YES
-concept_mapper.py: map chunks to concepts
-    ↓
-markdown_generator.py: write concept-manifest.json + concepts/*.md
-```
+
+---
 
 ## Build and Development Commands
 
@@ -115,177 +317,263 @@ markdown_generator.py: write concept-manifest.json + concepts/*.md
 python -m venv .venv
 source .venv/bin/activate
 
-# Install with all optional dependencies
+# Install with all dependencies
 pip install -e '.[server,ocr,test]'
+
+# Install dev tools
+pip install ruff mypy
+```
+
+### Makefile Targets
+
+```bash
+make help              # Show available targets
+make install           # Install package
+make test              # Run all tests
+make test-ci           # Run CI tests
+make lint              # Run ruff, mypy
+make format            # Format with ruff
+make clean             # Clean generated files
 ```
 
 ### CLI Usage
 
 ```bash
-# Build index from single PDF
-algl-pdf index ./my.pdf --out ./out/pdf-index
+# Document Pack
+algl-pdf index ./my.pdf --out ./output --use-aliases
+algl-pdf check-quality ./my.pdf --detailed
 
-# Force OCR (recommended for scanned PDFs)
-algl-pdf index ./scan.pdf --out ./out/pdf-index --ocr
+# Domain Pack
+algl-pdf suggest-mapping ./book.pdf --output ./concepts.yaml
+algl-pdf review-mapping ./book.pdf --output ./review.json
 
-# Process directory of PDFs
-algl-pdf index ./pdfs --out ./out/pdf-index
+# Trace Pack (conceptual)
+algl-pdf validate-events ./events.jsonl
+algl-pdf compute-metrics ./events/ --output ./metrics/
 
-# Use stable doc aliases instead of SHA-based IDs
-algl-pdf index ./my.pdf --out ./out/pdf-index --use-aliases
-
-# Specify concept config explicitly
-algl-pdf index ./my.pdf --out ./out/pdf-index --concepts-config ./my-concepts.yaml
-
-# Check extraction quality without processing
-algl-pdf check-quality ./my.pdf
+# Policy Pack (conceptual)
+algl-pdf validate-policy ./escalation-ladder.yaml
+algl-pdf replay ./logs/ --policy slow-escalator
 ```
 
-### Server Usage
-
-```bash
-# Start HTTP server
-algl-pdf serve --host 127.0.0.1 --port 7345
-
-# Endpoint: POST /v1/index (multipart form with pdf file)
-# Returns: { document, manifest, chunks }
-```
-
-### Testing
-
-```bash
-# Run all tests
-pytest
-
-# pytest configuration is in pyproject.toml:
-# - Quiet mode (-q)
-# - Test directory: tests/
-```
+---
 
 ## Code Style Guidelines
 
-- Use `from __future__ import annotations` in all modules for forward references
-- Type hints are required for function signatures
+### General
+
+- Use `from __future__ import annotations` for forward references
+- Type hints required for all function signatures
 - Pydantic v2 models for all data structures
-- Docstrings for public functions (Google style not strictly enforced but preferred)
-- Error handling: use specific exceptions with descriptive messages
-- Temp file cleanup in `finally` blocks to ensure resources are freed
+- Docstrings for public functions (Google style preferred)
+
+### Event Logging
+
+```python
+# Always include correlation fields
+def log_attempt_submitted(
+    learner_id: str,
+    problem_id: str,
+    code: str,
+) -> None:
+    event = {
+        "event_type": "attempt_submitted",
+        "timestamp": datetime.utcnow().isoformat(),
+        "trace_id": generate_trace_id(),
+        "run_id": get_current_run_id(),
+        "policy_id": get_current_policy_id(),
+        "code_version": get_git_commit(),
+        "config_hash": get_config_hash(),
+        "payload": {
+            "learner_id": hash_learner_id(learner_id),
+            "problem_id": problem_id,
+            "code": code,
+        }
+    }
+    logger.info(json.dumps(event))
+```
+
+### Provenance Tracking
+
+```python
+# Track artifact provenance
+def create_chunk(
+    page_text: str,
+    page_num: int,
+    chunk_index: int,
+) -> PdfIndexChunk:
+    chunk = PdfIndexChunk(
+        chunk_id=f"{doc_id}:p{page_num}:c{chunk_index}",
+        text=extract_chunk_text(page_text, chunk_index),
+        embedding=compute_embedding(page_text),
+        provenance={
+            "extraction_method": "pymupdf",
+            "source_page": page_num,
+            "generation_activity": get_current_activity_id(),
+        }
+    )
+    log_artifact_emitted(chunk)
+    return chunk
+```
+
+### Error Handling
+
+```python
+# Use specific exceptions with cleanup
+def process_pdf(pdf_path: Path) -> DocumentPack:
+    temp_dir = tempfile.mkdtemp(prefix="algl_pdf_")
+    try:
+        # Process PDF
+        return DocumentPack(...)
+    except OCRFailedError as e:
+        logger.error(f"OCR failed: {e}")
+        raise
+    finally:
+        # Always cleanup
+        if temp_dir.startswith(tempfile.gettempdir() + "/algl_pdf_"):
+            shutil.rmtree(temp_dir)
+```
+
+---
 
 ## Testing Strategy
 
-- **Framework**: pytest
-- **Test Location**: `tests/` directory
-- **Configuration**: `pyproject.toml` (quiet mode, testpaths = ["tests"])
-- **Path Setup**: `conftest.py` adds `src/` to `sys.path` for imports
-- **Current Tests**:
-  - `test_chunker.py`: Verifies chunk ID format and word overlap between chunks
-  - `test_embedding_parity.py`: Verifies deterministic embedding output matches reference vector
-  - `test_concept_mapper.py`: Tests concept config loading, manifest building, chunk mapping
-  - `test_markdown_generator.py`: Tests markdown generation, page links, README generation
-  - `test_quality_check.py`: Tests text quality detection, gibberish pattern detection
-- **Import Pattern**: `from algl_pdf_helper.module import function`
+### Test Categories
+
+| Test File | Purpose | Pack |
+|-----------|---------|------|
+| `test_chunker.py` | Chunking determinism | Document |
+| `test_embedding_parity.py` | Embedding consistency | Document |
+| `test_concept_mapper.py` | Concept mapping | Domain |
+| `test_prereq_dag.py` | DAG validation | Domain |
+| `test_event_logging.py` | Event schema validation | Trace |
+| `test_metric_engines.py` | HDI/CSI calculation | Trace |
+| `test_provenance.py` | PROV completeness | All |
+| `test_integration_ci.py` | Golden fixture | All |
+
+### Running Tests
+
+```bash
+# All tests
+pytest
+
+# Specific pack
+pytest tests/test_concept*.py
+
+# With coverage
+pytest --cov=src/algl_pdf_helper
+
+# CI mode
+make test-ci
+```
+
+### Golden Fixture Testing
+
+```bash
+# Update baseline
+make update-baselines
+
+# Check for regressions
+algl-pdf detect-regressions ./baseline ./current
+```
+
+---
 
 ## Output Format Specification
 
-### Schema Version
-- `pdf-index-schema-v2`
-- `chunkerVersion`: `word-window-180-overlap-30-v1`
-- `embeddingModelId`: `hash-embedding-v1`
+### Schema Versions
 
-### Doc ID Formats
-- Upload mode (default): `doc-<sha256[:12]>`
-- Disk mode (with `--use-aliases`): stable aliases like `sql-textbook`
+| Schema | Version | Status |
+|--------|---------|--------|
+| `textbook-static-v2` | 2.0.0 | Draft |
+| `concept-manifest-v1` | 1.0.0 | Stable |
+| `prereq-dag-v1` | 1.0.0 | Draft |
+| `event-log-v1` | 1.0.0 | Draft |
 
-### Generated Files
+### Document ID Formats
 
-#### Core Index Files
-- `manifest.json` - Index metadata without chunks
-- `chunks.json` - Array of chunks with embeddings
-- `index.json` - Full `PdfIndexDocument` including all chunks
+```python
+# Content-addressed (default)
+doc_id = f"doc-{sha256(pdf_bytes)[:12]}"
 
-#### Concept Learning Files (NEW)
-- `concept-manifest.json` - Concept metadata with chunk mappings
-- `concepts/*.md` - Individual concept content files
-- `concepts/README.md` - Index of all concepts
+# Stable alias (with --use-aliases)
+doc_id = "sql-textbook"  # From filename mapping
 
-### Concept Manifest Schema
-
-```json
-{
-  "schemaVersion": "concept-manifest-v1",
-  "sourceDocId": "sql-textbook",
-  "createdAt": "2024-01-01T00:00:00Z",
-  "conceptCount": 5,
-  "concepts": {
-    "select-basic": {
-      "id": "select-basic",
-      "title": "SELECT Statement Basics",
-      "definition": "Retrieves data from one or more tables",
-      "difficulty": "beginner",
-      "estimatedReadTime": 5,
-      "pageReferences": [45, 46],
-      "sections": {
-        "definition": {
-          "chunkIds": ["sql-textbook:p45:c1"],
-          "pageNumbers": [45]
-        },
-        "examples": {
-          "chunkIds": ["sql-textbook:p45:c2", "sql-textbook:p46:c1"],
-          "pageNumbers": [45, 46]
-        }
-      },
-      "relatedConcepts": ["where-clause"],
-      "tags": ["sql", "query"]
-    }
-  }
-}
+# Chunk ID pattern
+chunk_id = f"{doc_id}:p{page}:c{index}"
 ```
 
-## Concepts Configuration (`concepts.yaml`)
-
-The `concepts.yaml` file defines how PDF pages map to learning concepts:
-
-```yaml
-concepts:
-  select-basic:
-    title: "SELECT Statement Basics"
-    definition: "Retrieves data from one or more tables"
-    difficulty: beginner  # beginner, intermediate, advanced
-    estimatedReadTime: 5  # minutes
-    sections:
-      definition: [45]        # Page 45 contains definition
-      examples: [45, 46]      # Pages 45-46 have examples
-      commonMistakes: [47]    # Page 47 discusses mistakes
-    relatedConcepts: [where-clause, order-by]
-    tags: [sql, query, dql]
-
-  where-clause:
-    title: "WHERE Clause"
-    definition: "Filters rows based on conditions"
-    difficulty: beginner
-    sections:
-      definition: [50]
-      examples: [50, 51]
-```
-
-**Auto-discovery**: The indexer automatically looks for `concepts.yaml` in:
-1. Same directory as input PDF file
-2. Input directory (if input is a directory)
-3. Parent of input directory
-4. Current working directory
+---
 
 ## Security Considerations
 
-- Temp files are created with `tempfile.mkdtemp()` with prefix `algl_pdf_`
-- Cleanup only removes files in directories matching the `algl_pdf_*` pattern
-- File uploads in server mode are written to temp directories and cleaned up in `finally` blocks
+### Data Handling
+
+- Temp files use `tempfile.mkdtemp(prefix="algl_pdf_")`
+- Cleanup only removes files matching `algl_pdf_*` pattern
+- Learner IDs are pseudonymized (SHA256 hashed)
 - No persistent storage of uploaded PDFs
-- OCR processing uses safe defaults: deskew and rotate pages enabled
 
-## Development Notes
+### Event Logging
 
-- The embedding algorithm is deterministic and must remain backward-compatible (see `test_embedding_parity.py`)
-- Chunk overlap must be smaller than chunk size (validated in `IndexBuildOptions.validate_pair()`)
-- OCR is automatically triggered when extracted text is less than 800 characters (`min_total_chars`)
-- Default aliases map `SQL_Course_Textbook.pdf` → `sql-textbook`
-- Concept generation is optional and gracefully degrades if config is missing or invalid
+- Never log raw learner identifiers
+- Hash sensitive fields: `learner_id_pseudonymous`
+- Log code versions and config hashes for audit
+- Include trace IDs for correlation without exposing identity
+
+---
+
+## Documentation Maintenance
+
+### When to Update
+
+| Change | Documents to Update |
+|--------|---------------------|
+| New pack added | PROJECT_BLUEPRINT.md, ARCHITECTURE.md |
+| Schema changes | OUTPUT_SPEC.md, Migration guide |
+| New event types | EVENT_LOGGING_SPEC.md |
+| New CLI commands | README.md, AGENTS.md |
+| Architecture changes | All core docs |
+
+### Version Alignment
+
+Keep these versions aligned:
+- `PROJECT_BLUEPRINT.md` - Vision version
+- `ARCHITECTURE.md` - Architecture version
+- `OUTPUT_SPEC.md` - Schema version
+- `README.md` / `AGENTS.md` - Project version
+
+---
+
+## Resources
+
+### Documentation
+
+- [Project Blueprint](docs/PROJECT_BLUEPRINT.md) - Vision and research foundation
+- [Architecture](docs/ARCHITECTURE.md) - Five-phase pipeline
+- [Output Spec](docs/OUTPUT_SPEC.md) - Four-pack formats
+- [Event Logging](docs/EVENT_LOGGING_SPEC.md) - Event taxonomy
+- [Provenance](docs/PROVENANCE_ARCHITECTURE.md) - PROV-DM spec
+
+### External References
+
+- xAPI Specification: https://xapi.com/
+- Caliper Specification: https://www.imsglobal.org/caliper
+- PROV-DM Specification: https://www.w3.org/TR/prov-dm/
+- OpenTelemetry: https://opentelemetry.io/
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v1.0 | 2024 | Basic PDF → chunks pipeline |
+| v2.0 | 2025 | Educational pipeline with Ollama |
+| v3.0 | Feb 2026 | LLM integration with Kimi |
+| v3.1 | Mar 2026 | Documentation consolidation |
+| v4.0 | Mar 2026 | **Four-pack architecture** (this version) |
+
+---
+
+*This document is maintained as part of the Adaptive Textbook Helper project.*

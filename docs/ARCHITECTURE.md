@@ -1,7 +1,7 @@
 # ALGL PDF Helper - System Architecture
 
-**Version:** 1.0.0  
-**Last Updated:** 2026-03-01  
+**Version:** 2.0.0  
+**Last Updated:** 2026-03-03  
 **Status:** Current
 
 ---
@@ -9,225 +9,358 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [High-Level Flow](#high-level-flow)
+2. [The Four Packs](#the-four-packs)
 3. [Pipeline Phases](#pipeline-phases)
 4. [Data Flow](#data-flow)
 5. [Component Reference](#component-reference)
-6. [Quality Metrics](#quality-metrics)
-7. [Output Generation](#output-generation)
+6. [Event Logging](#event-logging)
+7. [Provenance and Reproducibility](#provenance-and-reproducibility)
+8. [Output Generation](#output-generation)
 
 ---
 
 ## Overview
 
-The ALGL PDF Helper uses a multi-phase pipeline to transform raw PDFs into structured educational content compatible with the SQL-Adapt learning platform.
+The **Adaptive Textbook Helper** is a research-grade pipeline that transforms raw PDFs into structured, auditable knowledge substrates for interaction-driven SQL learning. It treats textbooks not as static sequences of chapters, but as **versioned content substrates** that can be re-assembled into adaptive instructional artifacts based on learner traces.
+
+### Core Innovation
+
+The system addresses the **"assistance dilemma"** in tutoring systems: when to provide hints vs. when to escalate to deeper explanations. This is operationalized through:
+
+- **Retrieval-first generation** (RAG paradigm)
+- **Complete event logging** for debugging and counterfactual replay
+- **Four-pack separation** for domain independence
+- **Deterministic, reproducible processing**
 
 ### Pipeline Phases
 
 | Phase | Name | Input | Output | Key Components |
 |-------|------|-------|--------|----------------|
-| 1 | PDF Extraction & OCR | Raw PDF | Clean text pages | PyMuPDF, OCRmyPDF, TextCleaner |
-| 2 | Chunking & Embedding | Clean pages | Text chunks with embeddings | Chunker, Embedding |
-| 3 | Concept Mapping | Chunks | Structured concepts | Concept Mapper, Content Validator |
-| 4 | Content Generation | Validated concepts | Educational notes | LLM Integration, SQL Validator |
-| 5 | Export & Integration | Educational notes | SQL-Adapt format | Markdown Generator, Exporter |
+| 1 | Document Pack Creation | Raw PDF | Clean chunks with embeddings | PyMuPDF, OCRmyPDF, Chunker |
+| 2 | Domain Pack Construction | Chunks | Concept map + prerequisite DAG | Concept Mapper, Prerequisite Validator |
+| 3 | Trace Pack Foundation | Domain Pack | Event schemas, metric calculators | Event Logger, Metric Engines |
+| 4 | Policy Pack Integration | All Packs | Escalation rules, bandit configs | Policy Engine, Bandit Learner |
+| 5 | Export & Integration | All Packs | SQL-Adapt compatible output | Exporter, Validation |
 
 ---
 
-## High-Level Flow
+## The Four Packs
+
+### Document Pack
+
+Transforms raw PDFs into content-addressed, retrievable artifacts:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         PDF PROCESSING PIPELINE                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+document-pack/
+├── raw/
+│   └── {doc_alias}/
+│       └── source.pdf                    # Immutable original (SHA256)
+├── derived/
+│   └── {doc_alias}/
+│       ├── ocr.pdf                       # OCR output (if applied)
+│       ├── pages/{page}.txt              # Per-page extraction with quality scores
+│       └── layout.json                   # Structure metadata
+└── index/
+    └── {doc_alias}/
+        ├── chunks.jsonl                  # Deterministic chunks
+        ├── embeddings.jsonl              # Hash-based 24-dim vectors
+        └── index.faiss                   # Semantic retrieval index
+```
 
-    ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-    │  RAW PDF     │────▶│  PHASE 1     │────▶│  PHASE 2     │
-    │  Textbooks   │     │  PDF Extract │     │  Knowledge   │
-    │              │     │  & Clean     │     │  Extract     │
-    └──────────────┘     └──────────────┘     └──────┬───────┘
-                                                      │
-    ┌──────────────┐     ┌──────────────┐            │
-    │  ADAPTIVE    │◀────│  PHASE 3     │◀───────────┘
-    │  OUTPUT      │     │  LLM Enhance │
-    │  (SQL-Adapt) │     │  & Validate  │
-    └──────────────┘     └──────────────┘
+**Key Requirements:**
+- Content-addressed IDs (SHA256-based)
+- Deterministic chunking (same input + config → same chunks)
+- Page-level citations preserved throughout
+- Extraction quality scores logged
+
+### Domain Pack
+
+Structures content as an inspectable, editable knowledge graph:
+
+```
+domain-pack/
+├── concepts/
+│   ├── concept-map.json                  # Concept nodes with metadata
+│   └── concept-definitions.yaml          # Human-curated definitions
+├── prerequisites/
+│   └── prereq-dag.json                   # Directed edges: prereq → concept
+├── errors/
+│   └── error-taxonomy.json               # Error subtypes → concepts
+└── rubrics/
+    └── assessment-rubrics.json           # Evaluation criteria
+```
+
+**Concept Node Schema:**
+
+```json
+{
+  "id": "select-basic",
+  "canonical_name": "sql.select.basic",
+  "title": "SELECT Statement Basics",
+  "definition": "Retrieves data from one or more tables",
+  "difficulty": "beginner",
+  "estimatedReadTime": 5,
+  "pageReferences": [45, 46],
+  "chunkIds": ["sql-textbook:p45:c1", "sql-textbook:p45:c2"],
+  "relatedConcepts": ["where-clause", "order-by"],
+  "prerequisites": [],
+  "teaches": ["sql.dql.basic"],
+  "evidence": {
+    "sourceChunks": ["sql-textbook:p45:c1"],
+    "validatedBy": "human-reviewer-001",
+    "validationDate": "2024-01-15T09:10:00Z"
+  }
+}
+```
+
+**Prerequisite DAG:**
+
+```json
+{
+  "edges": [
+    {
+      "from": "select-basic",
+      "to": "where-clause",
+      "type": "prerequisite",
+      "confidence": 1.0,
+      "validated": true
+    }
+  ],
+  "version": "1.0.0",
+  "lastModified": "2024-01-15T09:10:00Z",
+  "modifiedBy": "human-reviewer-001"
+}
+```
+
+**Key Requirements:**
+- Canonical concept IDs (e.g., `sql.where.basic`)
+- Explicit prerequisite edges (not flat coverage)
+- Versioned and auditable (DAG changes affect mastery propagation)
+- Evidence pointers to chunks/pages for every node
+
+### Trace Pack
+
+Captures complete interaction history for debugging and evaluation:
+
+```
+trace-pack/
+├── events/
+│   └── {session_id}.jsonl                # xAPI/Caliper-aligned events
+├── derived/
+│   ├── hdi/                              # Hint Dependency Index
+│   ├── csi/                              # Cognitive Strain Index
+│   ├── aps/                              # Affective Proxy Score
+│   └── rqs/                              # Reflection Quality Score
+└── manifests/
+    └── {run_id}.json                     # Run configuration and hashes
+```
+
+**Key Metrics:**
+
+| Metric | Definition | Formula |
+|--------|------------|---------|
+| **HDI** (Hint Dependency) | Help-seeking behavior | `(hints/attempts) × (time_with_hints/total_time)` |
+| **CSI** (Cognitive Strain) | Interaction-based load proxy | `α(backspaces) + β(deletions) + γ(pause_time) + δ(error_rate)` |
+| **APS** (Affective Proxy) | Predicted affective state | `f(click_pattern, dwell_time, rapid_switching)` |
+| **RQS** (Reflection Quality) | Self-explanation quality | `g(note_length, concept_refs, self_explanation_depth)` |
+
+**Key Requirements:**
+- xAPI/Caliper/PROV-aligned event schemas
+- OpenTelemetry correlation IDs
+- Non-negotiable fields: `trace_id`, `run_id`, `policy_id`, `code_version`
+
+### Policy Pack
+
+Controls escalation and adaptive support delivery:
+
+```
+policy-pack/
+├── profiles/
+│   ├── fast-escalator.json               # Lower thresholds
+│   ├── slow-escalator.json               # Higher thresholds
+│   ├── explanation-first.json            # Bypass ladder for prereq violations
+│   └── adaptive-bandit.json              # Learned policy parameters
+├── thresholds/
+│   └── escalation-ladder.yaml            # Formal trigger definitions
+└── bandit/
+    ├── arm-configs.json                  # Multi-armed bandit setup
+    └── reward-function.json              # Computable from logs
+```
+
+**Escalation Profiles:**
+
+| Profile | Strategy | Threshold Example |
+|---------|----------|-------------------|
+| **Fast Escalator** | Prioritize time-to-clarity | Escalate after 2 errors |
+| **Slow Escalator** | Enforce productive struggle | Escalate after 5 errors |
+| **Explanation-First** | Bypass for prereq violations | Immediate explanation |
+| **Adaptive Bandit** | Learn optimal per-learner | Dynamic based on recovery |
+
+**Escalation Triggers:**
+
+```yaml
+escalation_ladder:
+  levels:
+    - name: hint
+      max_errors: 3
+      max_time_ms: 300000
+    - name: explanation  
+      max_errors: 5
+      max_time_ms: 600000
+    - name: worked_example
+      max_errors: 7
+      max_time_ms: 900000
+  
+  safety_overrides:
+    - trigger: prereq_violation_detected
+      action: immediate_explanation
+    - trigger: learner_explicit_request
+      action: escalate_one_level
 ```
 
 ---
 
 ## Pipeline Phases
 
-### Phase 1: PDF Extraction & OCR
+### Phase 1: Document Pack Creation
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                           PHASE 1: PDF EXTRACTION                           │
-│                      Input: Raw PDF → Output: Clean Text                    │
+│                    PHASE 1: DOCUMENT PACK CREATION                          │
+│                       Input: Raw PDF → Output: Chunks                       │
 └────────────────────────────────────────────────────────────────────────────┘
 
     ┌─────────────────┐
     │   Raw PDF File  │
+    │  (source.pdf)   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────────────────────────────────────────┐
-    │  STEP 1: Quality Check                              │
+    │  STEP 1: Quality Check & OCR Decision               │
     │  ├─ PyMuPDF extracts embedded text                  │
-    │  ├─ Check character count (>800 = good)             │
-    │  └─ Detect if OCR needed (scanned PDF)              │
+    │  ├─ Check coverage score (>70% = good)              │
+    │  ├─ Smart OCR Skip: Skip if >90% coverage           │
+    │  └─ Log: extraction_method, quality_score, flags    │
     └────────┬────────────────────────────────────────────┘
              │
     ┌────────┴────────────────────────────────────────────┐
-    │  Quality Result                                     │
-    │  ├─ ✅ GOOD (2.4M chars) → Use PyMuPDF directly     │
-    │  └─ ❌ POOR → Try OCR                               │
+    │  STEP 2: Page Text Extraction                       │
+    │  ├─ Extract per-page text                           │
+    │  ├─ Preserve page boundaries                        │
+    │  ├─ Log per-page: char_count, quality_score         │
+    │  └─ Emit: page_text_extracted event                 │
     └────────┬────────────────────────────────────────────┘
              │
              ▼
     ┌─────────────────────────────────────────────────────┐
-    │  STEP 2: Text Cleaning (TextCleaner class)          │
-    │  ├─ Fix OCR errors ("Arz" → "An")                   │
-    │  ├─ Remove headers ("160 Section 1...")             │
-    │  ├─ Remove footers (page numbers)                   │
-    │  ├─ Fix 2-column layout (remove duplicates)         │
-    │  └─ Clean SQL blocks (remove narrative text)        │
+    │  STEP 3: Text Cleaning                              │
+    │  ├─ Fix OCR errors ("Arz" → "Are")                  │
+    │  ├─ Remove headers/footers                          │
+    │  ├─ Fix 2-column layout                             │
+    │  └─ Normalize whitespace                            │
     └────────┬────────────────────────────────────────────┘
              │
              ▼
     ┌─────────────────────────────────────────────────────┐
-    │  OUTPUT: Clean Page Objects                         │
-    │  [{                                                  │
-    │    "page_number": 45,                               │
-    │    "text": "SELECT * FROM users...",               │
-    │    "sections": [...]                                │
-    │  }]                                                 │
+    │  STEP 4: Deterministic Chunking                     │
+    │  ├─ Word window: 150 words, 30 overlap              │
+    │  ├─ Preserve sentence boundaries                    │
+    │  ├─ Chunk ID: {docId}:p{page}:c{index}              │
+    │  └─ Emit: chunk_created event                       │
+    └────────┬────────────────────────────────────────────┘
+             │
+             ▼
+    ┌─────────────────────────────────────────────────────┐
+    │  STEP 5: Hash Embedding                             │
+    │  ├─ 24-dimensional hash-based vectors               │
+    │  ├─ Deterministic (same text → same embedding)      │
+    │  ├─ L2 normalized                                   │
+    │  └─ Model ID: hash-embedding-v1                     │
+    └────────┬────────────────────────────────────────────┘
+             │
+             ▼
+    ┌─────────────────────────────────────────────────────┐
+    │  OUTPUT: Document Pack                              │
+    │  ├─ raw/{docId}/source.pdf                          │
+    │  ├─ derived/{docId}/pages/{page}.txt                │
+    │  ├─ index/{docId}/chunks.jsonl                      │
+    │  └─ index/{docId}/index.faiss                       │
     └─────────────────────────────────────────────────────┘
 ```
-
-**Key Components:**
-- `extract.py`: PyMuPDF extraction, quality detection, OCR handling
-- `clean.py`: Text normalization, header/footer removal
-- **Output**: Array of page objects with clean text
 
 **CLI Commands:**
 ```bash
 # Check extraction quality
-algl-pdf check-quality ./my.pdf
+algl-pdf check-quality ./my.pdf --detailed
 
 # Run preflight analysis
 algl-pdf preflight ./my.pdf
 
-# Extract text with strategy
-algl-pdf extract ./my.pdf --strategy direct
+# Process with logging
+algl-pdf index ./my.pdf --out ./document-pack --log-level debug
 ```
 
----
-
-### Phase 2: Chunking & Embedding
+### Phase 2: Domain Pack Construction
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│              PHASE 2: PROCESSING & CHUNKING                      │
+│                  PHASE 2: DOMAIN PACK CONSTRUCTION                          │
+│                   Input: Chunks → Output: Concept DAG                       │
 └────────────────────────────────────────────────────────────────────────────┘
 
-Raw Text (from Phase 1)
-      │
-      ▼
-┌──────────────────────────┐
-│  Text Normalization      │
-│  • Fix encoding issues   │
-│  • Standardize whitespace│
-└──────────┬───────────────┘
+    Chunks (from Document Pack)
            │
            ▼
-┌──────────────────────────┐
-│  Word Window Chunking    │
-│  (chunker.py)            │
-│  • 180 words per chunk   │
-│  • 30 word overlap       │
-│  • Preserve page info    │
-└──────────┬───────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │              CONCEPT MAPPING PIPELINE                     │
+    └──────────────────────────────────────────────────────────┘
+           │
+           ├──▶ Layer 1: Manual Mapping (concepts.yaml)
+           │     ├─ Human-curated concept definitions
+           │     ├─ Page ranges per concept section
+           │     └─ Evidence: page → chunk mapping
+           │
+           ├──▶ Layer 2: Auto-Suggestion
+           │     ├─ Keyword matching
+           │     ├─ Semantic similarity
+           │     └─ Confidence scoring
+           │
+           └──▶ Layer 3: Human Validation
+                 ├─ Review suggested links
+                 ├─ Confirm or reject
+                 └─ Log: concept_link_confirmed event
            │
            ▼
-┌──────────────────────────┐
-│  Hash Embedding          │
-│  (embedding.py)          │
-│  • 24-dim vectors        │
-│  • Local, deterministic  │
-│  • No external API       │
-└──────────┬───────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │           PREREQUISITE DAG CONSTRUCTION                   │
+    └──────────────────────────────────────────────────────────┘
+           │
+           ├──▶ Auto-Suggest Edges
+           │     ├─ Heuristic: chapter order
+           │     ├─ Keyword overlap analysis
+           │     └─ Weak supervision signals
+           │
+           ├──▶ Human Review
+           │     ├─ Validate edges
+           │     ├─ Add missing edges
+           │     └─ Log: prereq_edge_added event
+           │
+           └──▶ Version & Lock
+                 ├─ DAG version: 1.0.0
+                 ├─ Modified by: reviewer-id
+                 └─ Immutable past versions
            │
            ▼
-┌──────────────────────────┐
-│  Chunk Objects           │
-│  {                       │
-│    chunkId: "doc:p1:c1"  │
-│    page: 1,              │
-│    text: "...",          │
-│    embedding: [0.1, ...] │
-│  }                       │
-└──────────────────────────┘
+    ┌─────────────────────────────────────────────────────┐
+    │  OUTPUT: Domain Pack                                │
+    │  ├─ concepts/concept-map.json                       │
+    │  ├─ prerequisites/prereq-dag.json                   │
+    │  └─ concepts/{concept-id}.md                        │
+    └─────────────────────────────────────────────────────┘
 ```
 
-**Key Components:**
-- `chunker.py`: Word window chunking (default: 180 words, 30 overlap)
-- `embedding.py`: Hash-based 24-dimensional embeddings
-- **Output**: Chunks with unique IDs following pattern `{docId}:p{page}:c{index}`
-
-**Chunk ID Format:**
-- Pattern: `{docId}:p{page}:c{index}`
-- Example: `sql-textbook:p45:c1` (Document "sql-textbook", page 45, chunk 1)
-
----
-
-### Phase 3: Concept Mapping
-
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│       PHASE 3: CONCEPT MAPPING & VALIDATION                      │
-└────────────────────────────────────────────────────────────────────────────┘
-
-Chunks (from Phase 2)
-      │
-      ▼
-┌──────────────────────────────────────────────────────────┐
-│              CONCEPT MAPPING SYSTEM                       │
-│  (concept_mapper.py)                                     │
-│  Multi-layer approach:                                   │
-└──────────────────────────────────────────────────────────┘
-      │
-      ├── Layer 1: Manual Mapping (concepts.yaml)
-      │   • Define concepts and page ranges
-      │   • Human-curated mappings
-      │
-      ├── Layer 2: Semantic Matching
-      │   • Match chunks to concepts
-      │   • Content validation
-      │
-      └── Layer 3: AI-Assisted (Kimi/Ollama)
-          • Extract relevant passages
-          • Validate relevance
-          ▼
-┌──────────────────────────┐
-│  Content Validation      │
-│  (ContentValidator)      │
-│  • SQL keyword detection │
-│  • Non-SQL filtering     │
-│  • Relevance scoring     │
-└──────────┬───────────────┘
-           │
-           ▼
-     [CONCEPT OBJECTS]
-           │
-           ▼
-    ┌──────────────────┐
-    │ concept-manifest │
-    │ .json            │
-    └──────────────────┘
-```
-
-**Content Validation Algorithm:**
+**Content Validation:**
 ```
 Score = (SQL_keywords × 0.3) + (concept_match × 0.5) - (non_SQL_penalty × 0.2)
 
@@ -237,210 +370,210 @@ Filter out:
 - Chapter introductions
 ```
 
-**Key Components:**
-- `concept_mapper.py`: Maps chunks to concepts from YAML config
-- `concepts.yaml`: Concept definitions with page ranges
-- **Output**: Validated concept objects with relevance scores
-
----
-
-### Phase 4: Content Generation
+### Phase 3: Trace Pack Foundation
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│           PHASE 4: PEDAGOGICAL CONTENT GENERATION                │
+│                    PHASE 3: TRACE PACK FOUNDATION                           │
+│                Input: Domain Pack → Output: Event Infrastructure            │
 └────────────────────────────────────────────────────────────────────────────┘
 
-Concept Objects (from Phase 3)
-      │
-      ▼
-┌──────────────────────────┐
-│  Schema Alignment        │
-│  (EducationalNoteGenerator)
-│                          │
-│  Textbook → Practice     │
-│  ┌────────────────────┐  │
-│  │ Sailors  → users   │  │
-│  │ Boats    → products│  │
-│  │ Reserves → orders  │  │
-│  │ Staff    → employees│ │
-│  └────────────────────┘  │
-└──────────┬───────────────┘
+    Domain Pack + Document Pack
            │
            ▼
-┌──────────────────────────┐
-│  LLM Content Generation  │
-│  • Definition            │
-│  • Detailed explanation  │
-│  • 2-3 SQL examples      │
-│  • Common mistakes       │
-│  • Practice questions    │
-└──────────┬───────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │              EVENT SCHEMA GENERATION                      │
+    │  ├─ xAPI-aligned event types                              │
+    │  ├─ Caliper-compatible envelopes                          │
+    │  └─ PROV-DM provenance tracking                           │
+    └──────────────────────────────────────────────────────────┘
            │
            ▼
-┌──────────────────────────┐
-│  SQL Validation          │
-│  (SQLValidator)          │
-│                          │
-│  Checks:                 │
-│  • has_SELECT            │
-│  • has_FROM              │
-│  • has_semicolon         │
-│                          │
-│  Auto-fixes:             │
-│  • Add missing clauses   │
-│  • Capitalize keywords   │
-└──────────┬───────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │              METRIC CALCULATOR SETUP                      │
+    │  ├─ HDI: Hint Dependency Index                            │
+    │  ├─ CSI: Cognitive Strain Index                           │
+    │  ├─ APS: Affective Proxy Score                            │
+    │  └─ RQS: Reflection Quality Score                         │
+    └──────────────────────────────────────────────────────────┘
            │
            ▼
-     [EDUCATIONAL NOTES]
+    ┌──────────────────────────────────────────────────────────┐
+    │              CORRELATION INFRASTRUCTURE                   │
+    │  ├─ OpenTelemetry trace context                           │
+    │  ├─ Span IDs for operations                               │
+    │  └─ Cross-service correlation                             │
+    └──────────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────────────────────┐
+    │  OUTPUT: Trace Pack                                 │
+    │  ├─ events/ (schema definitions)                    │
+    │  ├─ derived/ (metric calculators)                   │
+    │  └─ manifests/ (run configuration)                  │
+    └─────────────────────────────────────────────────────┘
 ```
 
-**Key Components:**
-- `educational_pipeline.py`: Orchestrates content generation
-- `SQLValidator`: Syntax checking and auto-fix
-- **Output**: Validated educational notes with SQL examples
+### Phase 4: Policy Pack Integration
 
-**LLM Integration:**
-```bash
-# Generate with Kimi (recommended)
-algl-pdf export-edu ./book.pdf --llm-provider kimi
-
-# Generate with Ollama (local)
-algl-pdf export-edu ./book.pdf --llm-provider ollama --ollama-model qwen2.5:7b
-
-# Skip LLM for faster processing
-algl-pdf export-edu ./book.pdf --skip-llm
 ```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                   PHASE 4: POLICY PACK INTEGRATION                          │
+│              Input: All Packs → Output: Escalation Rules                    │
+└────────────────────────────────────────────────────────────────────────────┘
 
----
+    All Packs
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│              POLICY PROFILE DEFINITION                    │
+│  ├─ Fast Escalator: Lower thresholds                      │
+│  ├─ Slow Escalator: Higher thresholds                     │
+│  ├─ Explanation-First: Prereq violation override          │
+│  └─ Adaptive Bandit: Learned per-learner                  │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│              MULTI-ARMED BANDIT SETUP                     │
+│  ├─ Define arms (profiles)                                │
+│  ├─ Define reward function                                │
+│  │   └─ Reward = learning_gain - hint_dependency_cost     │
+│  ├─ Update schedule                                       │
+│  └─ Safety constraints                                    │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│              ESCALATION LADDER CONFIG                     │
+│  ├─ Level definitions (hint → explanation → example)      │
+│  ├─ Thresholds per level                                  │
+│  ├─ Safety overrides                                      │
+│  └─ Trigger logging                                       │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────┐
+│  OUTPUT: Policy Pack                                │
+│  ├─ profiles/*.json                                 │
+│  ├─ thresholds/escalation-ladder.yaml               │
+│  └─ bandit/*.json                                   │
+└─────────────────────────────────────────────────────┘
+```
 
 ### Phase 5: Export & Integration
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                  PHASE 5: OUTPUT GENERATION                      │
+│                    PHASE 5: EXPORT & INTEGRATION                            │
+│               Input: All Packs → Output: SQL-Adapt Format                   │
 └────────────────────────────────────────────────────────────────────────────┘
 
-Educational Notes (from Phase 4)
-      │
-      ├──▶┌──────────────────────────┐
-      │   │  Markdown Generator      │
-      │   │  (markdown_generator.py) │
-      │   │  • Format as .md         │
-      │   │  • Add syntax highlighting│
-      │   └──────────┬───────────────┘
-      │              │
-      │              ▼
-      │        concepts/{doc_id}/*.md
-      │
-      ├──▶┌──────────────────────────┐
-      │   │  Index Files             │
-      │   │  (export_sqladapt.py)    │
-      │   └──────────┬───────────────┘
-      │              │
-      │              ▼
-      │    concept-map.json
-      │
-      └──▶┌──────────────────────────┐
-          │  SQL-Adapt Export        │
-          └──────────┬───────────────┘
-                     │
-                     ▼
-              ┌──────────────┐
-              │ SQL-Adapt    │
-              │ Web App      │
-              └──────────────┘
-```
-
-**Generated Files:**
-
-```
-textbook-static/
-├── textbook-manifest.json       # Main manifest (metadata, versions)
-├── concept-map.json             # Web app concept index
-├── chunks.json                  # All chunks with embeddings
-├── concept-manifest.json        # Internal concept metadata
-├── assets/
-│   ├── asset-manifest.json
-│   ├── images/{docId}/          # Extracted images
-│   └── tables/{docId}/          # Extracted tables
-└── concepts/
-    ├── README.md                # Auto-generated concept index
-    └── {docId}/
-        ├── {concept-id}.md      # Individual concept content
-        └── README.md            # Doc-specific concept index
-```
-
-**Key Components:**
-- `markdown_generator.py`: Markdown file generation
-- `export_sqladapt.py`: SQL-Adapt compatible export
-- **Output**: SQL-Adapt ready files
-
-**Export Commands:**
-```bash
-# Export processed PDF to SQL-Adapt
-algl-pdf export ./read_use/sql-textbook
-
-# Full educational export with LLM
-algl-pdf export-edu ./book.pdf --output-dir ./output --llm-provider kimi
+    All Packs
+       │
+       ├──▶┌──────────────────────────┐
+       │   │  SQL-Adapt Export        │
+       │   │  (export_sqladapt.py)    │
+       │   │  ├─ textbook-manifest    │
+       │   │  ├─ concept-map.json     │
+       │   │  ├─ prereq-dag.json      │
+       │   │  └─ chunks.json          │
+       │   └──────────┬───────────────┘
+       │              │
+       │              ▼
+       │        textbook-static/
+       │
+       ├──▶┌──────────────────────────┐
+       │   │  Markdown Generation     │
+       │   │  (markdown_generator.py) │
+       │   │  ├─ concepts/*.md        │
+       │   │  └─ README.md            │
+       │   └──────────┬───────────────┘
+       │              │
+       │              ▼
+       │        concepts/{docId}/*.md
+       │
+       └──▶┌──────────────────────────┐
+           │  Validation              │
+           │  ├─ JSON Schema check    │
+           │  ├─ Provenance complete  │
+           │  └─ Quality gates        │
+           └──────────┬───────────────┘
+                      │
+                      ▼
+            ┌─────────────────┐
+            │ SQL-Adapt App   │
+            │  • RAG retrieval│
+            │  • Concept graph│
+            │  • Event logger │
+            └─────────────────┘
 ```
 
 ---
 
 ## Data Flow
 
-### Complete Pipeline Flow
+### Complete System Flow
 
 ```
 RAW PDF
   │
   │  ┌────────────────────────────────────────────────────────────────────┐
-  ├──┤ PDF PROCESSING (Phase 1)                                          │
-  │  │ ├─ PyMuPDF extraction                                             │
-  │  │ ├─ OCR error correction (TextCleaner)                             │
-  │  │ ├─ Header/footer removal                                          │
-  │  │ └─ 2-column layout fix                                            │
-  │  └────────────────────────────────────────────────────────────────────┘
-  │                                    │
-  │                                    ▼
-  │                          Clean Page Objects
-  │                                    │
-  │  ┌────────────────────────────────────────────────────────────────────┐
-  ├──┤ CHUNKING & EMBEDDING (Phase 2)                                    │
-  │  │ ├─ Word window chunking (180 words, 30 overlap)                   │
+  ├──┤ DOCUMENT PACK (Phase 1)                                           │
+  │  │ ├─ OCR (conditional)                                              │
+  │  │ ├─ Page extraction                                                │
+  │  │ ├─ Text cleaning                                                  │
+  │  │ ├─ Chunking (150 words, 30 overlap)                               │
   │  │ └─ Hash embedding (24-dim)                                        │
   │  └────────────────────────────────────────────────────────────────────┘
   │                                    │
   │                                    ▼
-  │                          Text Chunks with Embeddings
+  │                          Document Pack Artifacts
+  │                          ├─ raw/source.pdf
+  │                          ├─ derived/pages/*.txt
+  │                          └─ index/chunks.jsonl
   │                                    │
   │  ┌────────────────────────────────────────────────────────────────────┐
-  ├──┤ CONCEPT MAPPING (Phase 3)                                         │
-  │  │ ├─ Load concepts.yaml                                             │
-  │  │ ├─ Map pages to concepts                                          │
-  │  │ ├─ Content validation (relevance scoring)                         │
-  │  │ └─ Filter non-SQL content                                         │
+  ├──┤ DOMAIN PACK (Phase 2)                                             │
+  │  │ ├─ Concept mapping (concepts.yaml)                                │
+  │  │ ├─ Prerequisite DAG construction                                  │
+  │  │ └─ Evidence validation                                            │
   │  └────────────────────────────────────────────────────────────────────┘
   │                                    │
   │                                    ▼
-  │                          Validated Concepts
+  │                          Domain Pack Artifacts
+  │                          ├─ concepts/concept-map.json
+  │                          └─ prerequisites/prereq-dag.json
   │                                    │
   │  ┌────────────────────────────────────────────────────────────────────┐
-  ├──┤ CONTENT GENERATION (Phase 4)                                      │
-  │  │ ├─ Schema alignment                                               │
-  │  │ ├─ LLM enhancement (Kimi/Ollama)                                  │
-  │  │ └─ SQL validation                                                 │
+  ├──┤ TRACE PACK (Phase 3)                                              │
+  │  │ ├─ Event schema (xAPI/Caliper/PROV)                               │
+  │  │ ├─ Metric calculators (HDI/CSI/APS/RQS)                           │
+  │  │ └─ Correlation infrastructure                                     │
   │  └────────────────────────────────────────────────────────────────────┘
   │                                    │
   │                                    ▼
-  │                          Educational Notes
+  │                          Trace Pack Infrastructure
+  │                          ├─ events/*.jsonl
+  │                          └─ derived/
+  │                                    │
+  │  ┌────────────────────────────────────────────────────────────────────┐
+  ├──┤ POLICY PACK (Phase 4)                                             │
+  │  │ ├─ Profile definitions                                            │
+  │  │ ├─ Bandit configuration                                           │
+  │  │ └─ Escalation ladder                                              │
+  │  └────────────────────────────────────────────────────────────────────┘
+  │                                    │
+  │                                    ▼
+  │                          Policy Pack Artifacts
+  │                          ├─ profiles/*.json
+  │                          └─ thresholds/*.yaml
   │                                    │
   │  ┌────────────────────────────────────────────────────────────────────┐
   └──┤ EXPORT & INTEGRATION (Phase 5)                                    │
-     │ ├─ Create .md files for each concept                               │
-     │ ├─ Generate concept-map.json (index)                               │
-     │ └─ Export to SQL-Adapt format                                      │
+     │ ├─ SQL-Adapt format export                                        │
+     │ ├─ Markdown generation                                            │
+     │ └─ Validation                                                     │
      └────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
@@ -458,13 +591,14 @@ RAW PDF
 
 | Module | Purpose | Key Functions |
 |--------|---------|---------------|
-| `extract.py` | PDF text extraction | `extract_pages_fitz()`, `check_extraction_quality()` |
-| `clean.py` | Text normalization | Header/footer removal, whitespace normalization |
-| `chunker.py` | Word-window chunking | `chunk_text()`, overlap management |
-| `embedding.py` | Hash embeddings | `build_hash_embedding()`, L2 normalization |
-| `concept_mapper.py` | Concept mapping | `load_concepts_config()`, map chunks to concepts |
-| `markdown_generator.py` | Markdown output | Generate concept files, README |
-| `export_sqladapt.py` | SQL-Adapt export | Merge and export to web app format |
+| `extract.py` | PDF text extraction | `extract_pages_fitz()`, quality detection |
+| `clean.py` | Text normalization | Header/footer removal, OCR error fix |
+| `chunker.py` | Word-window chunking | `chunk_text()`, deterministic IDs |
+| `embedding.py` | Hash embeddings | `build_hash_embedding()`, L2 normalize |
+| `concept_mapper.py` | Concept mapping | Load YAML, map chunks to concepts |
+| `markdown_generator.py` | Markdown output | Generate concept files |
+| `export_sqladapt.py` | SQL-Adapt export | Export with prerequisite DAG |
+| `provenance.py` | PROV tracking | Entity/Activity/Agent logging |
 
 ### Data Models
 
@@ -472,74 +606,94 @@ RAW PDF
 |-------|----------|---------|
 | `PdfSourceDoc` | `models.py` | Source document metadata |
 | `PdfIndexChunk` | `models.py` | Individual text chunk |
-| `PdfIndexDocument` | `models.py` | Complete index with all chunks |
-| `PdfIndexManifest` | `models.py` | Index metadata without chunks |
-| `ConceptManifest` | `models.py` | Concept mappings and metadata |
-| `IndexBuildOptions` | `models.py` | Build configuration |
+| `ConceptManifest` | `models.py` | Concept mappings |
+| `PrereqDAG` | `models.py` | Prerequisite graph |
+| `EscalationLadder` | `models.py` | Policy configuration |
 
 ### Configuration Files
 
 | File | Purpose |
 |------|---------|
-| `concepts.yaml` | Concept-to-page mappings |
-| `pyproject.toml` | Package configuration |
+| `concepts.yaml` | Concept definitions |
+| `prereq-dag.yaml` | Prerequisite edges |
+| `escalation-ladder.yaml` | Policy thresholds |
+| `bandit-config.yaml` | Bandit parameters |
 
 ---
 
-## Quality Metrics
+## Event Logging
 
-### By Phase
+### Event Taxonomy
 
-| Phase | Quality Metric | Target |
-|-------|----------------|--------|
-| Phase 1 | OCR accuracy | >95% |
-| Phase 2 | Embedding consistency | Deterministic |
-| Phase 3 | Relevance score | >0.7 |
-| Phase 4 | SQL validity | 100% |
-| Phase 5 | File structure validity | Valid JSON |
+| Category | Events | Standard |
+|----------|--------|----------|
+| Interaction | `attempt_submitted`, `hint_shown`, `escalation_decision` | xAPI |
+| Pipeline | `chunk_created`, `index_built` | Custom |
+| Retrieval | `retrieval_query`, `retrieval_results` | Custom |
+| Generation | `explanation_generated`, `note_saved` | Custom |
+| Reproducibility | `run_manifest_written`, `artifact_emitted` | PROV |
 
-### Evaluation Commands
+### Required Correlation Fields
 
-```bash
-# Evaluate processing quality
-algl-pdf evaluate ./output --threshold 0.75
-
-# Detect regressions
-algl-pdf detect-regressions ./baseline ./current
-
-# Run CI tests
-make test-ci
+```json
+{
+  "trace_id": "uuid",
+  "run_id": "pipeline-run-id",
+  "experiment_id": "eval-run-id",
+  "policy_id": "policy-version",
+  "learner_id_pseudonymous": "hashed-id",
+  "session_id": "session-uuid",
+  "code_version": "git:abc123",
+  "config_hash": "sha256:xyz"
+}
 ```
 
-### Quality Checkpoints
+See [EVENT_LOGGING_SPEC.md](EVENT_LOGGING_SPEC.md) for complete specification.
 
+---
+
+## Provenance and Reproducibility
+
+### PROV-DM Model
+
+Every artifact tracks:
+- **Entity**: The artifact itself
+- **Activity**: How it was created
+- **Agent**: Who/what created it
+
+### Content-Addressed IDs
+
+```python
+# Document
+doc_id = sha256(source_pdf)[:16]
+
+# Chunk
+chunk_id = f"{doc_id}:p{page}:c{index}"
+
+# Run
+run_id = sha256(config + code_version + timestamp)
 ```
-Checkpoint 1: After Phase 1 (PDF Extraction)
-├─ ✓ Text extracted successfully
-├─ ✓ OCR errors corrected
-├─ ✓ Headers/footers removed
-└─ ❌ Check: No garbled text, no page numbers
 
-Checkpoint 2: After Phase 2 (Chunking)
-├─ ✓ Chunks generated
-├─ ✓ Embeddings computed
-└─ ❌ Check: Chunk IDs follow format
+### Run Manifest
 
-Checkpoint 3: After Phase 3 (Concept Mapping)
-├─ ✓ Concepts mapped correctly
-├─ ✓ Relevance score > 0.3
-└─ ❌ Check: No JDBC content in SQL concepts
-
-Checkpoint 4: After Phase 4 (Content Generation)
-├─ ✓ Definition exists and is clear
-├─ ✓ Examples include valid SQL
-└─ ❌ Check: SQL syntax validated
-
-Checkpoint 5: Final Output
-├─ ✓ All .md files generated
-├─ ✓ concept-map.json valid
-└─ ❌ Check: Files load in web app
+```json
+{
+  "run_id": "run-123",
+  "code": {
+    "repository": "https://github.com/algl/pdf-helper",
+    "commit": "abc123",
+    "dirty": false
+  },
+  "environment": {
+    "python": "3.10.12",
+    "container": "ghcr.io/algl/pdf-helper:v1.0.0"
+  },
+  "inputs": [{"path": "source.pdf", "hash": "sha256:..."}],
+  "outputs": [{"path": "chunks.jsonl", "hash": "sha256:..."}]
+}
 ```
+
+See [PROVENANCE_ARCHITECTURE.md](PROVENANCE_ARCHITECTURE.md) for complete specification.
 
 ---
 
@@ -549,15 +703,16 @@ Checkpoint 5: Final Output
 
 ```
 textbook-static/
-├── textbook-manifest.json       # Schema: textbook-static-v1
-├── concept-map.json             # Web app consumable index
-├── chunks.json                  # All chunks with embeddings
-├── concept-manifest.json        # Internal metadata
+├── textbook-manifest.json          # Schema, versions, metadata
+├── concept-map.json                # Web app concept index
+├── prereq-dag.json                 # Prerequisite relationships
+├── chunks.json                     # Embeddings for retrieval
+├── concept-manifest.json           # Internal concept metadata
 └── concepts/
-    ├── README.md                # Auto-generated index
+    ├── README.md                   # Auto-generated index
     └── {docId}/
-        ├── README.md            # Doc-specific index
-        └── {concept-id}.md      # Individual concept files
+        ├── README.md               # Doc-specific index
+        └── {concept-id}.md         # Individual concept files
 ```
 
 ### Schema Versions
@@ -566,6 +721,8 @@ textbook-static/
 |--------|---------|--------|
 | `textbook-static-v1` | 1.0.0 | Stable |
 | `concept-manifest-v1` | 1.0.0 | Stable |
+| `prereq-dag-v1` | 1.0.0 | Draft |
+| `event-log-v1` | 1.0.0 | Draft |
 
 ### Integration with SQL-Adapt
 
@@ -575,37 +732,9 @@ algl-pdf-helper/output/                    SQL-Adapt/
     ▼                                            ▼
 ┌──────────────────┐                    ┌──────────────────────────┐
 │ concept-map.json │ ─────────────────▶ │ apps/web/public/         │
-│                  │    Copied via      │   textbook-static/       │
-│                  │    export script   │   concept-map.json       │
-└──────────────────┘                    └──────────────────────────┘
-                                              │
-┌──────────────────┐                          ▼
-│ concepts/*.md    │ ─────────────────▶ ┌──────────────────────────┐
-│                  │                    │ textbook-static/         │
-│                  │                    │   concepts/*.md          │
-└──────────────────┘                    └──────────────────────────┘
-                                               │
-                                               ▼
-                                        ┌──────────────────────────┐
-                                        │  Web App Integration     │
-                                        │  • RAG retrieval         │
-                                        │  • Concept browsing      │
-                                        │  • Learning interface    │
-                                        └──────────────────────────┘
+│ prereq-dag.json  │    Copied via      │   textbook-static/       │
+└──────────────────┘    export script    └──────────────────────────┘
 ```
-
----
-
-## Performance Characteristics
-
-| Stage | Time per Concept | Bottleneck |
-|-------|------------------|------------|
-| PDF Extraction | ~0.1s | I/O (disk read) |
-| Text Cleaning | ~0.05s | Regex processing |
-| Content Validation | ~0.01s | In-memory calculation |
-| LLM Enhancement | ~60-120s | LLM inference |
-| SQL Validation | ~0.01s | Regex parsing |
-| File Generation | ~0.01s | Disk write |
 
 ---
 
@@ -617,7 +746,8 @@ algl-pdf-helper/output/                    SQL-Adapt/
 | v2.0 | 2025 | Educational pipeline with Ollama |
 | v3.0 | Feb 2026 | LLM integration with Kimi |
 | v3.1 | Mar 2026 | Documentation consolidation |
+| v4.0 | Mar 2026 | **Four-pack architecture** (this version) |
 
 ---
 
-*This document consolidates content from previous architecture documentation.*
+*This document consolidates architecture documentation for the Adaptive Textbook Helper.*

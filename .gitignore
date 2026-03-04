@@ -41,45 +41,26 @@ env/
 .DS_Store
 Thumbs.db
 
-# Project specific
-test_reports/perf_test_output/
-test_reports/real_pdf_benchmarks/
-test_reports/profiling_output/
-test_reports/resource_limit_tests/
+# Project specific - generated outputs
 output/
 test_output/
 *.log
 
-# Temporary files
-*.tmp
-temp/
-tmp/
-
-# AI-generated test reports (not needed in repo)
+# Test reports (generated)
+test_reports/perf_test_output/
+test_reports/real_pdf_benchmarks/
+test_reports/profiling_output/
+test_reports/resource_limit_tests/
 test_reports/*.md
 test_reports/*.json
 !test_reports/CLEANUP_FINAL_SUMMARY.md
 !test_reports/COMPREHENSIVE_TEST_SUMMARY.md
 !test_reports/FINAL_VALIDATION_REPORT.md
 
-# Output directories (generated content)
-output/
-test_output/
-
-# Archived docs (old versions)
-docs/archive/
-
-# Root-level test scripts (should be in tests/)
-/test_*.py
-
-# Baseline outputs (generated)
-tests/baselines/*/
-!tests/baselines/.gitkeep
-
-# Temporary test files
+# Temporary files
+*.tmp
 temp/
 tmp/
-*.tmp
 
 # Process ID files
 .process_pid
@@ -94,3 +75,23 @@ content_quality_report*.json
 draft-mapping.yaml
 review-package.yaml
 review-package.json
+
+# Archived docs (historical)
+docs/archive/
+
+# Root-level test scripts (should be in tests/)
+/test_*.py
+
+# Baseline outputs (generated)
+tests/baselines/*/
+!tests/baselines/.gitkeep
+# Generated processed content
+read_use/
+output/
+test_output/
+
+# Test scripts not ready for commit
+test_reports/performance_test.py
+test_reports/quick_performance_test.py
+smart_process.sh
+
