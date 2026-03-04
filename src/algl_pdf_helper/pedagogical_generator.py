@@ -858,9 +858,10 @@ class PedagogicalContentGenerator:
             row_str = " | ".join(str(val) if val is not None else "NULL" for val in row_data)
             rows.append(row_str)
         
+        rows_str = '\n| '.join(rows)
         return f"""| {header} |
 | {separator} |
-| {' |\n| '.join(rows)} |"""
+| {rows_str} |"""
     
     def generate_pedagogical_concept(
         self,
