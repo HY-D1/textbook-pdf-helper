@@ -188,6 +188,8 @@ class PipelineResult:
         output_path: Path to exported files
         statistics: Processing statistics by stage
         elapsed_time_seconds: Total pipeline execution time
+        fallback_units: List of unit IDs that used fallback generation
+        filtered_units: List of unit IDs that were filtered out
     """
     
     success: bool = False
@@ -198,6 +200,8 @@ class PipelineResult:
     output_path: Path | None = None
     statistics: dict[str, Any] = field(default_factory=dict)
     elapsed_time_seconds: float = 0.0
+    fallback_units: list[str] = field(default_factory=list)
+    filtered_units: list[str] = field(default_factory=list)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -210,6 +214,8 @@ class PipelineResult:
             "output_path": str(self.output_path) if self.output_path else None,
             "statistics": self.statistics,
             "elapsed_time_seconds": self.elapsed_time_seconds,
+            "fallback_units": self.fallback_units,
+            "filtered_units": self.filtered_units,
         }
     
     def get_summary(self) -> str:
@@ -223,6 +229,11 @@ class PipelineResult:
             f"Stages Failed: {len(self.stages_failed)}",
             f"Elapsed Time: {self.elapsed_time_seconds:.2f}s",
         ]
+        
+        if self.fallback_units:
+            lines.append(f"Fallback Units: {len(self.fallback_units)}")
+        if self.filtered_units:
+            lines.append(f"Filtered Units: {len(self.filtered_units)}")
         
         if self.stages_failed:
             lines.append("\nFailed Stages:")
@@ -421,6 +432,7 @@ class InstructionalPipeline:
         self._reinforcement_items: list[ReinforcementItem] = []
         self._validation_results: dict[str, Any] = {}
         self._quality_report: dict[str, Any] = {}
+        self._filtered_unit_ids: list[str] = []
         
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
@@ -495,6 +507,7 @@ class InstructionalPipeline:
             result.elapsed_time_seconds = time.time() - start_time
             result.quality_report = self._quality_report
             result.statistics = self._gather_statistics()
+            result.filtered_units = self._filtered_unit_ids
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
@@ -1019,6 +1032,7 @@ class InstructionalPipeline:
         Stage 10: Apply export filters to content.
         
         Filters content based on configured filter level (strict/production/development).
+        In strict mode, raises RuntimeError if any units are filtered.
         
         Args:
             units: Optional units (uses generated if None)
@@ -1027,6 +1041,9 @@ class InstructionalPipeline:
             
         Returns:
             Filtered UnitLibraryExport
+            
+        Raises:
+            RuntimeError: In strict mode if any units fail filtering
         """
         self._logger.info("Stage 10: Applying export filters")
         
@@ -1047,9 +1064,43 @@ class InstructionalPipeline:
         
         self._filter_engine = ExportFilterEngine(filters)
         
-        # Note: ExportFilterEngine works with PedagogicalConcept, not InstructionalUnit
-        # For now, we create the export directly without filtering
-        # In a production system, you'd adapt the filter engine or convert units
+        # Create a temporary library for filtering
+        temp_library = UnitLibraryExport(
+            source_pdf_id=self.config.doc_id,
+            instructional_units=units,
+            misconception_bank=misconception_units,
+            reinforcement_bank=reinforcement_items,
+        )
+        
+        # Apply filters to get filtered library
+        filter_result = self._filter_engine.filter_unit_library(temp_library)
+        filtered_library = self._filter_engine.get_exportable_subset(temp_library)
+        
+        # Store filtered unit IDs for reporting
+        self._filtered_unit_ids = filter_result.filtered_units
+        
+        # In strict mode, fail if any units are filtered
+        if self.config.filter_level == "strict" and filter_result.filtered_units:
+            rejected = self._filter_engine.get_rejected_units(temp_library)
+            error_msg = f"Strict mode: {len(filter_result.filtered_units)} units blocked:\n"
+            for unit_id, reasons in rejected[:5]:
+                error_msg += f"  - {unit_id}: {reasons[0] if reasons else 'Unknown reason'}\n"
+            if len(rejected) > 5:
+                error_msg += f"  ... and {len(rejected) - 5} more\n"
+            raise RuntimeError(error_msg)
+        
+        # Log filter results
+        if filter_result.filtered_units:
+            self._logger.warning(
+                f"Filtered {len(filter_result.filtered_units)} units "
+                f"({filter_result.pass_rate:.1%} pass rate)"
+            )
+            for unit_id in filter_result.filtered_units[:5]:
+                self._logger.warning(f"  Filtered: {unit_id}")
+            if len(filter_result.filtered_units) > 5:
+                self._logger.warning(f"  ... and {len(filter_result.filtered_units) - 5} more")
+        else:
+            self._logger.info("All units passed export filters")
         
         # Build concept graph from ontology
         concept_graph = {
@@ -1066,27 +1117,27 @@ class InstructionalPipeline:
                         "difficulty": concept.get("difficulty", "beginner"),
                     })
         
-        # Create the export
-        export = UnitLibraryExport(
-            source_pdf_id=self.config.doc_id,
-            concept_ontology={"version": "1.0.0"},
-            concept_graph=concept_graph,
-            instructional_units=units,
-            misconception_bank=misconception_units,
-            reinforcement_bank=reinforcement_items,
-            quality_report=self._quality_report,
-            export_manifest={
-                "filter_level": self.config.filter_level,
-                "doc_id": self.config.doc_id,
-            },
-        )
+        # Update the filtered library with remaining metadata
+        filtered_library.concept_ontology = {"version": "1.0.0"}
+        filtered_library.concept_graph = concept_graph
+        filtered_library.quality_report = self._quality_report
+        if not filtered_library.export_manifest:
+            filtered_library.export_manifest = {}
+        filtered_library.export_manifest.update({
+            "filter_level": self.config.filter_level,
+            "doc_id": self.config.doc_id,
+            "original_unit_count": len(units),
+            "filtered_unit_count": len(filter_result.filtered_units),
+            "exportable_unit_count": len(filtered_library.instructional_units),
+        })
         
         self._logger.info(
-            f"Created export with {len(units)} units, "
+            f"Created export with {len(filtered_library.instructional_units)} units "
+            f"({len(filter_result.filtered_units)} filtered), "
             f"{len(misconception_units)} misconceptions, "
             f"{len(reinforcement_items)} reinforcement items"
         )
-        return export
+        return filtered_library
     
     def _export(self, library: UnitLibraryExport | None = None) -> Path:
         """
@@ -1133,6 +1184,7 @@ class InstructionalPipeline:
             "instructional_units": len(self._instructional_units),
             "misconception_units": len(self._misconception_units),
             "reinforcement_items": len(self._reinforcement_items),
+            "filtered_units": len(self._filtered_unit_ids),
             "stage_timings": self.progress.get_stage_durations(),
         }
 

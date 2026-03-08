@@ -68,11 +68,23 @@ try:
 except ImportError:
     HAS_MODELS = False
 
+# Import the real pipeline and quality gates
 try:
-    from .quality_gates import run_quality_gates
-    HAS_QUALITY_GATES = True
+    from .instructional_pipeline import (
+        InstructionalPipeline,
+        PipelineConfig,
+        PipelineResult,
+        PipelineStage,
+    )
+    HAS_PIPELINE = True
 except ImportError:
-    HAS_QUALITY_GATES = False
+    HAS_PIPELINE = False
+
+try:
+    from .learning_quality_gates import LearningQualityGates, QualityReport
+    HAS_LEARNING_QUALITY_GATES = True
+except ImportError:
+    HAS_LEARNING_QUALITY_GATES = False
 
 
 # =============================================================================
@@ -87,6 +99,9 @@ app = typer.Typer(
     help="Unit Library Pipeline CLI - Process PDFs into grounded instructional unit graphs",
     add_completion=False,
 )
+
+# Export command functions for integration with main CLI
+__all__ = ["process_command", "validate_command", "inspect_command", "filter_command", "export_legacy_command"]
 
 # Filter level enum for CLI
 FilterLevelCLI = typer.Option(
@@ -120,6 +135,14 @@ def filter_level_from_string(level: str) -> FilterLevel:
         return FilterLevel.STRICT
 
 
+def filter_level_to_literal(level: str) -> str:
+    """Convert string to valid filter level literal for PipelineConfig."""
+    level = level.lower()
+    if level in ("strict", "production", "development"):
+        return level
+    return "production"
+
+
 def get_filter_rules(level: str) -> list:
     """Get filter rules based on level."""
     if not HAS_FILTERS:
@@ -141,7 +164,7 @@ def get_filter_rules(level: str) -> list:
 # =============================================================================
 
 @app.command()
-def process(
+def process_command(
     pdf_path: Path = typer.Argument(
         ...,
         exists=True,
@@ -205,6 +228,11 @@ def process(
         console.print("   Install required dependencies to use this command.")
         raise typer.Exit(1)
     
+    if not HAS_PIPELINE:
+        console.print("[red]❌ Error: Instructional pipeline not available[/red]")
+        console.print("   Install required dependencies to use this command.")
+        raise typer.Exit(1)
+    
     # Generate doc_id if not provided
     if doc_id is None:
         doc_id = generate_doc_id()
@@ -221,21 +249,21 @@ def process(
     ))
     console.print()
     
-    # Track statistics
-    stats = {
-        "pages": 0,
-        "blocks": 0,
-        "concepts": 0,
-        "units_generated": 0,
-        "misconceptions": 0,
-        "reinforcement": 0,
-        "sql_valid": 0,
-        "quality_pass": 0,
-        "exported": 0,
-        "filtered": 0,
-    }
+    # Create pipeline configuration from CLI arguments
+    config = PipelineConfig(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        doc_id=doc_id,
+        llm_provider=llm_provider,  # type: ignore
+        llm_model=llm_model,
+        filter_level=filter_level_to_literal(filter_level),  # type: ignore
+        skip_reinforcement=skip_reinforcement,
+        skip_misconceptions=skip_misconceptions,
+        validate_sql=validate_sql,
+        min_quality_score=min_quality_score,
+    )
     
-    # Create progress display
+    # Run the pipeline with progress display
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -244,161 +272,53 @@ def process(
         console=console,
     ) as progress:
         
-        # Stage 1: Document Extraction
-        task1 = progress.add_task("[cyan]Document Extraction", total=100)
-        progress.update(task1, description="[cyan]📄 Document Extraction[/cyan]")
+        # Create pipeline instance
+        pipeline = InstructionalPipeline(config)
         
+        # Run pipeline and capture result
         try:
-            # Simulate extraction (replace with actual implementation)
-            progress.update(task1, advance=50)
-            stats["pages"] = _extract_page_count(pdf_path)
-            stats["blocks"] = stats["pages"] * 2  # Estimated
-            progress.update(task1, advance=50, completed=100)
-            console.print(f"  [green]✓[/green] Document Extraction ............ {stats['pages']} pages, {stats['blocks']} blocks")
+            result = pipeline.run()
         except Exception as e:
-            console.print(f"  [red]✗[/red] Document Extraction ............ Failed: {e}")
+            console.print(f"[red]❌ Pipeline failed:[/red] {e}")
             raise typer.Exit(1)
         
-        # Stage 2: Content Segmentation
-        task2 = progress.add_task("[cyan]Content Segmentation", total=100)
-        progress.update(task2, description="[cyan]🔍 Content Segmentation[/cyan]")
-        
-        try:
-            progress.update(task2, advance=100, completed=100)
-            teaching_blocks = int(stats["blocks"] * 0.8)
-            console.print(f"  [green]✓[/green] Content Segmentation ........... {teaching_blocks} teaching blocks")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Content Segmentation ........... Failed: {e}")
+        if not result.success:
+            console.print("[red]❌ Pipeline failed with errors:[/red]")
+            for stage, error_msg in result.stages_failed:
+                console.print(f"  - {stage.name}: {error_msg}")
             raise typer.Exit(1)
         
-        # Stage 3: Concept Mapping
-        task3 = progress.add_task("[cyan]Concept Mapping", total=100)
-        progress.update(task3, description="[cyan]🗺️  Concept Mapping[/cyan]")
+        # Display completed stages with real statistics
+        stage_names = {
+            PipelineStage.EXTRACTION: "📄 Document Extraction",
+            PipelineStage.SEGMENTATION: "🔍 Content Segmentation",
+            PipelineStage.CONCEPT_MAPPING: "🗺️  Concept Mapping",
+            PipelineStage.UNIT_GENERATION: "📦 Unit Generation",
+            PipelineStage.MISCONCEPTION_GENERATION: "⚠️  Misconception Bank",
+            PipelineStage.REINFORCEMENT_GENERATION: "🔄 Reinforcement Items",
+            PipelineStage.VALIDATION: "🔒 SQL Validation",
+            PipelineStage.QUALITY_GATES: "✅ Quality Gates",
+            PipelineStage.FILTERING: "🚦 Export Filters",
+            PipelineStage.EXPORT: "💾 Export",
+        }
         
-        try:
-            progress.update(task3, advance=100, completed=100)
-            # Estimate concepts based on teaching blocks
-            stats["concepts"] = min(50, max(10, teaching_blocks // 8))
-            console.print(f"  [green]✓[/green] Concept Mapping ................ {stats['concepts']} concepts mapped")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Concept Mapping ................ Failed: {e}")
-            raise typer.Exit(1)
+        for stage in result.stages_completed:
+            stage_name = stage_names.get(stage, stage.name)
+            console.print(f"  [green]✓[/green] {stage_name}")
         
-        # Stage 4: Unit Generation
-        task4 = progress.add_task("[cyan]Unit Generation", total=100)
-        progress.update(task4, description="[cyan]📦 Unit Generation[/cyan]")
-        
-        try:
-            progress.update(task4, advance=100, completed=100)
-            # 5 variants per concept (L1, L2, L3, L4, reinforcement)
-            variants_per_concept = 5 if not skip_reinforcement else 4
-            stats["units_generated"] = stats["concepts"] * variants_per_concept
-            console.print(f"  [green]✓[/green] Unit Generation ................ {stats['units_generated']} units ({variants_per_concept} variants × {stats['concepts']} concepts)")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Unit Generation ................ Failed: {e}")
-            raise typer.Exit(1)
-        
-        # Stage 5: Misconception Bank
-        task5 = progress.add_task("[cyan]Misconception Bank", total=100)
-        progress.update(task5, description="[cyan]⚠️  Misconception Bank[/cyan]")
-        
+        # Show skipped stages
         if skip_misconceptions:
-            progress.update(task5, advance=100, completed=100)
-            console.print(f"  [yellow]⊘[/yellow] Misconception Bank ............. Skipped")
-        else:
-            try:
-                progress.update(task5, advance=100, completed=100)
-                # ~1.5 misconceptions per concept on average
-                stats["misconceptions"] = int(stats["concepts"] * 1.5)
-                console.print(f"  [green]✓[/green] Misconception Bank ............. {stats['misconceptions']} misconception units")
-            except Exception as e:
-                console.print(f"  [red]✗[/red] Misconception Bank ............. Failed: {e}")
-                raise typer.Exit(1)
-        
-        # Stage 6: Reinforcement Items
-        task6 = progress.add_task("[cyan]Reinforcement Items", total=100)
-        progress.update(task6, description="[cyan]🔄 Reinforcement Items[/cyan]")
-        
+            console.print(f"  [yellow]⊘[/yellow] ⚠️  Misconception Bank ............. Skipped")
         if skip_reinforcement:
-            progress.update(task6, advance=100, completed=100)
-            console.print(f"  [yellow]⊘[/yellow] Reinforcement Items ............ Skipped")
-        else:
-            try:
-                progress.update(task6, advance=100, completed=100)
-                # ~4 reinforcement items per concept
-                stats["reinforcement"] = stats["concepts"] * 4
-                console.print(f"  [green]✓[/green] Reinforcement Items ............ {stats['reinforcement']} items")
-            except Exception as e:
-                console.print(f"  [red]✗[/red] Reinforcement Items ............ Failed: {e}")
-                raise typer.Exit(1)
-        
-        # Stage 7: SQL Validation
-        task7 = progress.add_task("[cyan]SQL Validation", total=100)
-        progress.update(task7, description="[cyan]🔒 SQL Validation[/cyan]")
-        
-        if validate_sql:
-            try:
-                progress.update(task7, advance=100, completed=100)
-                # Estimate 98% pass rate
-                stats["sql_valid"] = int(stats["units_generated"] * 0.98)
-                pass_rate = (stats["sql_valid"] / stats["units_generated"] * 100) if stats["units_generated"] > 0 else 0
-                console.print(f"  [green]✓[/green] SQL Validation ................. {pass_rate:.0f}% pass rate")
-            except Exception as e:
-                console.print(f"  [red]✗[/red] SQL Validation ................. Failed: {e}")
-                raise typer.Exit(1)
-        else:
-            progress.update(task7, advance=100, completed=100)
-            console.print(f"  [yellow]⊘[/yellow] SQL Validation ................. Skipped")
-        
-        # Stage 8: Quality Gates
-        task8 = progress.add_task("[cyan]Quality Gates", total=100)
-        progress.update(task8, description="[cyan]✅ Quality Gates[/cyan]")
-        
-        try:
-            progress.update(task8, advance=100, completed=100)
-            # Estimate 92% pass rate
-            stats["quality_pass"] = int(stats["units_generated"] * min_quality_score)
-            pass_rate = (stats["quality_pass"] / stats["units_generated"] * 100) if stats["units_generated"] > 0 else 0
-            console.print(f"  [green]✓[/green] Quality Gates .................. {pass_rate:.0f}% pass rate")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Quality Gates .................. Failed: {e}")
-            raise typer.Exit(1)
-        
-        # Stage 9: Export Filters
-        task9 = progress.add_task("[cyan]Export Filters", total=100)
-        progress.update(task9, description="[cyan]🚦 Export Filters[/cyan]")
-        
-        try:
-            progress.update(task9, advance=100, completed=100)
-            # Estimate ~10% filtered
-            stats["exported"] = int(stats["units_generated"] * 0.9)
-            stats["filtered"] = stats["units_generated"] - stats["exported"]
-            console.print(f"  [green]✓[/green] Export Filters ................. {stats['exported']} units exported ({stats['filtered']} filtered)")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Export Filters ................. Failed: {e}")
-            raise typer.Exit(1)
-        
-        # Stage 10: Export
-        task10 = progress.add_task("[cyan]Export", total=100)
-        progress.update(task10, description="[cyan]💾 Export[/cyan]")
-        
-        try:
-            # Create output directory
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Create manifest
-            manifest = _create_manifest(doc_id, stats, filter_level, llm_provider, llm_model)
-            manifest_path = output_dir / "export_manifest.json"
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=2)
-            
-            progress.update(task10, advance=100, completed=100)
-            console.print(f"  [green]✓[/green] Export ......................... {output_dir}/")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Export ......................... Failed: {e}")
-            raise typer.Exit(1)
+            console.print(f"  [yellow]⊘[/yellow] 🔄 Reinforcement Items ............ Skipped")
+        if not validate_sql:
+            console.print(f"  [yellow]⊘[/yellow] 🔒 SQL Validation ................. Skipped")
     
-    # Print statistics table
+    # Get real statistics from the pipeline result
+    stats = result.statistics
+    quality_report = result.quality_report
+    
+    # Print statistics table with real data
     console.print()
     console.print("[bold]Statistics:[/bold]")
     
@@ -406,20 +326,58 @@ def process(
     stats_table.add_column("Metric", style="cyan")
     stats_table.add_column("Value", style="white")
     
-    stats_table.add_row("Total Units", str(stats["units_generated"]))
-    stats_table.add_row("Exported Units", str(stats["exported"]))
-    stats_table.add_row("Filtered Units", str(stats["filtered"]))
-    stats_table.add_row("Concepts Covered", str(stats["concepts"]))
-    pass_rate = (stats["exported"] / stats["units_generated"] * 100) if stats["units_generated"] > 0 else 0
-    stats_table.add_row("Pass Rate", f"{pass_rate:.0f}%")
+    total_units = stats.get("instructional_units", 0)
+    misconception_units = stats.get("misconception_units", 0)
+    reinforcement_items = stats.get("reinforcement_items", 0)
+    concepts_mapped = stats.get("concepts_mapped", 0)
+    teaching_blocks = stats.get("teaching_blocks", 0)
+    
+    stats_table.add_row("Total Units", str(total_units))
+    stats_table.add_row("Misconception Units", str(misconception_units))
+    stats_table.add_row("Reinforcement Items", str(reinforcement_items))
+    stats_table.add_row("Concepts Covered", str(concepts_mapped))
+    stats_table.add_row("Teaching Blocks", str(teaching_blocks))
+    
+    # Add quality report info if available
+    if quality_report and "summary" in quality_report:
+        summary = quality_report["summary"]
+        overall_score = summary.get("overall_score", 0)
+        pass_rate = summary.get("pass_rate", 0)
+        stats_table.add_row("Quality Score", f"{overall_score:.2f}")
+        stats_table.add_row("Pass Rate", f"{pass_rate:.1%}")
     
     # Estimate learning time (5 min per concept)
-    learning_time_hours = (stats["concepts"] * 5) / 60
-    stats_table.add_row("Est. Learning Time", f"{learning_time_hours:.1f}h")
+    if concepts_mapped > 0:
+        learning_time_hours = (concepts_mapped * 5) / 60
+        stats_table.add_row("Est. Learning Time", f"{learning_time_hours:.1f}h")
+    
+    # Add timing info
+    elapsed_time = result.elapsed_time_seconds
+    if elapsed_time > 0:
+        stats_table.add_row("Elapsed Time", f"{elapsed_time:.1f}s")
     
     console.print(stats_table)
     console.print()
     console.print(f"[green]✅ Unit library exported to:[/green] {output_dir}/")
+    
+    # List generated files
+    if result.output_path:
+        console.print()
+        console.print("[bold]Generated Files:[/bold]")
+        expected_files = [
+            "instructional_units.jsonl",
+            "source_spans.jsonl",
+            "concept_graph.json",
+            "quality_report.json",
+            "export_manifest.json",
+        ]
+        for filename in expected_files:
+            file_path = result.output_path / filename
+            if file_path.exists():
+                size = file_path.stat().st_size
+                console.print(f"  [green]✓[/green] {filename} ({size:,} bytes)")
+            else:
+                console.print(f"  [yellow]○[/yellow] {filename} (not found)")
 
 
 def _extract_page_count(pdf_path: Path) -> int:
@@ -476,7 +434,7 @@ def _create_manifest(
 # =============================================================================
 
 @app.command()
-def validate(
+def validate_command(
     library_dir: Path = typer.Argument(
         ...,
         exists=True,
@@ -518,12 +476,6 @@ def validate(
         # Load full library
         library = load_unit_library(library_dir)
         
-        # Run quality gates if available
-        if HAS_QUALITY_GATES:
-            quality_result = run_quality_gates(library)
-        else:
-            quality_result = {"passed": True, "issues": []}
-        
         # Display summary
         stats = manifest.get("statistics", {})
         
@@ -543,7 +495,7 @@ def validate(
         console.print()
         
         # Display validation results
-        console.print("[bold]Validation Results:[/bold]")
+        console.print("[bold]File Validation:[/bold]")
         
         # Check required files
         required_files = [
@@ -606,6 +558,70 @@ def validate(
         console.print(validation_table)
         console.print()
         
+        # Run real quality gates if available
+        if HAS_LEARNING_QUALITY_GATES:
+            console.print("[bold]Quality Gates:[/bold]")
+            
+            gates = LearningQualityGates()
+            report_generator = QualityReport(gates)
+            quality_report = report_generator.generate_full_report(library)
+            
+            summary = quality_report.get("summary", {})
+            total_units = summary.get("total_units", 0)
+            passed_units = summary.get("passed_units", 0)
+            failed_units = summary.get("failed_units", 0)
+            pass_rate = summary.get("overall_pass_rate", 0)
+            overall_passed = summary.get("overall_passed", False)
+            
+            quality_table = Table(show_header=False, box=None)
+            quality_table.add_column("Metric", style="cyan")
+            quality_table.add_column("Value", style="white")
+            
+            quality_table.add_row("Total Units Checked", str(total_units))
+            quality_table.add_row("Passed", f"[green]{passed_units}[/green]")
+            quality_table.add_row("Failed", f"[red]{failed_units}[/red]" if failed_units > 0 else str(failed_units))
+            quality_table.add_row("Pass Rate", f"{pass_rate:.1%}")
+            quality_table.add_row("Overall", "[green]✓ PASSED[/green]" if overall_passed else "[red]✗ FAILED[/red]")
+            
+            console.print(quality_table)
+            console.print()
+            
+            # Show gate pass rates if detailed
+            if detailed:
+                gate_rates = quality_report.get("gate_pass_rates", {})
+                if gate_rates:
+                    console.print("[bold]Gate Pass Rates:[/bold]")
+                    gate_table = Table(show_header=True)
+                    gate_table.add_column("Gate Category", style="cyan")
+                    gate_table.add_column("Avg Score", style="white")
+                    gate_table.add_column("Pass Rate", style="white")
+                    gate_table.add_column("Checks", style="white")
+                    
+                    for gate_name, gate_stats in gate_rates.items():
+                        avg_score = gate_stats.get("average_score", 0)
+                        gate_pass_rate = gate_stats.get("pass_rate", 0)
+                        total_checks = gate_stats.get("total_checks", 0)
+                        gate_table.add_row(
+                            gate_name.replace("_", " ").title(),
+                            f"{avg_score:.1%}",
+                            f"{gate_pass_rate:.1%}",
+                            str(total_checks)
+                        )
+                    console.print(gate_table)
+                    console.print()
+            
+            # Show recommendations
+            recommendations = quality_report.get("recommendations", [])
+            if recommendations and recommendations != ["No issues found - library ready for export!"]:
+                console.print("[bold]Recommendations:[/bold]")
+                for rec in recommendations[:10]:  # Show top 10
+                    console.print(f"  • {rec}")
+                console.print()
+            
+            # Update overall pass status
+            if not overall_passed:
+                all_passed = False
+        
         # Overall result
         if all_passed:
             console.print("[bold green]✅ Validation PASSED[/bold green]")
@@ -621,6 +637,8 @@ def validate(
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]❌ Validation failed:[/red] {e}")
+        import traceback
+        console.print(traceback.format_exc())
         raise typer.Exit(1)
 
 
@@ -629,7 +647,7 @@ def validate(
 # =============================================================================
 
 @app.command()
-def inspect(
+def inspect_command(
     library_dir: Path = typer.Argument(
         ...,
         exists=True,
@@ -801,7 +819,7 @@ def inspect(
 # =============================================================================
 
 @app.command()
-def filter(
+def filter_command(
     library_dir: Path = typer.Argument(
         ...,
         exists=True,
@@ -925,7 +943,7 @@ def filter(
 # =============================================================================
 
 @app.command(name="export-legacy")
-def export_legacy(
+def export_legacy_command(
     concept_map_path: Path = typer.Argument(
         ...,
         exists=True,
