@@ -45,15 +45,18 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
 
+import logging
 from .instructional_models import (
     INSTRUCTIONAL_EXPORT_VERSION,
     InstructionalUnit,
     MisconceptionUnit,
+    PracticeLink,
     ReinforcementItem,
     SourceSpan,
+    SQLExample,
     UnitLibraryExport,
 )
-from .pedagogical_models import SQLExample, ValidationError
+from .pedagogical_models import ValidationError
 from .quality_gates import QualityGateResult
 from .sql_ontology import ConceptOntology, SQL_CONCEPTS, PREREQUISITE_DAG
 
@@ -105,28 +108,32 @@ class ExportConfig:
 
 @dataclass
 class ValidatedSQLExample:
-    """An SQL example with validation status."""
+    """An SQL example with validation status using canonical field names."""
     
     example_id: str
     concept_id: str
     unit_id: str | None
-    description: str
-    query: str
+    title: str
+    scenario: str  # Canonical: was "description"
+    sql: str  # Canonical: was "query"
     explanation: str
+    expected_output: str | None
     schema_used: str
     difficulty: str
     is_valid: bool
     validation_issues: list[str] = field(default_factory=list)
     
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to dictionary for serialization using canonical field names."""
         return {
             "example_id": self.example_id,
             "concept_id": self.concept_id,
             "unit_id": self.unit_id,
-            "description": self.description,
-            "query": self.query,
+            "title": self.title,
+            "scenario": self.scenario,  # Canonical field name
+            "sql": self.sql,  # Canonical field name
             "explanation": self.explanation,
+            "expected_output": self.expected_output,
             "schema_used": self.schema_used,
             "difficulty": self.difficulty,
             "is_valid": self.is_valid,
@@ -135,18 +142,50 @@ class ValidatedSQLExample:
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ValidatedSQLExample:
-        """Create from dictionary."""
+        """Create from dictionary with backward compatibility for old field names."""
+        # Handle both old field names (query/description) and new (sql/scenario)
+        sql_value = data.get("sql", data.get("query", ""))
+        scenario_value = data.get("scenario", data.get("description", ""))
+        
         return cls(
             example_id=data["example_id"],
             concept_id=data["concept_id"],
             unit_id=data.get("unit_id"),
-            description=data["description"],
-            query=data["query"],
-            explanation=data["explanation"],
-            schema_used=data["schema_used"],
-            difficulty=data["difficulty"],
+            title=data.get("title", "Example"),
+            scenario=scenario_value,
+            sql=sql_value,
+            explanation=data.get("explanation", ""),
+            expected_output=data.get("expected_output"),
+            schema_used=data.get("schema_used", "practice"),
+            difficulty=data.get("difficulty", "beginner"),
             is_valid=data["is_valid"],
             validation_issues=data.get("validation_issues", []),
+        )
+    
+    @classmethod
+    def from_sql_example(
+        cls,
+        example: SQLExample,
+        example_id: str,
+        concept_id: str,
+        unit_id: str | None,
+        is_valid: bool = True,
+        validation_issues: list[str] | None = None,
+    ) -> ValidatedSQLExample:
+        """Create from a canonical SQLExample model."""
+        return cls(
+            example_id=example_id,
+            concept_id=concept_id,
+            unit_id=unit_id,
+            title=example.title,
+            scenario=example.scenario,
+            sql=example.sql,
+            explanation=example.explanation,
+            expected_output=example.expected_output,
+            schema_used=example.schema_used,
+            difficulty=example.difficulty,
+            is_valid=is_valid,
+            validation_issues=validation_issues or [],
         )
 
 
@@ -154,9 +193,13 @@ class ValidatedSQLExample:
 # Practice Links
 # =============================================================================
 
-@dataclass
-class PracticeLink:
-    """Mapping from concept to practice problems."""
+@dataclass  
+class ExportPracticeLink:
+    """Mapping from concept to practice problems for export.
+    
+    This is a wrapper around the canonical PracticeLink model
+    with additional export-specific fields.
+    """
     
     concept_id: str
     problem_ids: list[str]
@@ -173,13 +216,28 @@ class PracticeLink:
         }
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PracticeLink:
+    def from_dict(cls, data: dict[str, Any]) -> ExportPracticeLink:
         """Create from dictionary."""
         return cls(
             concept_id=data["concept_id"],
             problem_ids=data.get("problem_ids", []),
             concept_title=data.get("concept_title", ""),
             difficulty=data.get("difficulty", "beginner"),
+        )
+    
+    @classmethod
+    def from_practice_link(
+        cls,
+        link: PracticeLink,
+        concept_title: str = "",
+        difficulty: str = "beginner",
+    ) -> ExportPracticeLink:
+        """Create from a canonical PracticeLink model."""
+        return cls(
+            concept_id=link.concept_id,
+            problem_ids=link.problem_ids,
+            concept_title=concept_title,
+            difficulty=difficulty,
         )
 
 
@@ -215,6 +273,7 @@ class UnitLibraryExporter:
     def __init__(self):
         """Initialize the exporter."""
         self._ontology = ConceptOntology()
+        self._logger = logging.getLogger(__name__)
     
     def export(
         self,
@@ -400,7 +459,7 @@ class UnitLibraryExporter:
         self,
         library: UnitLibraryExport,
     ) -> list[ValidatedSQLExample]:
-        """Extract all SQL examples from units with validation."""
+        """Extract all SQL examples from units with validation using canonical field names."""
         examples: list[ValidatedSQLExample] = []
         example_counter = 0
         
@@ -410,30 +469,54 @@ class UnitLibraryExporter:
                 example_counter += 1
                 example_id = f"ex_{example_counter:04d}"
                 
-                # Basic validation
-                is_valid = self._validate_example_sql(ex.get("query", ""))
-                issues = [] if is_valid else ["Invalid SQL syntax"]
-                
-                validated = ValidatedSQLExample(
-                    example_id=example_id,
-                    concept_id=unit.concept_id,
-                    unit_id=unit.unit_id,
-                    description=ex.get("description", ""),
-                    query=ex.get("query", ""),
-                    explanation=ex.get("explanation", ""),
-                    schema_used=ex.get("schema_used", "unknown"),
-                    difficulty=ex.get("difficulty", "beginner"),
-                    is_valid=is_valid,
-                    validation_issues=issues,
-                )
+                # Handle both dict (legacy) and SQLExample (canonical) formats
+                if isinstance(ex, SQLExample):
+                    # Already a canonical SQLExample - use directly
+                    is_valid = self._validate_example_sql(ex.sql)
+                    issues = [] if is_valid else ["Invalid SQL syntax"]
+                    validated = ValidatedSQLExample.from_sql_example(
+                        example=ex,
+                        example_id=example_id,
+                        concept_id=unit.concept_id,
+                        unit_id=unit.unit_id,
+                        is_valid=is_valid,
+                        validation_issues=issues,
+                    )
+                elif isinstance(ex, dict):
+                    # Legacy dict format - extract using canonical field names
+                    # Support both old (query/description) and new (sql/scenario) keys
+                    sql = ex.get("sql", ex.get("query", ""))
+                    scenario = ex.get("scenario", ex.get("description", ""))
+                    
+                    is_valid = self._validate_example_sql(sql)
+                    issues = [] if is_valid else ["Invalid SQL syntax"]
+                    
+                    validated = ValidatedSQLExample(
+                        example_id=example_id,
+                        concept_id=unit.concept_id,
+                        unit_id=unit.unit_id,
+                        title=ex.get("title", "Example"),
+                        scenario=scenario,  # Canonical: was "description"
+                        sql=sql,  # Canonical: was "query"
+                        explanation=ex.get("explanation", ""),
+                        expected_output=ex.get("expected_output"),
+                        schema_used=ex.get("schema_used", "practice"),
+                        difficulty=ex.get("difficulty", "beginner"),
+                        is_valid=is_valid,
+                        validation_issues=issues,
+                    )
+                else:
+                    # Unknown format - skip
+                    continue
+                    
                 examples.append(validated)
         
         return examples
     
-    def _validate_example_sql(self, query: str) -> bool:
-        """Basic SQL validation."""
-        query = query.strip()
-        if not query:
+    def _validate_example_sql(self, sql: str) -> bool:
+        """Basic SQL validation using canonical field name."""
+        sql = sql.strip() if sql else ""
+        if not sql:
             return False
         
         # Check for basic SQL keywords
@@ -441,25 +524,61 @@ class UnitLibraryExporter:
             "SELECT", "INSERT", "UPDATE", "DELETE",
             "CREATE", "ALTER", "DROP", "WITH"
         ]
-        query_upper = query.upper()
-        return any(query_upper.startswith(kw) for kw in valid_starts)
+        sql_upper = sql.upper()
+        return any(sql_upper.startswith(kw) for kw in valid_starts)
     
     def _build_practice_links(
         self,
         library: UnitLibraryExport,
-    ) -> list[PracticeLink]:
-        """Build concept to practice problem mapping."""
-        links: dict[str, PracticeLink] = {}
+    ) -> list[ExportPracticeLink]:
+        """Build concept to practice problem mapping using canonical practice_links field."""
+        links: dict[str, ExportPracticeLink] = {}
         
         for unit in library.instructional_units:
-            practice_ids = unit.content.get("practice_problem_ids", [])
-            if practice_ids:
+            unit_content = unit.content
+            
+            # Check for canonical practice_links field (list of PracticeLink or dict)
+            practice_links_data = unit_content.get("practice_links", [])
+            
+            # Also check for legacy practice_problem_ids field for backward compatibility
+            legacy_practice_ids = unit_content.get("practice_problem_ids", [])
+            
+            # Process canonical practice_links
+            for link_data in practice_links_data:
+                if isinstance(link_data, PracticeLink):
+                    # Canonical PracticeLink model
+                    if link_data.concept_id not in links:
+                        links[link_data.concept_id] = ExportPracticeLink.from_practice_link(
+                            link_data,
+                            concept_title=unit_content.get("title", ""),
+                            difficulty=unit.difficulty,
+                        )
+                    else:
+                        links[link_data.concept_id].problem_ids.extend(link_data.problem_ids)
+                elif isinstance(link_data, dict):
+                    # Dict format - could be legacy or canonical
+                    concept_id = link_data.get("concept_id", unit.concept_id)
+                    problem_ids = link_data.get("problem_ids", [])
+                    
+                    if concept_id not in links:
+                        links[concept_id] = ExportPracticeLink(
+                            concept_id=concept_id,
+                            problem_ids=[],
+                            concept_title=unit_content.get("title", ""),
+                            difficulty=unit.difficulty,
+                        )
+                    links[concept_id].problem_ids.extend(problem_ids)
+            
+            # Process legacy practice_problem_ids (list of strings)
+            if legacy_practice_ids:
                 if unit.concept_id not in links:
-                    links[unit.concept_id] = PracticeLink(
+                    links[unit.concept_id] = ExportPracticeLink(
                         concept_id=unit.concept_id,
                         problem_ids=[],
+                        concept_title=unit_content.get("title", ""),
+                        difficulty=unit.difficulty,
                     )
-                links[unit.concept_id].problem_ids.extend(practice_ids)
+                links[unit.concept_id].problem_ids.extend(legacy_practice_ids)
         
         # Deduplicate problem IDs
         for link in links.values():
@@ -507,43 +626,89 @@ class UnitLibraryExporter:
         output_dir: Path,
     ) -> None:
         """
-        Write concept graph with nodes and prerequisite edges.
+        Write concept graph from library (not static data).
         
-        Creates a JSON file with the complete concept graph structure.
+        Uses the dynamic concept graph built by the pipeline, which contains
+        only concepts actually mapped from the document content.
+        
+        Args:
+            graph: The concept graph from the library (nodes, edges, metadata)
+            output_dir: Directory to write the file
         """
-        # Build nodes from SQL_CONCEPTS
+        filepath = output_dir / self.GRAPH_FILE
+        
+        if graph and graph.get("nodes"):
+            # Use the pipeline's dynamic graph
+            graph_data = graph
+            self._logger.info(
+                f"Using pipeline's dynamic concept graph: "
+                f"{len(graph.get('nodes', []))} nodes, "
+                f"{len(graph.get('edges', []))} edges"
+            )
+        else:
+            # Fallback: build minimal graph from exported units
+            graph_data = self._build_graph_from_units([])
+            self._logger.info("Using fallback graph (no library graph available)")
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, indent=2)
+    
+    def _build_graph_from_units(
+        self,
+        units: list[InstructionalUnit],
+    ) -> dict[str, Any]:
+        """
+        Build minimal concept graph from actual units (fallback method).
+        
+        This is used when the pipeline's dynamic graph is not available.
+        Builds nodes and edges from the units themselves.
+        
+        Args:
+            units: List of instructional units
+            
+        Returns:
+            Dictionary with nodes, edges, and metadata
+        """
+        # Get unique concept IDs from units
+        concept_ids = set(u.concept_id for u in units)
+        
+        # Build nodes from concepts
         nodes = []
-        for concept_id, concept_data in SQL_CONCEPTS.items():
-            node = {
-                "concept_id": concept_id,
-                "title": concept_data.get("title", ""),
-                "category": concept_data.get("category", "unknown"),
-                "difficulty": concept_data.get("difficulty", "beginner"),
-                "is_core_learning_node": concept_data.get("is_core_learning_node", False),
-            }
-            nodes.append(node)
+        for concept_id in concept_ids:
+            concept = self._ontology.get_concept(concept_id)
+            if concept:
+                nodes.append({
+                    "id": concept_id,
+                    "concept_id": concept_id,
+                    "title": concept.get("title", ""),
+                    "difficulty": concept.get("difficulty", "beginner"),
+                    "category": concept.get("category", "unknown"),
+                    "has_content": True,
+                })
         
-        # Use edges from PREREQUISITE_DAG
-        edges = PREREQUISITE_DAG
+        # Build edges from PREREQUISITE_DAG, but only for mapped concepts
+        edges = []
+        for edge in PREREQUISITE_DAG:
+            if edge["from"] in concept_ids and edge["to"] in concept_ids:
+                edges.append(edge)
         
-        output = {
-            "version": "1.0.0",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+        # Calculate omitted concepts
+        all_concept_ids = set(SQL_CONCEPTS.keys())
+        omitted_concepts = list(all_concept_ids - concept_ids)
+        
+        return {
             "nodes": nodes,
             "edges": edges,
             "metadata": {
-                "total_nodes": len(nodes),
-                "total_edges": len(edges),
+                "total_ontology_concepts": len(SQL_CONCEPTS),
+                "mapped_concepts": len(nodes),
+                "omitted_concepts": omitted_concepts,
+                "omitted_count": len(omitted_concepts),
+                "version": "1.0.0",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "is_fallback": True,
             },
         }
-        
-        # Merge with any custom graph data from the library
-        if graph:
-            output["custom_graph"] = graph
-        
-        filepath = output_dir / self.GRAPH_FILE
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=2)
     
     def _write_source_spans_jsonl(
         self,
@@ -616,7 +781,7 @@ class UnitLibraryExporter:
     
     def _write_practice_links(
         self,
-        mapping: list[PracticeLink],
+        mapping: list[ExportPracticeLink],
         output_dir: Path,
     ) -> None:
         """Write concept to practice problem links as JSON."""
