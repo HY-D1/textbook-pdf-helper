@@ -31,9 +31,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-import sqlparse
-from sqlparse.sql import Statement, Token, Comparison, Identifier, IdentifierList
-from sqlparse.tokens import Keyword, DML, DDL
+# Optional import for sqlparse - validation features require [validation] extra
+try:
+    import sqlparse
+    from sqlparse.sql import Statement, Token, Comparison, Identifier, IdentifierList
+    from sqlparse.tokens import Keyword, DML, DDL
+    HAS_SQLPARSE = True
+except ImportError:
+    HAS_SQLPARSE = False
+    sqlparse = None  # type: ignore
+    Statement = Token = Comparison = Identifier = IdentifierList = None  # type: ignore
+    Keyword = DML = DDL = None  # type: ignore
 
 
 # =============================================================================
@@ -528,6 +536,11 @@ class SemanticChecker:
         """
         warnings = []
         sql_upper = sql.upper()
+        
+        # Skip detailed parsing if sqlparse is not available
+        if not HAS_SQLPARSE:
+            return warnings
+        
         sql_parsed = sqlparse.parse(sql)[0] if sqlparse.parse(sql) else None
         
         # Check for GROUP BY
@@ -863,6 +876,15 @@ class SQLValidator:
             Tuple of (is_valid, list of errors)
         """
         errors: list[ValidationError] = []
+        
+        # Check if sqlparse is available
+        if not HAS_SQLPARSE:
+            errors.append(ValidationError(
+                error_type="dependency",
+                message="SQL parsing requires sqlparse which is not installed",
+                suggestion="Install with: pip install 'algl-pdf-helper[validation]'",
+            ))
+            return False, errors
         
         if not sql or not sql.strip():
             errors.append(ValidationError(
