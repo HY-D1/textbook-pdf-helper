@@ -88,6 +88,7 @@ class PipelineStage(Enum):
     
     EXTRACTION = auto()              # PDF text extraction
     SEGMENTATION = auto()            # Content block segmentation
+    CONTENT_FILTERING = auto()       # Filtering teaching content
     CONCEPT_MAPPING = auto()         # Mapping blocks to concepts
     UNIT_GENERATION = auto()         # Generating instructional units
     MISCONCEPTION_GENERATION = auto()  # Creating misconception bank
@@ -137,7 +138,9 @@ class PipelineConfig:
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
     generate_variants: list[str] = field(
-        default_factory=lambda: ["L1", "L2", "L3", "L4", "reinforcement"]
+        default_factory=lambda: [
+            "L1_hint", "L2_hint_plus_example", "L3_explanation", "L4_reflective_note", "reinforcement"
+        ]
     )
     skip_reinforcement: bool = False
     skip_misconceptions: bool = False
@@ -458,7 +461,7 @@ class InstructionalPipeline:
             self._run_stage(PipelineStage.SEGMENTATION, self._segment_content, result)
             
             # Stage 3: Content Filtering
-            self._run_stage(PipelineStage.CONCEPT_MAPPING, self._filter_teaching_content, result)
+            self._run_stage(PipelineStage.CONTENT_FILTERING, self._filter_teaching_content, result)
             
             # Stage 4: Concept Mapping
             self._run_stage(PipelineStage.CONCEPT_MAPPING, self._map_to_concepts, result)
@@ -507,7 +510,8 @@ class InstructionalPipeline:
             result.elapsed_time_seconds = time.time() - start_time
             result.quality_report = self._quality_report
             result.statistics = self._gather_statistics()
-            result.filtered_units = self._filtered_unit_ids
+            result.filtered_units = getattr(self, '_filtered_unit_ids', [])
+            result.fallback_units = getattr(self, '_fallback_unit_ids', [])
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
@@ -627,10 +631,10 @@ class InstructionalPipeline:
     
     def _map_to_concepts(self, blocks: list[ContentBlock] | None = None) -> dict[str, list[ContentBlock]]:
         """
-        Stage 4: Map content blocks to canonical concepts.
+        Stage 4: Map content blocks to canonical concepts with weighted scoring.
         
-        Uses the concept ontology to assign blocks to relevant concepts
-        based on content analysis and keyword matching.
+        Uses heading-aware matching, block-type weighting, and ontology aliases
+        to assign blocks to relevant concepts with higher precision.
         
         Args:
             blocks: Optional blocks to map (uses teaching blocks if None)
@@ -638,7 +642,7 @@ class InstructionalPipeline:
         Returns:
             Dictionary mapping concept_id to list of ContentBlocks
         """
-        self._logger.info("Stage 4: Mapping content to concepts")
+        self._logger.info("Stage 4: Mapping content to concepts with weighted scoring")
         
         if blocks is None:
             blocks = self._teaching_blocks
@@ -646,51 +650,107 @@ class InstructionalPipeline:
         # Initialize ontology
         self._ontology = ConceptOntology()
         
-        # Simple keyword-based mapping
-        self._concept_blocks = {}
+        # Block type weights for scoring
+        BLOCK_WEIGHTS = {
+            BlockType.HEADING: 2.0,
+            BlockType.SUBHEADING: 1.5,
+            BlockType.SQL_CODE: 1.3,
+            BlockType.EXPLANATORY_PROSE: 1.0,
+            BlockType.FIGURE: 0.8,
+            BlockType.SIDEBAR: 0.6,
+            BlockType.ADMIN_TEXT: 0.0,
+            BlockType.UNKNOWN: 0.3,
+        }
+        
+        concept_blocks = {}
         
         for concept_id in self._ontology.list_all_concepts():
             concept = self._ontology.get_concept(concept_id)
             if not concept:
                 continue
             
-            # Get keywords from concept
+            # Get keywords from concept title + aliases
             keywords = self._extract_concept_keywords(concept)
             
-            # Find blocks matching this concept
-            matching_blocks = []
+            scored_blocks = []
             for block in blocks:
+                # Skip admin blocks
+                if block.block_type == BlockType.ADMIN_TEXT:
+                    continue
+                
+                # Base score from keyword overlap
                 block_text = block.text_content.lower()
-                score = sum(1 for kw in keywords if kw in block_text)
-                if score > 0:
-                    matching_blocks.append((block, score))
+                keyword_matches = sum(1 for kw in keywords if kw in block_text)
+                base_score = keyword_matches / max(len(keywords), 1)
+                
+                # Boost for headings containing keywords
+                if block.block_type in (BlockType.HEADING, BlockType.SUBHEADING):
+                    if any(kw in block_text for kw in keywords):
+                        base_score *= 2.0
+                
+                # Boost for SQL code blocks near concept examples
+                if block.block_type == BlockType.SQL_CODE:
+                    concept_id_lower = concept_id.lower()
+                    if concept_id_lower in block_text:
+                        base_score *= 1.5
+                
+                # Apply block type weight
+                weight = BLOCK_WEIGHTS.get(block.block_type, 0.5)
+                final_score = base_score * weight
+                
+                if final_score > 0.3:  # Threshold
+                    scored_blocks.append((block, final_score))
             
-            # Sort by relevance score and take top blocks
-            matching_blocks.sort(key=lambda x: x[1], reverse=True)
-            if matching_blocks:
-                self._concept_blocks[concept_id] = [b for b, _ in matching_blocks[:10]]
+            # Sort by score and take top blocks
+            scored_blocks.sort(key=lambda x: x[1], reverse=True)
+            concept_blocks[concept_id] = [b for b, s in scored_blocks[:15]]
+        
+        # Filter to concepts with actual content
+        self._concept_blocks = {k: v for k, v in concept_blocks.items() if v}
         
         self._logger.info(f"Mapped content to {len(self._concept_blocks)} concepts")
         return self._concept_blocks
     
-    def _extract_concept_keywords(self, concept: dict) -> list[str]:
-        """Extract search keywords from a concept definition."""
-        keywords = []
+    def _extract_concept_keywords(self, concept: dict) -> set[str]:
+        """Extract keywords from concept definition including ontology aliases."""
+        keywords = set()
         
-        # Add title words
+        # Title words
         title = concept.get("title", "").lower()
-        keywords.extend(title.split())
+        keywords.update(w for w in title.split() if len(w) > 2)
+        
+        # Aliases/synonyms from ontology
+        aliases = concept.get("aliases", [])
+        for alias in aliases:
+            keywords.update(w for w in alias.lower().split() if len(w) > 2)
         
         # Add concept id parts
         concept_id = concept.get("id", "").lower()
-        keywords.extend(concept_id.replace("-", " ").split())
+        keywords.update(w for w in concept_id.replace("-", " ").split() if len(w) > 2)
         
-        # Add learning objectives keywords
+        # Key SQL terms based on concept type
+        concept_id_lower = concept.get("id", "").lower()
+        if "select" in concept_id_lower:
+            keywords.update(["select", "column", "retrieve", "query"])
+        if "join" in concept_id_lower:
+            keywords.update(["join", "inner", "outer", "left", "right", "on"])
+        if "group" in concept_id_lower:
+            keywords.update(["group by", "aggregate", "count", "sum", "avg"])
+        if "where" in concept_id_lower:
+            keywords.update(["where", "filter", "condition"])
+        if "order" in concept_id_lower:
+            keywords.update(["order by", "sort", "asc", "desc"])
+        if "subquery" in concept_id_lower:
+            keywords.update(["subquery", "nested", "inner query"])
+        if "aggregate" in concept_id_lower:
+            keywords.update(["count", "sum", "avg", "min", "max"])
+        if "null" in concept_id_lower:
+            keywords.update(["null", "is null", "is not null"])
+        
+        # Learning objectives keywords
         for objective in concept.get("learning_objectives", []):
-            keywords.extend(objective.lower().split()[:5])
-        
-        # Deduplicate and filter
-        keywords = list(set(kw for kw in keywords if len(kw) > 2))
+            words = objective.lower().split()
+            keywords.update(w for w in words[:5] if len(w) > 2)
         
         return keywords
     
@@ -718,6 +778,7 @@ class InstructionalPipeline:
         )
         
         self._instructional_units = []
+        self._fallback_unit_ids = []
         
         for concept_id, blocks in concept_blocks.items():
             if not blocks:
@@ -741,12 +802,24 @@ class InstructionalPipeline:
                 for variant_name, unit in variants.items():
                     if variant_name in self.config.generate_variants:
                         self._instructional_units.append(unit)
+                        
+                        # Track fallback units
+                        if unit.content.get("_metadata", {}).get("is_fallback"):
+                            self._fallback_unit_ids.append(unit.unit_id)
                 
             except Exception as e:
                 self._logger.warning(f"Failed to generate units for {concept_id}: {e}")
                 continue
         
         self._logger.info(f"Generated {len(self._instructional_units)} instructional units")
+        
+        # Fail strict mode if fallback units exist
+        if self.config.filter_level == "strict" and self._fallback_unit_ids:
+            raise RuntimeError(
+                f"Strict mode: {len(self._fallback_unit_ids)} fallback units created. "
+                f"Unit IDs: {self._fallback_unit_ids[:5]}..."
+            )
+        
         return self._instructional_units
     
     def _generate_misconceptions(
@@ -1102,20 +1175,13 @@ class InstructionalPipeline:
         else:
             self._logger.info("All units passed export filters")
         
-        # Build concept graph from ontology
-        concept_graph = {
-            "nodes": [],
-            "edges": [],
-        }
-        if self._ontology:
-            for concept_id in self._ontology.list_all_concepts():
-                concept = self._ontology.get_concept(concept_id)
-                if concept:
-                    concept_graph["nodes"].append({
-                        "concept_id": concept_id,
-                        "title": concept.get("title", ""),
-                        "difficulty": concept.get("difficulty", "beginner"),
-                    })
+        # Build concept graph from actually mapped concepts
+        concept_graph = self._build_concept_graph(filtered_library)
+        
+        # Calculate generation statistics
+        generated_count = len(units)
+        filtered_out_count = len(filter_result.filtered_units)
+        exported_count = len(filtered_library.instructional_units)
         
         # Update the filtered library with remaining metadata
         filtered_library.concept_ontology = {"version": "1.0.0"}
@@ -1126,10 +1192,19 @@ class InstructionalPipeline:
         filtered_library.export_manifest.update({
             "filter_level": self.config.filter_level,
             "doc_id": self.config.doc_id,
-            "original_unit_count": len(units),
-            "filtered_unit_count": len(filter_result.filtered_units),
-            "exportable_unit_count": len(filtered_library.instructional_units),
+            "original_unit_count": generated_count,
+            "filtered_unit_count": filtered_out_count,
+            "exportable_unit_count": exported_count,
         })
+        
+        # Store generation stats for exporter manifest
+        filtered_library.export_manifest["generation_stats"] = {
+            "generated_units": generated_count,
+            "filtered_out": filtered_out_count,
+            "exported_units": exported_count,
+            "fallback_units": len(getattr(self, '_fallback_unit_ids', [])),
+            "filter_level": self.config.filter_level,
+        }
         
         self._logger.info(
             f"Created export with {len(filtered_library.instructional_units)} units "
@@ -1175,6 +1250,81 @@ class InstructionalPipeline:
         self._logger.info(f"Exported to: {output_path}")
         return output_path
     
+    def _build_concept_graph(self, library: UnitLibraryExport) -> dict:
+        """Build concept graph from actually mapped concepts.
+        
+        Instead of including all concepts from the ontology, this builds
+        the graph only from concepts that were actually mapped from the PDF
+        and exported in the final library.
+        
+        Args:
+            library: The filtered unit library export
+            
+        Returns:
+            Dict with nodes, edges, and metadata about included concepts
+        """
+        # Get concepts that were actually mapped from PDF content
+        mapped_concept_ids = set(self._concept_blocks.keys())
+        
+        # Get concepts from exported units
+        exported_concept_ids = set(
+            unit.concept_id 
+            for unit in library.instructional_units
+        ) if library.instructional_units else set()
+        
+        # Use intersection: concepts that are both mapped AND have units
+        relevant_concepts = mapped_concept_ids & exported_concept_ids
+        
+        # Build nodes only for relevant concepts
+        nodes = []
+        for concept_id in relevant_concepts:
+            concept = self._ontology.get_concept(concept_id) if self._ontology else None
+            if concept:
+                evidence_count = len(self._concept_blocks.get(concept_id, []))
+                nodes.append({
+                    "id": concept_id,
+                    "concept_id": concept_id,
+                    "title": concept.get("title", concept_id),
+                    "difficulty": concept.get("difficulty", "beginner"),
+                    "category": concept.get("category", "unknown"),
+                    "evidence_span_count": evidence_count,
+                    "has_content": evidence_count > 0,
+                })
+        
+        # Build edges only where BOTH concepts are relevant
+        edges = []
+        if self._ontology:
+            all_edges = self._ontology._prereqs
+            for edge in all_edges:
+                if edge["from"] in relevant_concepts and edge["to"] in relevant_concepts:
+                    edges.append(edge)
+        
+        # Add error association edges from units
+        for unit in library.instructional_units:
+            for error_subtype in unit.error_subtypes:
+                edges.append({
+                    "from": unit.concept_id,
+                    "to": f"error:{error_subtype}",
+                    "type": "error_association",
+                })
+        
+        # Metadata about what's included vs omitted
+        all_ontology = set(self._ontology.list_all_concepts()) if self._ontology else set()
+        omitted = all_ontology - relevant_concepts
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "total_ontology_concepts": len(all_ontology),
+                "mapped_concepts": len(mapped_concept_ids),
+                "exported_concepts": len(relevant_concepts),
+                "omitted_concepts": sorted(omitted),
+                "omitted_count": len(omitted),
+                "edge_count": len(edges),
+            }
+        }
+    
     def _gather_statistics(self) -> dict[str, Any]:
         """Gather processing statistics from all stages."""
         return {
@@ -1184,7 +1334,8 @@ class InstructionalPipeline:
             "instructional_units": len(self._instructional_units),
             "misconception_units": len(self._misconception_units),
             "reinforcement_items": len(self._reinforcement_items),
-            "filtered_units": len(self._filtered_unit_ids),
+            "filtered_units": len(getattr(self, '_filtered_unit_ids', [])),
+            "fallback_units": len(getattr(self, '_fallback_unit_ids', [])),
             "stage_timings": self.progress.get_stage_durations(),
         }
 

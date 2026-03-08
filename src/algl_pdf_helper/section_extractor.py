@@ -928,7 +928,7 @@ class SectionExtractor:
                 heading_level = block.get_heading_level() or 2
                 
                 # Pop higher or equal level headings
-                while heading_stack and heading_stack[-1].get_heading_level() or 2 >= heading_level:
+                while heading_stack and ((heading_stack[-1].get_heading_level() or 2) >= heading_level):
                     heading_stack.pop()
                 
                 # Set parent if there's a heading in the stack

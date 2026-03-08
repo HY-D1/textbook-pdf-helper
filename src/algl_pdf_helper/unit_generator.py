@@ -58,7 +58,8 @@ from .pedagogical_generator import (
     TEXTBOOK_TO_PRACTICE_MAPPING,
     FOREIGN_KEY_MAPPINGS,
 )
-from .pedagogical_models import SQLExample, Mistake
+from .pedagogical_models import Mistake
+from .generation_pipeline import MultiPassGenerator
 
 
 # =============================================================================
@@ -905,22 +906,33 @@ class UnitGenerator:
         return evidence_spans
     
     def _call_llm(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
-        """
-        Call LLM with prompt and return parsed JSON.
-        
-        This is a placeholder that should be replaced with actual LLM integration.
-        For now, it returns mock data for testing.
-        
-        Args:
-            prompt: The prompt to send
-            config: Generation configuration
+        """Call LLM with prompt and return structured response."""
+        try:
+            # Use MultiPassGenerator for Ollama provider
+            if config.llm_provider == 'ollama':
+                generator = MultiPassGenerator(
+                    model=config.model_name,
+                    temperature=config.temperature,
+                    timeout=config.timeout_seconds,
+                )
+                
+                # Generate with retry
+                response = generator._ollama_chat([
+                    {"role": "user", "content": prompt}
+                ])
+                
+                # Parse JSON response
+                if response:
+                    return self._parse_json_response(response)
+                return {}
             
-        Returns:
-            Parsed JSON response as dictionary
-        """
-        # TODO: Implement actual LLM call based on config.llm_provider
-        # For now, return empty dict to trigger fallback content generation
-        return {}
+            # For other providers, return empty to trigger fallback
+            # TODO: Implement kimi, openai providers
+            return {}
+            
+        except Exception as e:
+            self.logger.warning(f"LLM call failed: {e}")
+            return {}
     
     def _parse_json_response(self, response: str) -> dict[str, Any]:
         """Parse JSON from LLM response, handling markdown code blocks."""
@@ -1343,7 +1355,7 @@ class UnitGenerator:
         }
         canonical_unit_type = unit_type_map.get(unit_type, "hint")
         
-        return InstructionalUnit(
+        unit = InstructionalUnit(
             unit_id=f"{concept_id}_{target_stage}_{unit_type}_fallback",
             concept_id=concept_id,
             unit_type=canonical_unit_type,
@@ -1351,6 +1363,10 @@ class UnitGenerator:
             content={
                 "error": error_message,
                 "note": "This is a fallback unit due to generation failure. Please retry.",
+                "_metadata": {
+                    "is_fallback": True,
+                    "fallback_reason": error_message,
+                },
             },
             prerequisites=[],
             difficulty="beginner",
@@ -1359,6 +1375,7 @@ class UnitGenerator:
             grounding_confidence=0.0,
             estimated_read_time=30,
         )
+        return unit
     
     # =============================================================================
     # DEFAULT CONTENT HELPERS

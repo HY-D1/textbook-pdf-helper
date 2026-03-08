@@ -297,7 +297,7 @@ class SourceSpan(BaseModel):
         ...,
         min_length=1,
         max_length=100,
-        pattern=r"^[a-zA-Z0-9_-]+$",
+        pattern=r"^[a-zA-Z0-9_:-]+$",
         description="Unique identifier for this source span",
     )
     doc_id: str = Field(
