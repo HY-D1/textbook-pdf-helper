@@ -847,11 +847,21 @@ class UnitLibraryExporter:
             "total_reinforcement": len(library.reinforcement_bank),
         }
         
-        # Build filter results
+        # Get generation stats from metadata if available
+        stats = library.export_manifest.get("generation_stats", {})
+        generated_units = stats.get("generated_units", len(library.instructional_units))
+        filtered_out = stats.get("filtered_out", 0)
+        exported_units = stats.get("exported_units", len(library.instructional_units))
+        fallback_units = stats.get("fallback_units", 0)
+        filter_level = stats.get("filter_level", config.filter_level.value)
+        pass_rate = exported_units / max(generated_units, 1)
+        
+        # Build filter results with real counts
         filter_results = {
-            "filter_level": config.filter_level.value,
-            "original_units": len(library.instructional_units),
-            "filtered_units": len(library.instructional_units),  # Already filtered
+            "filter_level": filter_level,
+            "original_units": generated_units,
+            "filtered_units": filtered_out,
+            "pass_rate": pass_rate,
         }
         
         # Build provenance
@@ -872,6 +882,10 @@ class UnitLibraryExporter:
             "source_pdf_id": library.source_pdf_id or config.source_pdf_id,
             "statistics": {
                 "total_units": len(library.instructional_units),
+                "generated_units": generated_units,
+                "filtered_out": filtered_out,
+                "exported_units": exported_units,
+                "fallback_units": fallback_units,
                 "concepts_covered": len(units_per_concept),
                 "units_per_concept": dict(units_per_concept),
                 "quality_pass_rate": pass_rate,

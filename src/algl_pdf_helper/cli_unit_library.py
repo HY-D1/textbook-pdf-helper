@@ -163,7 +163,7 @@ def get_filter_rules(level: str) -> list:
 # PROCESS COMMAND
 # =============================================================================
 
-@app.command()
+@app.command(name="process")
 def process_command(
     pdf_path: Path = typer.Argument(
         ...,
@@ -292,6 +292,7 @@ def process_command(
         stage_names = {
             PipelineStage.EXTRACTION: "📄 Document Extraction",
             PipelineStage.SEGMENTATION: "🔍 Content Segmentation",
+            PipelineStage.CONTENT_FILTERING: "🧹 Content Filtering",
             PipelineStage.CONCEPT_MAPPING: "🗺️  Concept Mapping",
             PipelineStage.UNIT_GENERATION: "📦 Unit Generation",
             PipelineStage.MISCONCEPTION_GENERATION: "⚠️  Misconception Bank",
@@ -332,11 +333,27 @@ def process_command(
     concepts_mapped = stats.get("concepts_mapped", 0)
     teaching_blocks = stats.get("teaching_blocks", 0)
     
-    stats_table.add_row("Total Units", str(total_units))
+    # Show pre/post filter counts if available
+    generated_units = stats.get("generated_units", total_units)
+    filtered_out = stats.get("filtered_out", 0)
+    fallback_units = stats.get("fallback_units", 0)
+    
+    if generated_units != total_units or filtered_out > 0:
+        stats_table.add_row("Generated Units", str(generated_units))
+        if filtered_out > 0:
+            stats_table.add_row("Filtered Out", f"[red]{filtered_out}[/red]")
+        stats_table.add_row("Exported Units", f"[green]{total_units}[/green]")
+    else:
+        stats_table.add_row("Total Units", str(total_units))
+    
     stats_table.add_row("Misconception Units", str(misconception_units))
     stats_table.add_row("Reinforcement Items", str(reinforcement_items))
     stats_table.add_row("Concepts Covered", str(concepts_mapped))
     stats_table.add_row("Teaching Blocks", str(teaching_blocks))
+    
+    # Show fallback units if any
+    if fallback_units > 0:
+        stats_table.add_row("Fallback Units", f"[yellow]{fallback_units}[/yellow]")
     
     # Add quality report info if available
     if quality_report and "summary" in quality_report:
@@ -378,6 +395,28 @@ def process_command(
                 console.print(f"  [green]✓[/green] {filename} ({size:,} bytes)")
             else:
                 console.print(f"  [yellow]○[/yellow] {filename} (not found)")
+        
+        # After export, reload and verify
+        try:
+            exported_library = load_unit_library(Path(output_dir))
+            actual_unit_count = len(exported_library.instructional_units)
+            
+            if actual_unit_count == 0:
+                console.print()
+                console.print("[red bold]ERROR: Export succeeded but 0 instructional units were created![/red bold]")
+                console.print("[dim]Possible causes:[/dim]")
+                console.print("  - All units were filtered out (check filter level)")
+                console.print("  - All units were fallback units (strict mode)")
+                console.print("  - No concepts were mapped from the PDF")
+                raise typer.Exit(1)
+            
+            console.print()
+            console.print(f"[green bold]✓ Successfully exported {actual_unit_count} instructional units[/green bold]")
+            
+        except typer.Exit:
+            raise
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not verify exported library: {e}[/yellow]")
 
 
 def _extract_page_count(pdf_path: Path) -> int:
@@ -433,7 +472,7 @@ def _create_manifest(
 # VALIDATE COMMAND
 # =============================================================================
 
-@app.command()
+@app.command(name="validate")
 def validate_command(
     library_dir: Path = typer.Argument(
         ...,
@@ -475,6 +514,11 @@ def validate_command(
         
         # Load full library
         library = load_unit_library(library_dir)
+        
+        # Check if library has units
+        if not library.instructional_units:
+            console.print("[red bold]ERROR: Library contains 0 instructional units![/red bold]")
+            raise typer.Exit(1)
         
         # Display summary
         stats = manifest.get("statistics", {})
@@ -646,7 +690,7 @@ def validate_command(
 # INSPECT COMMAND
 # =============================================================================
 
-@app.command()
+@app.command(name="inspect")
 def inspect_command(
     library_dir: Path = typer.Argument(
         ...,
@@ -818,7 +862,7 @@ def inspect_command(
 # FILTER COMMAND
 # =============================================================================
 
-@app.command()
+@app.command(name="filter")
 def filter_command(
     library_dir: Path = typer.Argument(
         ...,

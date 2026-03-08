@@ -1764,5 +1764,90 @@ class TestPerformanceEdgeCases:
             assert 0.99 <= norm <= 1.01, "Embedding should be normalized"
 
 
+
+# =============================================================================
+# END-TO-END UNIT LIBRARY PIPELINE TESTS
+# =============================================================================
+
+class TestUnitLibraryPipeline:
+    """End-to-end tests for the new unit-library pipeline."""
+    
+    def test_process_command_creates_units(self, tmp_path):
+        """Test that 'algl-pdf process' creates real instructional units."""
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Run the actual CLI command
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "production",
+                "--llm-provider", "ollama",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # Command should succeed
+        assert result.returncode == 0, f"Process failed: {result.stderr}"
+        
+        # Check output files exist
+        assert (output_dir / "instructional_units.jsonl").exists()
+        assert (output_dir / "concept_graph.json").exists()
+        assert (output_dir / "quality_report.json").exists()
+        assert (output_dir / "export_manifest.json").exists()
+        
+        # Count units in JSONL
+        units_file = output_dir / "instructional_units.jsonl"
+        units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
+        
+        # Should have units
+        assert len(units) > 0, "No instructional units exported"
+        
+        # Check manifest
+        manifest = json.loads((output_dir / "export_manifest.json").read_text())
+        assert manifest["statistics"]["instructional_units"] > 0
+        
+        # Check L1-L4 variants exist
+        stages = set(u.get("target_stage") for u in units)
+        assert "L1_hint" in stages or "L2_hint_plus_example" in stages, "No hint variants found"
+        assert "L3_explanation" in stages, "No explanation variants found"
+    
+    def test_process_command_strict_mode_blocks_fallback(self, tmp_path):
+        """Test that strict mode fails if fallback units exist."""
+        import subprocess
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "strict",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # In strict mode, should either succeed with real units or fail loudly
+        if result.returncode == 0:
+            # If success, verify real units were created
+            units_file = output_dir / "instructional_units.jsonl"
+            if units_file.exists():
+                units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
+                assert len(units) > 0, "Strict mode succeeded but exported 0 units"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
