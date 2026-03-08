@@ -19,6 +19,210 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+
+# =============================================================================
+# Canonical Content Schemas
+# =============================================================================
+
+
+class SQLExample(BaseModel):
+    """
+    Canonical schema for SQL examples.
+    
+    Used consistently across the instructional unit pipeline to ensure
+    field name compatibility between generators and exporters.
+    """
+    
+    title: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=200,
+        description="Descriptive title of the example"
+    )
+    scenario: str = Field(
+        ..., 
+        min_length=10, 
+        max_length=500,
+        description="Real-world context/description of the scenario"
+    )
+    sql: str = Field(
+        ..., 
+        min_length=5, 
+        max_length=2000,
+        description="The SQL query (canonical field name)"
+    )
+    explanation: str = Field(
+        ..., 
+        min_length=20, 
+        max_length=1000,
+        description="Detailed explanation of how the SQL works"
+    )
+    expected_output: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Description of expected query output"
+    )
+    difficulty: str = Field(
+        default="beginner",
+        description="Difficulty level: beginner, intermediate, advanced"
+    )
+    schema_used: str = Field(
+        default="practice",
+        max_length=100,
+        description="Name of the schema used (e.g., 'practice', 'users')"
+    )
+    is_validated: bool = Field(
+        default=False,
+        description="Whether this example has been validated"
+    )
+    
+    @field_validator("sql")
+    @classmethod
+    def validate_sql_ends_with_semicolon(cls, v: str) -> str:
+        """Ensure SQL query ends with a semicolon."""
+        v = v.strip()
+        if v and not v.endswith(";"):
+            v += ";"
+        return v
+
+
+class PracticeLink(BaseModel):
+    """
+    Canonical schema for practice problem links.
+    
+    Maps concepts to related practice problems with difficulty tracking.
+    """
+    
+    concept_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="The concept this link belongs to"
+    )
+    problem_ids: list[str] = Field(
+        default_factory=list,
+        description="List of practice problem IDs"
+    )
+    difficulty_range: tuple[str, str] | None = Field(
+        default=None,
+        description="(min_difficulty, max_difficulty) tuple"
+    )
+    
+    def add_problem(self, problem_id: str) -> None:
+        """Add a problem ID if not already present."""
+        if problem_id not in self.problem_ids:
+            self.problem_ids.append(problem_id)
+
+
+class MisconceptionExample(BaseModel):
+    """
+    Canonical schema for misconception examples.
+    
+    Documents common mistakes students make with explanations and fixes.
+    """
+    
+    title: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Descriptive name of the error"
+    )
+    error_sql: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="The incorrect SQL that demonstrates the mistake"
+    )
+    error_message: str = Field(
+        ...,
+        min_length=5,
+        max_length=500,
+        description="Realistic error message the student would see"
+    )
+    why_it_happens: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description="Conceptual explanation of why students make this error"
+    )
+    fix_sql: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="The corrected SQL that fixes the mistake"
+    )
+    key_takeaway: str = Field(
+        ...,
+        min_length=5,
+        max_length=300,
+        description="One-sentence reminder to avoid this mistake"
+    )
+
+# =============================================================================
+# L3 Content Model (using canonical schemas)
+# =============================================================================
+
+
+class L3Content(BaseModel):
+    """
+    Content for L3 full explanation stage - comprehensive.
+    
+    Uses canonical schema types to ensure consistency between
+    generator and exporter field names.
+    """
+    
+    definition: str = Field(
+        ...,
+        max_length=1000,
+        description="What this concept is"
+    )
+    why_it_matters: str = Field(
+        ...,
+        max_length=500,
+        description="Real-world relevance"
+    )
+    examples: list[SQLExample] = Field(
+        ...,
+        min_length=1,
+        max_length=5,
+        description="SQL examples using canonical schema"
+    )
+    contrast_example: SQLExample | None = Field(
+        default=None,
+        description="What NOT to do example (as SQLExample)"
+    )
+    common_mistakes: list[MisconceptionExample] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Mistakes with fixes using canonical schema"
+    )
+    practice_links: list[PracticeLink] = Field(
+        default_factory=list,
+        description="Links to practice problems using canonical schema"
+    )
+    
+    def get_example_by_difficulty(self, difficulty: str) -> SQLExample | None:
+        """Get first example matching the specified difficulty."""
+        for ex in self.examples:
+            if ex.difficulty == difficulty:
+                return ex
+        return None
+    
+    def add_practice_link(self, concept_id: str, problem_id: str) -> None:
+        """Add a practice problem link for a concept."""
+        for link in self.practice_links:
+            if link.concept_id == concept_id:
+                link.add_problem(problem_id)
+                return
+        # Create new link if not found
+        self.practice_links.append(
+            PracticeLink(
+                concept_id=concept_id,
+                problem_ids=[problem_id]
+            )
+        )
+
+
 # =============================================================================
 # Version Constants
 # =============================================================================

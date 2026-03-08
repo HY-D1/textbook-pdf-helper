@@ -37,86 +37,33 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
+from .instructional_models import (
+    InstructionalUnit,
+    MisconceptionExample,
+    PracticeLink,
+    SourceSpan,
+    SQLExample,
+    TargetStage,
+    UnitType,
+)
+from .section_extractor import ContentBlock
 from .pedagogical_generator import (
     PRACTICE_SCHEMAS,
     TEXTBOOK_TO_PRACTICE_MAPPING,
     FOREIGN_KEY_MAPPINGS,
 )
 from .pedagogical_models import SQLExample, Mistake
-from .provenance import BlockRef, ProvenanceRecord
 
 
 # =============================================================================
-# DATA MODELS
+# CONTENT MODELS (Unit-type specific content structures)
 # =============================================================================
-
-class ContentBlock(BaseModel):
-    """A block of content extracted from the source PDF."""
-    block_id: str = Field(..., description="Unique identifier for this block")
-    text: str = Field(..., description="Text content of the block")
-    block_type: str = Field(default="paragraph", description="Type: paragraph, code, heading, etc.")
-    page: int = Field(default=0, description="Page number where block appears")
-    chunk_id: str | None = Field(default=None, description="Optional parent chunk ID")
-
-
-class SourceSpan(BaseModel):
-    """Reference to a source span within the instructional unit."""
-    block_id: str = Field(..., description="Source block identifier")
-    page: int = Field(..., description="Page number")
-    excerpt: str = Field(default="", description="Brief excerpt from source")
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score")
-
-
-class InstructionalUnit(BaseModel):
-    """
-    A single instructional unit at a specific adaptive stage.
-    
-    This is the core output of the unit generator, representing one variant
-    of educational content tailored to a specific learner level.
-    """
-    # Identification
-    unit_id: str = Field(..., description="Unique identifier for this unit")
-    concept_id: str = Field(..., description="Canonical concept ID this unit teaches")
-    stage: Literal["L1", "L2", "L3", "L4", "reinforcement"] = Field(
-        ..., description="Adaptive stage level"
-    )
-    unit_type: str = Field(..., description="Specific type within stage")
-    
-    # Content
-    title: str = Field(..., min_length=3, max_length=200, description="Human-readable title")
-    content: dict[str, Any] = Field(..., description="Structured content based on stage")
-    estimated_time_seconds: int = Field(..., ge=5, le=600, description="Time to consume")
-    
-    # Provenance
-    source_spans: list[SourceSpan] = Field(
-        default_factory=list, description="References to source material"
-    )
-    prerequisites: list[str] = Field(
-        default_factory=list, description="Prerequisite concept IDs"
-    )
-    
-    # Metadata
-    difficulty: Literal["beginner", "intermediate", "advanced"] = Field(
-        default="beginner", description="Difficulty level"
-    )
-    target_schema: str = Field(default="practice", description="Schema used for examples")
-    generation_config: dict[str, Any] = Field(
-        default_factory=dict, description="Config used for generation"
-    )
-    
-    @field_validator("content")
-    @classmethod
-    def validate_content_not_empty(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Ensure content is not empty."""
-        if not v:
-            raise ValueError("Content cannot be empty")
-        return v
-
 
 class L1Content(BaseModel):
     """Content for L1 hint stage - minimal reminder."""
@@ -134,18 +81,24 @@ class L2Content(BaseModel):
 
 
 class L3Content(BaseModel):
-    """Content for L3 full explanation stage - comprehensive."""
+    """Content for L3 full explanation stage - comprehensive.
+    
+    Uses canonical schema types to ensure consistency between
+    generator and exporter field names.
+    """
     definition: str = Field(..., max_length=1000, description="What this concept is")
     why_it_matters: str = Field(..., max_length=500, description="Real-world relevance")
-    examples: list[dict[str, str]] = Field(..., min_length=1, max_length=5, description="SQL examples")
-    contrast_example: dict[str, str] | None = Field(
-        default=None, description="What NOT to do example"
+    examples: list[SQLExample] = Field(
+        ..., min_length=1, max_length=5, description="SQL examples using canonical schema"
     )
-    common_mistakes: list[dict[str, str]] = Field(
-        default_factory=list, max_length=5, description="Mistakes with fixes"
+    contrast_example: SQLExample | None = Field(
+        default=None, description="What NOT to do example (as SQLExample)"
     )
-    practice_links: list[str] = Field(
-        default_factory=list, description="Links to practice problems"
+    common_mistakes: list[MisconceptionExample] = Field(
+        default_factory=list, max_length=5, description="Mistakes with fixes using canonical schema"
+    )
+    practice_links: list[PracticeLink] = Field(
+        default_factory=list, description="Links to practice problems using canonical schema"
     )
 
 
@@ -193,7 +146,7 @@ class GenerationConfig:
         base_url: Optional API base URL override
         timeout_seconds: Request timeout
     """
-    llm_provider: Literal["kimi", "openai", "ollama"] = "kimi"
+    llm_provider: str = "kimi"
     model_name: str = "kimi-k2-5"
     temperature: float = 0.7
     max_tokens: int = 2000
@@ -210,6 +163,99 @@ class GenerationConfig:
             raise ValueError("Temperature must be between 0.0 and 1.0")
         if self.max_tokens < 100:
             raise ValueError("Max tokens must be at least 100")
+
+
+# =============================================================================
+# ADAPTER FUNCTION
+# =============================================================================
+
+def convert_unit_to_canonical(unit_data: dict) -> InstructionalUnit:
+    """
+    Convert legacy unit format to canonical InstructionalUnit.
+    
+    This function maps old field names to new field names for backward compatibility.
+    
+    Args:
+        unit_data: Dictionary containing legacy unit data with old field names
+        
+    Returns:
+        InstructionalUnit with canonical field names
+        
+    Field Mappings:
+        - stage -> target_stage
+        - source_spans -> evidence_spans
+        - block.text -> text_content
+        - block.page -> page_number
+        - span.block_id -> span_id
+        - span.page -> page_number
+        - span.excerpt -> text_content
+        - span.confidence -> extraction_confidence
+    """
+    # Map stage values to TargetStage values
+    stage_to_target = {
+        "L1": "L1_hint",
+        "L2": "L2_hint_plus_example",
+        "L3": "L3_explanation",
+        "L4": "L4_reflective_note",
+        "reinforcement": "reinforcement",
+    }
+    
+    # Get the target stage
+    old_stage = unit_data.get("stage", "L1")
+    target_stage = stage_to_target.get(old_stage, "L1_hint")
+    
+    # Map unit_type to UnitType
+    unit_type_map = {
+        "hint": "hint",
+        "hint_plus_example": "hint",
+        "explanation": "explanation",
+        "reflective_note": "reflection",
+        "microcheck": "practice",
+    }
+    unit_type = unit_type_map.get(unit_data.get("unit_type", "hint"), "hint")
+    
+    # Convert source_spans to evidence_spans
+    evidence_spans = []
+    for span_data in unit_data.get("source_spans", []):
+        span_id = span_data.get("block_id", str(uuid.uuid4())[:8])
+        page_number = span_data.get("page", 1)
+        text_content = span_data.get("excerpt", "")
+        confidence = span_data.get("confidence", 1.0)
+        
+        evidence_spans.append(
+            SourceSpan(
+                span_id=span_id,
+                doc_id=unit_data.get("doc_id", "unknown"),
+                page_number=page_number,
+                char_start=0,
+                char_end=len(text_content),
+                block_type="prose",
+                text_content=text_content,
+                extraction_confidence=confidence,
+            )
+        )
+    
+    # Calculate grounding confidence
+    grounding_confidence = 0.8 if evidence_spans else 0.0
+    
+    # Get source pages from evidence spans
+    source_pages = list(set(span.page_number for span in evidence_spans))
+    
+    return InstructionalUnit(
+        unit_id=unit_data.get("unit_id", str(uuid.uuid4())),
+        concept_id=unit_data.get("concept_id", "unknown"),
+        unit_type=unit_type,
+        target_stage=target_stage,
+        content=unit_data.get("content", {}),
+        error_subtypes=unit_data.get("error_subtypes", []),
+        prerequisites=unit_data.get("prerequisites", []),
+        difficulty=unit_data.get("difficulty", "beginner"),
+        evidence_spans=evidence_spans,
+        source_pages=source_pages,
+        grounding_confidence=grounding_confidence,
+        estimated_read_time=unit_data.get("estimated_time_seconds", 60),
+        blocked_if_prereq_missing=unit_data.get("blocked_if_prereq_missing", True),
+    )
 
 
 # =============================================================================
@@ -236,7 +282,7 @@ class PromptBuilder:
     
     def _format_source_text(self, blocks: list[ContentBlock], max_chars: int = 2000) -> str:
         """Format source blocks for prompt inclusion."""
-        combined = "\n\n".join(b.text for b in blocks if b.text)
+        combined = "\n\n".join(b.text_content for b in blocks if b.text_content)
         if len(combined) > max_chars:
             combined = combined[:max_chars] + "..."
         return combined
@@ -787,7 +833,7 @@ class UnitGenerator:
             )
         except Exception as e:
             variants["L1_hint"] = self._create_fallback_unit(
-                concept_id, "L1", "hint", config, str(e)
+                concept_id, "L1_hint", "hint", config, str(e)
             )
         
         try:
@@ -796,7 +842,7 @@ class UnitGenerator:
             )
         except Exception as e:
             variants["L2_hint_plus_example"] = self._create_fallback_unit(
-                concept_id, "L2", "hint_plus_example", config, str(e)
+                concept_id, "L2_hint_plus_example", "hint", config, str(e)
             )
         
         try:
@@ -805,7 +851,7 @@ class UnitGenerator:
             )
         except Exception as e:
             variants["L3_explanation"] = self._create_fallback_unit(
-                concept_id, "L3", "explanation", config, str(e)
+                concept_id, "L3_explanation", "explanation", config, str(e)
             )
         
         try:
@@ -814,7 +860,7 @@ class UnitGenerator:
             )
         except Exception as e:
             variants["L4_reflective_note"] = self._create_fallback_unit(
-                concept_id, "L4", "reflective_note", config, str(e)
+                concept_id, "L4_reflective_note", "reflection", config, str(e)
             )
         
         try:
@@ -823,21 +869,40 @@ class UnitGenerator:
             )
         except Exception as e:
             variants["reinforcement"] = self._create_fallback_unit(
-                concept_id, "reinforcement", "microcheck", config, str(e)
+                concept_id, "reinforcement", "practice", config, str(e)
             )
         
         return variants
     
-    def _create_source_spans(self, blocks: list[ContentBlock]) -> list[SourceSpan]:
-        """Create source span references from content blocks."""
-        return [
-            SourceSpan(
-                block_id=b.block_id,
-                page=b.page,
-                excerpt=b.text[:100] + "..." if len(b.text) > 100 else b.text,
+    def _create_evidence_spans(self, blocks: list[ContentBlock], doc_id: str = "unknown") -> list[SourceSpan]:
+        """Create evidence span references from content blocks."""
+        evidence_spans = []
+        for b in blocks:
+            text_content = b.text_content
+            excerpt = text_content[:100] + "..." if len(text_content) > 100 else text_content
+            
+            # Map BlockType to string representation
+            block_type_str = "prose"
+            if hasattr(b, 'block_type'):
+                if isinstance(b.block_type, str):
+                    block_type_str = b.block_type.lower()
+                else:
+                    # It's an enum
+                    block_type_str = b.block_type.name.lower()
+            
+            evidence_spans.append(
+                SourceSpan(
+                    span_id=b.block_id,
+                    doc_id=doc_id,
+                    page_number=b.page_number,
+                    char_start=getattr(b, 'char_start', 0),
+                    char_end=getattr(b, 'char_end', len(text_content)),
+                    block_type=block_type_str,
+                    text_content=excerpt,
+                    extraction_confidence=getattr(b, 'confidence', 1.0),
+                )
             )
-            for b in blocks
-        ]
+        return evidence_spans
     
     def _call_llm(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
         """
@@ -893,7 +958,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L1 stage
         """
-        source_text = "\n\n".join(b.text for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks)
         prompt = self.prompt_builder.build_L1_prompt(concept_id, source_text)
         
         # Try LLM generation
@@ -913,18 +978,21 @@ class UnitGenerator:
                 when_to_use=self._get_default_when_to_use(concept_id),
             )
         
+        # Get source pages from blocks
+        source_pages = list(set(b.page_number for b in blocks))
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L1_hint",
             concept_id=concept_id,
-            stage="L1",
             unit_type="hint",
-            title=f"Quick Hint: {concept_id}",
+            target_stage="L1_hint",
             content=content.model_dump(),
-            estimated_time_seconds=15,
-            source_spans=self._create_source_spans(blocks),
             prerequisites=prerequisites or [],
             difficulty="beginner",
-            generation_config=config.__dict__,
+            evidence_spans=self._create_evidence_spans(blocks),
+            source_pages=source_pages,
+            grounding_confidence=0.8 if blocks else 0.0,
+            estimated_read_time=15,
         )
     
     def generate_L2_hint_plus_example(
@@ -946,10 +1014,11 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L2 stage
         """
-        source_text = "\n\n".join(b.text for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks)
         
         # Get L1 content as base
-        l1_content = self.generate_L1_hint(concept_id, blocks, config, prerequisites)
+        l1_unit = self.generate_L1_hint(concept_id, blocks, config, prerequisites)
+        l1_content = l1_unit.content
         
         # Generate example
         example_prompt = self.prompt_builder.build_example_prompt(
@@ -976,24 +1045,27 @@ class UnitGenerator:
         )
         
         content = L2Content(
-            hint_text=l1_content.content.get("hint_text", self._get_default_hint(concept_id)),
+            hint_text=l1_content.get("hint_text", self._get_default_hint(concept_id)),
             example_sql=example_sql,
             example_explanation=example_explanation,
             common_pitfall=self._get_default_pitfall(concept_id),
         )
         
+        # Get source pages from blocks
+        source_pages = list(set(b.page_number for b in blocks))
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L2_hint_plus_example",
             concept_id=concept_id,
-            stage="L2",
-            unit_type="hint_plus_example",
-            title=f"Hint with Example: {concept_id}",
+            unit_type="hint",
+            target_stage="L2_hint_plus_example",
             content=content.model_dump(),
-            estimated_time_seconds=45,
-            source_spans=self._create_source_spans(blocks),
             prerequisites=prerequisites or [],
             difficulty="beginner",
-            generation_config=config.__dict__,
+            evidence_spans=self._create_evidence_spans(blocks),
+            source_pages=source_pages,
+            grounding_confidence=0.8 if blocks else 0.0,
+            estimated_read_time=45,
         )
     
     def generate_L3_explanation(
@@ -1015,7 +1087,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L3 stage
         """
-        source_text = "\n\n".join(b.text for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks)
         
         # Generate definition
         def_prompt = self.prompt_builder.build_definition_prompt(
@@ -1035,55 +1107,67 @@ class UnitGenerator:
         )
         mist_response = self._call_llm(mist_prompt, config)
         
-        # Build content
-        examples = []
+        # Build content using canonical schemas
+        examples: list[SQLExample] = []
         if ex_response and "examples" in ex_response:
             for ex in ex_response["examples"]:
                 sql = self.transformer.transform_to_practice_schema(
                     ex.get("sql", ""), ["Sailors", "Boats", "Reserves"]
                 )
-                examples.append({
-                    "title": ex.get("title", "Example"),
-                    "scenario": ex.get("scenario", ""),
-                    "sql": sql,
-                    "explanation": ex.get("explanation", ""),
-                    "expected_output": ex.get("expected_output", ""),
-                })
+                examples.append(SQLExample(
+                    title=ex.get("title", "Example"),
+                    scenario=ex.get("scenario", ""),
+                    sql=sql,
+                    explanation=ex.get("explanation", ""),
+                    expected_output=ex.get("expected_output", ""),
+                ))
         
         if not examples:
-            examples = self._get_default_examples(concept_id)
+            examples = self._get_default_sql_examples(concept_id)
         
-        contrast = None
+        contrast: SQLExample | None = None
         if ex_response and "contrast_example" in ex_response:
             ce = ex_response["contrast_example"]
-            contrast = {
-                "incorrect_sql": self.transformer.transform_to_practice_schema(
-                    ce.get("incorrect_sql", ""), ["Sailors", "Boats", "Reserves"]
-                ),
-                "why_wrong": ce.get("why_wrong", ""),
-                "corrected_sql": self.transformer.transform_to_practice_schema(
-                    ce.get("corrected_sql", ""), ["Sailors", "Boats", "Reserves"]
-                ),
-            }
+            # Convert contrast example to SQLExample format
+            incorrect_sql = self.transformer.transform_to_practice_schema(
+                ce.get("incorrect_sql", ""), ["Sailors", "Boats", "Reserves"]
+            )
+            corrected_sql = self.transformer.transform_to_practice_schema(
+                ce.get("corrected_sql", ""), ["Sailors", "Boats", "Reserves"]
+            )
+            contrast = SQLExample(
+                title="Contrast: What NOT to do",
+                scenario=ce.get("why_wrong", ""),
+                sql=incorrect_sql,  # The incorrect SQL is what we show
+                explanation=f"Why wrong: {ce.get('why_wrong', '')}\n\nCorrected: {corrected_sql}",
+            )
         
-        mistakes = []
+        mistakes: list[MisconceptionExample] = []
         if mist_response and "mistakes" in mist_response:
             for m in mist_response["mistakes"]:
-                mistakes.append({
-                    "title": m.get("title", "Mistake"),
-                    "error_sql": self.transformer.transform_to_practice_schema(
+                mistakes.append(MisconceptionExample(
+                    title=m.get("title", "Mistake"),
+                    error_sql=self.transformer.transform_to_practice_schema(
                         m.get("error_sql", ""), ["Sailors", "Boats", "Reserves"]
                     ),
-                    "error_message": m.get("error_message", ""),
-                    "why_it_happens": m.get("why_it_happens", ""),
-                    "fix_sql": self.transformer.transform_to_practice_schema(
+                    error_message=m.get("error_message", ""),
+                    why_it_happens=m.get("why_it_happens", ""),
+                    fix_sql=self.transformer.transform_to_practice_schema(
                         m.get("fix_sql", ""), ["Sailors", "Boats", "Reserves"]
                     ),
-                    "key_takeaway": m.get("key_takeaway", ""),
-                })
+                    key_takeaway=m.get("key_takeaway", ""),
+                ))
         
         if not mistakes:
-            mistakes = self._get_default_mistakes(concept_id)
+            mistakes = self._get_default_misconceptions(concept_id)
+        
+        # Build practice links as canonical PracticeLink objects
+        practice_links = [
+            PracticeLink(
+                concept_id=concept_id,
+                problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
+            )
+        ]
         
         content = L3Content(
             definition=def_response.get("definition", self._get_default_definition(concept_id)) if def_response else self._get_default_definition(concept_id),
@@ -1091,21 +1175,24 @@ class UnitGenerator:
             examples=examples,
             contrast_example=contrast,
             common_mistakes=mistakes,
-            practice_links=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"],
+            practice_links=practice_links,
         )
+        
+        # Get source pages from blocks
+        source_pages = list(set(b.page_number for b in blocks))
         
         return InstructionalUnit(
             unit_id=f"{concept_id}_L3_explanation",
             concept_id=concept_id,
-            stage="L3",
             unit_type="explanation",
-            title=f"Full Explanation: {concept_id}",
+            target_stage="L3_explanation",
             content=content.model_dump(),
-            estimated_time_seconds=300,
-            source_spans=self._create_source_spans(blocks),
             prerequisites=prerequisites or [],
             difficulty="intermediate",
-            generation_config=config.__dict__,
+            evidence_spans=self._create_evidence_spans(blocks),
+            source_pages=source_pages,
+            grounding_confidence=0.8 if blocks else 0.0,
+            estimated_read_time=300,
         )
     
     def generate_L4_reflective_note(
@@ -1127,7 +1214,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L4 stage
         """
-        source_text = "\n\n".join(b.text for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks)
         
         prompt = self.prompt_builder.build_reflection_prompt(concept_id, source_text)
         llm_response = self._call_llm(prompt, config)
@@ -1158,18 +1245,21 @@ class UnitGenerator:
                 connections=self._get_default_connections(concept_id),
             )
         
+        # Get source pages from blocks
+        source_pages = list(set(b.page_number for b in blocks))
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L4_reflective_note",
             concept_id=concept_id,
-            stage="L4",
-            unit_type="reflective_note",
-            title=f"Reflective Note: {concept_id}",
+            unit_type="reflection",
+            target_stage="L4_reflective_note",
             content=content.model_dump(),
-            estimated_time_seconds=180,
-            source_spans=self._create_source_spans(blocks),
             prerequisites=prerequisites or [],
             difficulty="intermediate",
-            generation_config=config.__dict__,
+            evidence_spans=self._create_evidence_spans(blocks),
+            source_pages=source_pages,
+            grounding_confidence=0.8 if blocks else 0.0,
+            estimated_read_time=180,
         )
     
     def generate_reinforcement_microcheck(
@@ -1191,7 +1281,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for reinforcement stage
         """
-        source_text = "\n\n".join(b.text for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks)
         
         prompt = self.prompt_builder.build_reinforcement_prompt(concept_id, source_text)
         llm_response = self._call_llm(prompt, config)
@@ -1217,44 +1307,57 @@ class UnitGenerator:
                 next_review_timing="1 day",
             )
         
+        # Get source pages from blocks
+        source_pages = list(set(b.page_number for b in blocks))
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_reinforcement",
             concept_id=concept_id,
-            stage="reinforcement",
-            unit_type="microcheck",
-            title=f"Quick Check: {concept_id}",
+            unit_type="practice",
+            target_stage="reinforcement",
             content=content.model_dump(),
-            estimated_time_seconds=10,
-            source_spans=self._create_source_spans(blocks),
             prerequisites=prerequisites or [],
             difficulty="beginner",
-            generation_config=config.__dict__,
+            evidence_spans=self._create_evidence_spans(blocks),
+            source_pages=source_pages,
+            grounding_confidence=0.8 if blocks else 0.0,
+            estimated_read_time=10,
         )
     
     def _create_fallback_unit(
         self,
         concept_id: str,
-        stage: str,
+        target_stage: str,
         unit_type: str,
         config: GenerationConfig,
         error_message: str,
     ) -> InstructionalUnit:
         """Create a fallback unit when generation fails."""
+        # Map internal unit_type to canonical UnitType
+        unit_type_map = {
+            "hint": "hint",
+            "hint_plus_example": "hint",
+            "explanation": "explanation",
+            "reflective_note": "reflection",
+            "microcheck": "practice",
+        }
+        canonical_unit_type = unit_type_map.get(unit_type, "hint")
+        
         return InstructionalUnit(
-            unit_id=f"{concept_id}_{stage}_{unit_type}_fallback",
+            unit_id=f"{concept_id}_{target_stage}_{unit_type}_fallback",
             concept_id=concept_id,
-            stage=stage,  # type: ignore
-            unit_type=unit_type,
-            title=f"[{stage.upper()}] {concept_id} (Generation Failed)",
+            unit_type=canonical_unit_type,
+            target_stage=target_stage,
             content={
                 "error": error_message,
                 "note": "This is a fallback unit due to generation failure. Please retry.",
             },
-            estimated_time_seconds=30,
-            source_spans=[],
             prerequisites=[],
             difficulty="beginner",
-            generation_config=config.__dict__,
+            evidence_spans=[],
+            source_pages=[],
+            grounding_confidence=0.0,
+            estimated_read_time=30,
         )
     
     # =============================================================================
@@ -1333,29 +1436,29 @@ class UnitGenerator:
         }
         return definitions.get(concept_id, f"{concept_id} is an important SQL concept.")
     
-    def _get_default_examples(self, concept_id: str) -> list[dict[str, str]]:
-        """Get default examples for concept."""
+    def _get_default_sql_examples(self, concept_id: str) -> list[SQLExample]:
+        """Get default SQL examples for concept using canonical schema."""
         return [
-            {
-                "title": "Basic Example",
-                "scenario": "Standard usage",
-                "sql": self._get_default_example_sql(concept_id),
-                "explanation": "This demonstrates basic usage.",
-                "expected_output": "Returns matching rows",
-            }
+            SQLExample(
+                title="Basic Example",
+                scenario="Standard usage of the concept",
+                sql=self._get_default_example_sql(concept_id),
+                explanation="This demonstrates basic usage of the concept.",
+                expected_output="Returns matching rows from the query",
+            )
         ]
     
-    def _get_default_mistakes(self, concept_id: str) -> list[dict[str, str]]:
-        """Get default mistakes for concept."""
+    def _get_default_misconceptions(self, concept_id: str) -> list[MisconceptionExample]:
+        """Get default misconception examples using canonical schema."""
         return [
-            {
-                "title": "Syntax Error",
-                "error_sql": "SELECT * FORM users;",
-                "error_message": "Error: near 'FORM': syntax error",
-                "why_it_happens": "Typo in SQL keyword",
-                "fix_sql": "SELECT * FROM users;",
-                "key_takeaway": "Check spelling of SQL keywords",
-            }
+            MisconceptionExample(
+                title="Syntax Error: Misspelled Keyword",
+                error_sql="SELECT * FORM users;",
+                error_message="Error: near 'FORM': syntax error",
+                why_it_happens="Students often mistype SQL keywords when learning",
+                fix_sql="SELECT * FROM users;",
+                key_takeaway="Always check spelling of SQL keywords like FROM, SELECT, WHERE",
+            )
         ]
     
     def _get_default_summary(self, concept_id: str) -> str:
@@ -1456,9 +1559,12 @@ def generate_instructional_units_for_concept(
     blocks = [
         ContentBlock(
             block_id=f"{concept_id}_block_1",
-            text=raw_text,
-            block_type="paragraph",
-            page=source_pages[0] if source_pages else 0,
+            text_content=raw_text,
+            block_type="prose",
+            page_number=source_pages[0] if source_pages else 1,
+            char_start=0,
+            char_end=len(raw_text),
+            confidence=1.0,
         )
     ]
     
@@ -1538,10 +1644,11 @@ def validate_unit_completeness(units: dict[str, InstructionalUnit]) -> dict[str,
 # =============================================================================
 
 __all__ = [
-    # Data models
+    # Data models (imported from instructional_models and section_extractor)
     "ContentBlock",
     "SourceSpan",
     "InstructionalUnit",
+    # Content models
     "L1Content",
     "L2Content",
     "L3Content",
@@ -1549,6 +1656,8 @@ __all__ = [
     "ReinforcementContent",
     # Configuration
     "GenerationConfig",
+    # Adapter
+    "convert_unit_to_canonical",
     # Main classes
     "PromptBuilder",
     "ContentTransformer",
