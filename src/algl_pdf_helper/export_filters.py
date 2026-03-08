@@ -23,9 +23,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
-from .pedagogical_models import PedagogicalConcept, SQLExample
+from .instructional_models import InstructionalUnit, UnitLibraryExport, SourceSpan
+from .sql_ontology import ConceptOntology
 
 
 # =============================================================================
@@ -37,48 +38,6 @@ class RuleType(Enum):
     HARD_BLOCK = "hard_block"  # Prevents export entirely
     SOFT_BLOCK = "soft_block"  # Allows export with warning
     WARN = "warn"              # Just logs a warning
-
-
-class InstructionalUnit(Protocol):
-    """Protocol for instructional units that can be filtered."""
-    
-    concept_id: str
-    title: str
-    definition: str
-    examples: list[SQLExample]
-    
-    # Optional attributes that may be present
-    relevance_score: float | None
-    semantic_score: float | None
-    extraction_confidence: float | None
-    learning_objectives: list[str] | None
-    prerequisites: list[str] | None
-    error_subtypes: list[str] | None
-    stage_variants: dict[str, Any] | None
-    evidence_spans: list[dict] | None
-    source_pages: list[int] | None
-    is_admin_only: bool | None
-    is_validated: bool | None
-    tags: list[str] | None
-
-
-@dataclass
-class UnitLibraryExport:
-    """A library of instructional units ready for export."""
-    
-    units: list[PedagogicalConcept] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    
-    def get_unit(self, concept_id: str) -> PedagogicalConcept | None:
-        """Get a unit by its concept ID."""
-        for unit in self.units:
-            if unit.concept_id == concept_id:
-                return unit
-        return None
-    
-    def get_unit_ids(self) -> list[str]:
-        """Get all unit IDs in the library."""
-        return [u.concept_id for u in self.units]
 
 
 # =============================================================================
@@ -100,10 +59,10 @@ class ExportRule:
     rule_id: str
     rule_type: RuleType
     description: str
-    check_fn: Callable[[PedagogicalConcept], tuple[bool, str]]
+    check_fn: Callable[[InstructionalUnit], tuple[bool, str]]
     error_message: str
     
-    def check(self, unit: PedagogicalConcept) -> tuple[bool, str]:
+    def check(self, unit: InstructionalUnit) -> tuple[bool, str]:
         """Run the check function on a unit."""
         return self.check_fn(unit)
 
@@ -151,35 +110,89 @@ class UnitFilterResult:
 # PLACEHOLDER CHECK FUNCTIONS
 # =============================================================================
 
-def _check_title_too_long(unit: PedagogicalConcept) -> tuple[bool, str]:
+# Cache for ontology instance
+_ontology_cache: ConceptOntology | None = None
+
+
+def _get_ontology() -> ConceptOntology:
+    """Get or create cached ConceptOntology instance."""
+    global _ontology_cache
+    if _ontology_cache is None:
+        _ontology_cache = ConceptOntology()
+    return _ontology_cache
+
+
+def _get_unit_title(unit: InstructionalUnit) -> str:
+    """Extract title from unit content."""
+    content = unit.content or {}
+    if isinstance(content, dict):
+        title = content.get("title", "")
+        if not title:
+            # Try other possible fields
+            title = content.get("concept_title", "")
+        if not title:
+            # Fall back to unit_id formatted
+            title = unit.unit_id.replace("_", " ").replace("-", " ")
+    else:
+        title = str(unit.unit_id).replace("_", " ").replace("-", " ")
+    return title
+
+
+def _get_unit_definition(unit: InstructionalUnit) -> str:
+    """Extract definition/explanation from unit content."""
+    content = unit.content or {}
+    if isinstance(content, dict):
+        # Try various possible definition fields
+        for field in ["definition", "explanation", "description", "body", "text"]:
+            if field in content and content[field]:
+                return str(content[field])
+    return ""
+
+
+def _get_unit_examples(unit: InstructionalUnit) -> list[dict]:
+    """Extract SQL examples from unit content."""
+    content = unit.content or {}
+    examples = []
+    if isinstance(content, dict):
+        # Try various possible example fields
+        if "examples" in content and isinstance(content["examples"], list):
+            examples.extend(content["examples"])
+        if "example" in content and isinstance(content["example"], dict):
+            examples.append(content["example"])
+        if "sql" in content and isinstance(content["sql"], str):
+            examples.append({"sql": content["sql"]})
+    return examples
+
+
+def _check_title_too_long(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if title is too long (looks like a sentence/fragment)."""
-    words = unit.title.split()
+    title = _get_unit_title(unit)
+    words = title.split()
     word_count = len(words)
     if word_count > 10:
         return False, f"Title too long ({word_count} words, max 10): looks like a sentence"
     return True, "Title length acceptable"
 
 
-def _check_title_is_heading_fragment(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_title_is_heading_fragment(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if title ends with words like 'the', 'and', 'for' (fragment indicator)."""
     fragment_words = {"the", "and", "for", "of", "in", "to", "a", "an", "with", "by", "from", "on", "at"}
-    words = unit.title.lower().split()
+    title = _get_unit_title(unit)
+    words = title.lower().split()
     if words and words[-1] in fragment_words:
         return False, f"Title ends with fragment word '{words[-1]}': appears to be incomplete"
     return True, "Title does not end with fragment word"
 
 
-def _check_low_relevance_score(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if relevance score is too low (requires unit.relevance_score attribute)."""
-    score = getattr(unit, 'relevance_score', None)
-    if score is None:
-        return True, "No relevance score set"
-    if score < 0.6:
-        return False, f"Relevance score too low ({score:.2f}, min 0.6)"
-    return True, f"Relevance score acceptable ({score:.2f})"
+def _check_low_relevance_score(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if grounding confidence is too low (uses unit.grounding_confidence)."""
+    confidence = unit.grounding_confidence
+    if confidence < 0.6:
+        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.6)"
+    return True, f"Grounding confidence acceptable ({confidence:.2f})"
 
 
-def _check_placeholder_example_present(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_placeholder_example_present(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check for placeholder text indicating failed extraction."""
     placeholder_patterns = [
         r"see textbook",
@@ -190,11 +203,20 @@ def _check_placeholder_example_present(unit: PedagogicalConcept) -> tuple[bool, 
         r"\[example needed\]",
         r"\[todo\]",
         r"not available",
+        r"coming soon",
+        r"\[tbd\]",
     ]
     
-    text_to_check = f"{unit.title} {unit.definition}"
-    for example in unit.examples:
-        text_to_check += f" {example.description} {example.query} {example.explanation}"
+    title = _get_unit_title(unit)
+    definition = _get_unit_definition(unit)
+    examples = _get_unit_examples(unit)
+    
+    text_to_check = f"{title} {definition}"
+    for ex in examples:
+        if isinstance(ex, dict):
+            for key in ["sql", "query", "description", "explanation", "text"]:
+                if key in ex:
+                    text_to_check += f" {ex[key]}"
     
     text_lower = text_to_check.lower()
     
@@ -205,9 +227,9 @@ def _check_placeholder_example_present(unit: PedagogicalConcept) -> tuple[bool, 
     return True, "No placeholder text detected"
 
 
-def _check_empty_definition(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if definition is empty or too short."""
-    definition = unit.definition or ""
+def _check_empty_definition(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if definition/content is empty or too short."""
+    definition = _get_unit_definition(unit)
     if not definition.strip():
         return False, "Definition is empty"
     if len(definition.strip()) < 20:
@@ -215,18 +237,27 @@ def _check_empty_definition(unit: PedagogicalConcept) -> tuple[bool, str]:
     return True, f"Definition length acceptable ({len(definition)} chars)"
 
 
-def _check_no_valid_example(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_no_valid_example(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if there's at least one executable SQL example."""
-    if not unit.examples:
+    examples = _get_unit_examples(unit)
+    
+    if not examples:
         return False, "No SQL examples present"
     
     # Check for at least one valid-looking SQL query
-    for i, example in enumerate(unit.examples):
-        query = example.query.strip() if example.query else ""
+    sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "WITH"]
+    for i, ex in enumerate(examples):
+        query = ""
+        if isinstance(ex, dict):
+            query = ex.get("sql", "") or ex.get("query", "")
+        elif isinstance(ex, str):
+            query = ex
+        
+        query = query.strip() if query else ""
         if not query:
             continue
+        
         # Basic SQL validation - must start with SQL keyword and end with semicolon
-        sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "WITH"]
         query_upper = query.upper()
         if any(query_upper.startswith(kw) for kw in sql_keywords) and query.endswith(";"):
             return True, f"Valid SQL example found (example {i+1})"
@@ -234,140 +265,151 @@ def _check_no_valid_example(unit: PedagogicalConcept) -> tuple[bool, str]:
     return False, "No executable SQL examples found"
 
 
-def _check_not_in_canonical_ontology(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_not_in_canonical_ontology(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if concept ID is in the canonical SQL ontology."""
-    from .sql_ontology import SQL_CONCEPTS
+    ontology = _get_ontology()
     
-    if unit.concept_id not in SQL_CONCEPTS:
+    if not ontology.validate_concept_id(unit.concept_id):
         return False, f"Concept '{unit.concept_id}' not in canonical ontology"
     return True, "Concept in canonical ontology"
 
 
-def _check_no_source_evidence(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_no_source_evidence(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if unit has evidence spans and source pages."""
-    evidence_spans = getattr(unit, 'evidence_spans', None)
-    source_pages = getattr(unit, 'source_pages', None)
+    # Use the InstructionalUnit's has_grounding() method
+    if not unit.has_grounding():
+        return False, "Unit has no source grounding (no evidence spans or zero grounding confidence)"
     
-    has_evidence = evidence_spans is not None and len(evidence_spans) > 0
-    has_pages = source_pages is not None and len(source_pages) > 0
-    
-    if not has_evidence and not has_pages:
-        return False, "No source evidence or pages attached"
-    if not has_evidence:
+    # Also verify evidence_spans and source_pages are present
+    if not unit.evidence_spans:
         return False, "No evidence spans attached"
-    if not has_pages:
+    if not unit.source_pages:
         return False, "No source pages attached"
     
     return True, "Source evidence present"
 
 
-def _check_admin_only_concept(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_admin_only_concept(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if concept is marked as admin/reference only."""
-    is_admin = getattr(unit, 'is_admin_only', None)
+    # Check unit_type for admin content
+    admin_types = {"admin", "reference", "metadata", "toc"}
+    if unit.unit_type in admin_types:
+        return False, f"Unit type '{unit.unit_type}' is admin-only"
     
-    if is_admin:
-        return False, "Concept marked as admin-only (not for student consumption)"
+    # Check target_stage
+    if unit.target_stage == "reinforcement" and unit.unit_type in ["hint", "reflection"]:
+        # This is a design choice - reinforcement hints are OK
+        pass
     
-    # Also check tags
-    tags = getattr(unit, 'tags', []) or []
-    admin_tags = {"admin", "reference", "internal", "teacher-only", "instructor"}
-    if any(tag.lower() in admin_tags for tag in tags):
-        return False, "Concept has admin-only tag"
+    # Check for admin-only tags in error_subtypes (shouldn't have admin tags here but just in case)
+    admin_indicators = {"admin", "reference", "internal", "teacher-only", "instructor", "copyright", "preface"}
+    
+    title_lower = _get_unit_title(unit).lower()
+    definition_lower = _get_unit_definition(unit).lower()
+    combined_text = f"{title_lower} {definition_lower}"
+    
+    for indicator in admin_indicators:
+        if indicator in combined_text:
+            return False, f"Admin-only indicator '{indicator}' found in content"
     
     return True, "Not an admin-only concept"
 
 
-def _check_extraction_confidence_too_low(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if extraction confidence is too low."""
-    confidence = getattr(unit, 'extraction_confidence', None)
-    
-    if confidence is None:
-        return True, "No extraction confidence set"
+def _check_extraction_confidence_too_low(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if grounding confidence is too low."""
+    confidence = unit.grounding_confidence
     
     if confidence < 0.5:
-        return False, f"Extraction confidence too low ({confidence:.2f}, min 0.5)"
+        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.5)"
     
-    return True, f"Extraction confidence acceptable ({confidence:.2f})"
+    return True, f"Grounding confidence acceptable ({confidence:.2f})"
 
 
 # =============================================================================
 # SOFT BLOCK CHECK FUNCTIONS
 # =============================================================================
 
-def _check_missing_learning_objectives(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if unit has learning objectives."""
-    objectives = getattr(unit, 'learning_objectives', None)
+def _check_missing_learning_objectives(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit has learning objectives in content."""
+    content = unit.content or {}
+    objectives = []
     
-    if objectives is None or len(objectives) == 0:
+    if isinstance(content, dict):
+        objectives = content.get("learning_objectives", []) or content.get("objectives", [])
+    
+    if not objectives:
         return False, "No learning objectives defined"
     
     return True, f"Has {len(objectives)} learning objectives"
 
 
-def _check_missing_prerequisites(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_missing_prerequisites(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if unit has prerequisites defined."""
-    prereqs = getattr(unit, 'prerequisites', None)
+    prereqs = unit.prerequisites
     
-    if prereqs is None or len(prereqs) == 0:
+    if not prereqs:
         return False, "No prerequisites defined (isolated node in learning graph)"
     
     return True, f"Has {len(prereqs)} prerequisites"
 
 
-def _check_missing_error_subtypes(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_missing_error_subtypes(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if unit has error subtype tags."""
-    error_subtypes = getattr(unit, 'error_subtypes', None)
+    error_subtypes = unit.error_subtypes
     
-    if error_subtypes is None or len(error_subtypes) == 0:
+    if not error_subtypes:
         return False, "No error subtype tags (reduces SQL-Engage integration)"
     
     return True, f"Has {len(error_subtypes)} error subtypes"
 
 
-def _check_incomplete_stage_variants(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if unit has complete L1-L4 stage variants."""
-    stage_variants = getattr(unit, 'stage_variants', None)
+def _check_incomplete_stage_variants(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit has valid target_stage for adaptive delivery."""
+    valid_stages = {
+        "L1_hint", "L2_hint_plus_example", "L3_explanation", 
+        "L4_reflective_note", "reinforcement"
+    }
     
-    if stage_variants is None:
-        return False, "No stage variants defined"
+    if unit.target_stage not in valid_stages:
+        return False, f"Invalid target_stage: {unit.target_stage}"
     
-    required_stages = ["L1", "L2", "L3", "L4"]
-    missing = [s for s in required_stages if s not in stage_variants]
-    
-    if missing:
-        return False, f"Missing stage variants: {', '.join(missing)}"
-    
-    return True, "All L1-L4 stage variants present"
+    return True, f"Target stage valid: {unit.target_stage}"
 
 
-def _check_example_not_validated(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if SQL examples have been execution-tested."""
-    is_validated = getattr(unit, 'is_validated', None)
+def _check_example_not_validated(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if SQL examples have been execution-tested (based on content quality)."""
+    # Check if examples exist and have proper structure
+    examples = _get_unit_examples(unit)
     
-    if is_validated is False:
-        return False, "SQL examples not validated (not execution-tested)"
+    if not examples:
+        return False, "No SQL examples to validate"
     
-    return True, "SQL examples validated or validation not tracked"
+    # Check if examples have explanation/validation markers
+    for ex in examples:
+        if isinstance(ex, dict):
+            # Should have explanation if validated
+            has_explanation = bool(ex.get("explanation", ""))
+            if not has_explanation:
+                return False, "SQL examples lack explanations (not fully validated)"
+    
+    return True, "SQL examples have validation markers"
 
 
-def _check_low_semantic_score(unit: PedagogicalConcept) -> tuple[bool, str]:
-    """Check if semantic score is below threshold."""
-    score = getattr(unit, 'semantic_score', None)
+def _check_low_semantic_score(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if grounding confidence (semantic score equivalent) is below threshold."""
+    confidence = unit.grounding_confidence
     
-    if score is None:
-        return True, "No semantic score set"
+    if confidence < 0.7:
+        return False, f"Grounding confidence low ({confidence:.2f}, recommended min 0.7)"
     
-    if score < 0.7:
-        return False, f"Semantic score low ({score:.2f}, recommended min 0.7)"
-    
-    return True, f"Semantic score acceptable ({score:.2f})"
+    return True, f"Grounding confidence acceptable ({confidence:.2f})"
 
 
 # =============================================================================
 # CONTENT QUALITY CHECK FUNCTIONS
 # =============================================================================
 
-def _check_contains_config_variables(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_contains_config_variables(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if content looks like configuration code."""
     config_patterns = [
         r"log_output\s*=",
@@ -383,7 +425,9 @@ def _check_contains_config_variables(unit: PedagogicalConcept) -> tuple[bool, st
         r"environment variable",
     ]
     
-    text_to_check = f"{unit.title} {unit.definition}"
+    title = _get_unit_title(unit)
+    definition = _get_unit_definition(unit)
+    text_to_check = f"{title} {definition}"
     text_lower = text_to_check.lower()
     
     for pattern in config_patterns:
@@ -393,7 +437,7 @@ def _check_contains_config_variables(unit: PedagogicalConcept) -> tuple[bool, st
     return True, "No config-like content detected"
 
 
-def _check_looks_like_toc_entry(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_looks_like_toc_entry(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if content matches table of contents patterns."""
     toc_patterns = [
         r"^chapter\s+\d+",
@@ -407,20 +451,23 @@ def _check_looks_like_toc_entry(unit: PedagogicalConcept) -> tuple[bool, str]:
         r"^references$",
     ]
     
-    title_lower = unit.title.lower().strip()
+    title = _get_unit_title(unit)
+    title_lower = title.lower().strip()
     
     for pattern in toc_patterns:
         if re.match(pattern, title_lower):
             return False, f"Matches TOC pattern: '{pattern}'"
     
     # Check for very short content that looks like a TOC entry
-    if len(unit.definition) < 50 and len(unit.examples) == 0:
+    definition = _get_unit_definition(unit)
+    examples = _get_unit_examples(unit)
+    if len(definition) < 50 and not examples:
         return False, "Very short content with no examples - likely TOC entry"
     
     return True, "Not a TOC entry"
 
 
-def _check_appendix_content(unit: PedagogicalConcept) -> tuple[bool, str]:
+def _check_appendix_content(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if content is appendix/admin material."""
     appendix_indicators = [
         "appendix",
@@ -438,7 +485,8 @@ def _check_appendix_content(unit: PedagogicalConcept) -> tuple[bool, str]:
         "revision history",
     ]
     
-    title_lower = unit.title.lower().strip()
+    title = _get_unit_title(unit)
+    title_lower = title.lower().strip()
     
     for indicator in appendix_indicators:
         if indicator in title_lower:
@@ -736,15 +784,15 @@ class ExportFilterEngine:
         filtered_units: list[str] = []
         passed_units: list[str] = []
         
-        for unit in library.units:
+        for unit in library.instructional_units:
             unit_result = self._filter_single_unit(unit)
             
             if unit_result.can_export:
-                passed_units.append(unit.concept_id)
+                passed_units.append(unit.unit_id)
                 # Still collect warnings
                 warnings.extend(unit_result.warnings)
             else:
-                filtered_units.append(unit.concept_id)
+                filtered_units.append(unit.unit_id)
                 blocked_by.extend(unit_result.hard_block_reasons)
         
         # Deduplicate
@@ -761,12 +809,12 @@ class ExportFilterEngine:
             passed_units=passed_units,
         )
     
-    def _filter_single_unit(self, unit: PedagogicalConcept) -> UnitFilterResult:
+    def _filter_single_unit(self, unit: InstructionalUnit) -> UnitFilterResult:
         """
         Filter a single unit against all rules.
         
         Args:
-            unit: The PedagogicalConcept to check
+            unit: The InstructionalUnit to check
             
         Returns:
             UnitFilterResult with detailed results
@@ -776,37 +824,48 @@ class ExportFilterEngine:
         
         # Check hard block rules
         for rule in self.hard_block_rules:
-            passed, message = rule.check(unit)
-            if not passed:
-                hard_block_reasons.append(f"{rule.rule_id}: {message}")
+            try:
+                passed, message = rule.check(unit)
+                if not passed:
+                    hard_block_reasons.append(f"{rule.rule_id}: {message}")
+            except Exception as e:
+                # If check fails, treat as hard block
+                hard_block_reasons.append(f"{rule.rule_id}: Check failed - {str(e)}")
         
         # Check soft block rules
         for rule in self.soft_block_rules:
-            passed, message = rule.check(unit)
-            if not passed:
-                warnings.append(f"{unit.concept_id} - {rule.rule_id}: {message}")
+            try:
+                passed, message = rule.check(unit)
+                if not passed:
+                    warnings.append(f"{unit.unit_id} - {rule.rule_id}: {message}")
+            except Exception:
+                # Soft block failures don't block export
+                pass
         
         # Check warn rules
         for rule in self.warn_rules:
-            passed, message = rule.check(unit)
-            if not passed:
-                warnings.append(f"{unit.concept_id} - {rule.rule_id}: {message}")
+            try:
+                passed, message = rule.check(unit)
+                if not passed:
+                    warnings.append(f"{unit.unit_id} - {rule.rule_id}: {message}")
+            except Exception:
+                pass
         
         can_export = len(hard_block_reasons) == 0
         
         return UnitFilterResult(
-            unit_id=unit.concept_id,
+            unit_id=unit.unit_id,
             can_export=can_export,
             hard_block_reasons=hard_block_reasons,
             warnings=warnings,
         )
     
-    def validate_single_unit(self, unit: PedagogicalConcept) -> tuple[bool, list[str]]:
+    def validate_single_unit(self, unit: InstructionalUnit) -> tuple[bool, list[str]]:
         """
         Check one unit against all rules.
         
         Args:
-            unit: The PedagogicalConcept to validate
+            unit: The InstructionalUnit to validate
             
         Returns:
             Tuple of (can_export, list_of_violations)
@@ -829,22 +888,28 @@ class ExportFilterEngine:
         Returns:
             New UnitLibraryExport with only passing units
         """
-        passed_units: list[PedagogicalConcept] = []
+        passed_units: list[InstructionalUnit] = []
         
-        for unit in library.units:
+        for unit in library.instructional_units:
             result = self._filter_single_unit(unit)
             if result.can_export:
                 passed_units.append(unit)
         
-        return UnitLibraryExport(
-            units=passed_units,
-            metadata={
-                **library.metadata,
-                "filtered": True,
-                "original_count": len(library.units),
-                "filtered_count": len(passed_units),
-            }
-        )
+        # Create new library with filtered units
+        filtered_library = library.model_copy(deep=True)
+        filtered_library.instructional_units = passed_units
+        
+        # Update metadata
+        if not filtered_library.export_manifest:
+            filtered_library.export_manifest = {}
+        filtered_library.export_manifest.update({
+            "filtered": True,
+            "original_unit_count": len(library.instructional_units),
+            "filtered_unit_count": len(passed_units),
+            "filter_pass_rate": len(passed_units) / len(library.instructional_units) if library.instructional_units else 0.0,
+        })
+        
+        return filtered_library
     
     def get_rejected_units(
         self, 
@@ -861,10 +926,10 @@ class ExportFilterEngine:
         """
         rejected: list[tuple[str, list[str]]] = []
         
-        for unit in library.units:
+        for unit in library.instructional_units:
             result = self._filter_single_unit(unit)
             if not result.can_export:
-                rejected.append((unit.concept_id, result.hard_block_reasons))
+                rejected.append((unit.unit_id, result.hard_block_reasons))
         
         return rejected
     
@@ -881,16 +946,16 @@ class ExportFilterEngine:
         rule_violations: dict[str, int] = {r.rule_id: 0 for r in self.rules}
         unit_violations: dict[str, list[str]] = {}
         
-        for unit in library.units:
+        for unit in library.instructional_units:
             result = self._filter_single_unit(unit)
-            unit_violations[unit.concept_id] = []
+            unit_violations[unit.unit_id] = []
             
             # Track which rules were violated
             for reason in result.hard_block_reasons:
                 rule_id = reason.split(":")[0]
                 if rule_id in rule_violations:
                     rule_violations[rule_id] += 1
-                unit_violations[unit.concept_id].append(reason)
+                unit_violations[unit.unit_id].append(reason)
         
         # Sort rules by violation count
         top_violations = sorted(
@@ -900,7 +965,7 @@ class ExportFilterEngine:
         )
         
         return {
-            "total_units": len(library.units),
+            "total_units": len(library.instructional_units),
             "hard_block_rules": len(self.hard_block_rules),
             "soft_block_rules": len(self.soft_block_rules),
             "warn_rules": len(self.warn_rules),
@@ -1019,12 +1084,12 @@ def create_custom_filter_set(
     return rules
 
 
-def quick_filter_check(unit: PedagogicalConcept) -> tuple[bool, list[str]]:
+def quick_filter_check(unit: InstructionalUnit) -> tuple[bool, list[str]]:
     """
     Quick check using STRICT_FILTERS.
     
     Args:
-        unit: The PedagogicalConcept to check
+        unit: The InstructionalUnit to check
         
     Returns:
         Tuple of (can_export, list_of_violations)
@@ -1033,12 +1098,12 @@ def quick_filter_check(unit: PedagogicalConcept) -> tuple[bool, list[str]]:
     return engine.validate_single_unit(unit)
 
 
-def should_export(unit: PedagogicalConcept) -> bool:
+def should_export(unit: InstructionalUnit) -> bool:
     """
     Quick boolean check if a unit should be exported (using STRICT_FILTERS).
     
     Args:
-        unit: The PedagogicalConcept to check
+        unit: The InstructionalUnit to check
         
     Returns:
         True if unit passes all hard blocks
