@@ -2,29 +2,10 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Schema: v2](https://img.shields.io/badge/schema-v2.0.0-green.svg)](docs/OUTPUT_SPEC.md)
 
 > **Transform static PDFs into dynamic, inspectable knowledge substrates for interaction-driven SQL learning.**
 
 This project treats textbooks not as static sequences of chapters, but as **versioned content substrates** that can be re-assembled into adaptive instructional artifacts—micro-hints, worked examples, explanations, and reflective notes—based on learner traces and support needs.
-
-## 🎯 What It Does
-
-The Adaptive Textbook Helper addresses the **"assistance dilemma"** in tutoring systems: when to provide hints versus when to escalate to deeper explanations. It combines:
-
-- **📄 Document Pack:** PDF → clean chunks with hash embeddings
-- **🗺️ Domain Pack:** Concept maps with prerequisite DAGs
-- **📊 Trace Pack:** Complete event logging (xAPI/Caliper aligned)
-- **⚙️ Policy Pack:** Adaptive escalation rules and bandit policies
-
-### The Four Packs
-
-| Pack | Purpose | Key Output |
-|------|---------|------------|
-| **Document** | PDF extraction and chunking | `chunks.json` with page-level citations |
-| **Domain** | Knowledge graph construction | `concept-map.json` + `prereq-dag.json` |
-| **Trace** | Interaction logging | HDI, CSI, APS, RQS metrics |
-| **Policy** | Escalation control | `escalation-ladder.yaml` |
 
 ---
 
@@ -37,111 +18,75 @@ The Adaptive Textbook Helper addresses the **"assistance dilemma"** in tutoring 
 python -m venv .venv
 source .venv/bin/activate
 
-# Install with all features
-pip install -e '.[server,ocr,test]'
+# Install with unit library support (required for most commands)
+pip install -e '.[unit]'
 
-# Install system OCR dependencies (macOS)
-brew install tesseract ghostscript
-
-# Install system OCR dependencies (Ubuntu)
-sudo apt-get install tesseract-ocr ghostscript
+# Or install with specific extras
+pip install -e '.[unit,validation,ocr]'
 ```
 
-### Process Your First PDF
+Available extras:
+- `unit` - Unit library pipeline (process, validate, inspect commands)
+- `validation` - Enhanced validation tools
+- `ocr` - OCR support for scanned PDFs (requires tesseract)
+- `dev` - Development dependencies (pytest, etc.)
+
+### Process a PDF
 
 ```bash
-# Basic processing
-algl-pdf index ./SQL_Textbook.pdf --out ./output --use-aliases
-
-# With OCR for scanned PDFs
-algl-pdf index ./scanned_book.pdf --out ./output --ocr --use-aliases
-
-# Generate all four packs
-algl-pdf index ./textbook.pdf --out ./output \
-  --use-aliases \
-  --with-domain-pack \
-  --with-policy-pack
+algl-pdf process ./textbook.pdf --output-dir ./output
 ```
 
-### Export to SQL-Adapt
+### Validate Output
 
 ```bash
-# Export processed PDF
-algl-pdf export ./output/sql-textbook
-
-# Full educational pipeline with LLM
-algl-pdf export-edu ./textbook.pdf \
-  --output-dir ./output \
-  --llm-provider kimi
+algl-pdf validate ./output/
 ```
 
-### Interactive Processing
+### Inspect a Concept
 
 ```bash
-# Menu-driven interface
-./start.sh
-```
-
-Features:
-- 📄 Process single or all PDFs
-- 🔄 Re-process existing PDFs
-- 📋 List PDFs with status
-- 📤 Export to SQL-Adapt
-- ⚙️ Configure OCR, chunk size, aliases
-
----
-
-## 📁 Output Structure
-
-```
-output/
-├── document-pack/              # Document artifacts
-│   ├── raw/
-│   │   └── sql-textbook/
-│   │       └── source.pdf
-│   ├── derived/
-│   │   └── sql-textbook/
-│   │       └── pages/
-│   └── index/
-│       └── sql-textbook/
-│           ├── chunks.jsonl
-│           └── index.faiss
-│
-├── domain-pack/                # Knowledge graph
-│   ├── concepts/
-│   │   ├── concept-map.json
-│   │   └── select-basic.md
-│   └── prerequisites/
-│       └── prereq-dag.json
-│
-├── trace-pack/                 # Event infrastructure
-│   ├── events/
-│   │   └── attempt_submitted.schema.json
-│   └── derived/
-│       ├── hdi-calculator.json
-│       └── csi-calculator.json
-│
-├── policy-pack/                # Escalation rules
-│   ├── profiles/
-│   │   ├── fast-escalator.json
-│   │   └── slow-escalator.json
-│   └── thresholds/
-│       └── escalation-ladder.yaml
-│
-└── textbook-static/            # SQL-Adapt export
-    ├── textbook-manifest.json
-    ├── concept-map.json
-    ├── prereq-dag.json
-    └── concepts/
-        └── sql-textbook/
-            └── select-basic.md
+algl-pdf inspect ./output/ --concept select-basic
 ```
 
 ---
 
 ## 🔧 CLI Commands
 
-### Document Pack
+### Core Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `process` | Process PDF into unit library | `algl-pdf process ./book.pdf -o ./out` |
+| `validate` | Validate an existing unit library | `algl-pdf validate ./output/` |
+| `inspect` | Inspect units for a specific concept | `algl-pdf inspect ./out/ -c select-basic` |
+| `filter` | Re-run export filters on existing library | `algl-pdf filter ./out/ --level strict` |
+| `export-legacy` | Convert old concept-map.json to new format | `algl-pdf export-legacy ./old.json -o ./new/` |
+
+### Process Command Options
+
+```bash
+algl-pdf process ./textbook.pdf \
+  --output-dir ./output \
+  --filter-level strict \
+  --llm-provider kimi \
+  --llm-model kimi-k2-5 \
+  --skip-reinforcement \
+  --skip-misconceptions \
+  --min-quality-score 0.8
+```
+
+Available options:
+- `--output-dir, -o` - Output directory for the unit library (required)
+- `--filter-level` - Export filter level: `strict` (production-ready), `production` (validated), `development` (all content)
+- `--llm-provider` - LLM provider: `kimi`, `openai`, or `ollama`
+- `--llm-model` - LLM model to use (default: `kimi-k2-5`)
+- `--skip-reinforcement` - Skip generating reinforcement items
+- `--skip-misconceptions` - Skip generating misconception units
+- `--validate-sql/--no-validate-sql` - Validate SQL examples (default: enabled)
+- `--min-quality-score` - Minimum quality score threshold (0.0-1.0, default: 0.8)
+
+### Document Processing Commands
 
 ```bash
 # Check PDF extraction quality
@@ -154,7 +99,7 @@ algl-pdf preflight ./my.pdf
 algl-pdf extract ./my.pdf --strategy ocrmypdf
 ```
 
-### Domain Pack
+### Auto-Mapping Commands
 
 ```bash
 # Auto-generate concept mapping draft
@@ -167,7 +112,7 @@ algl-pdf review-mapping ./textbook.pdf --output ./review-package.json
 algl-pdf extract-structure ./textbook.pdf
 ```
 
-### Trace Pack
+### CI/Quality Gate Commands
 
 ```bash
 # Evaluate processing quality
@@ -175,16 +120,6 @@ algl-pdf evaluate ./output --threshold 0.75
 
 # Detect regressions
 algl-pdf detect-regressions ./baseline ./current
-```
-
-### Policy Pack
-
-```bash
-# Validate escalation ladder
-algl-pdf validate-policy ./escalation-ladder.yaml
-
-# Run counterfactual replay
-algl-pdf replay ./logs/session.json --policy slow-escalator
 ```
 
 ### Server Mode
@@ -195,6 +130,33 @@ algl-pdf serve --host 127.0.0.1 --port 7345
 
 # Endpoint: POST /v1/index (multipart form with pdf file)
 # Returns: { document, manifest, chunks, conceptMap }
+```
+
+---
+
+## 📁 Output Files
+
+The pipeline produces a unit library with these files:
+
+- `concept_ontology.json` - Canonical SQL concept definitions
+- `concept_graph.json` - Prerequisite graph for mapped concepts
+- `source_spans.jsonl` - Evidence grounding spans
+- `instructional_units.jsonl` - Generated instructional units
+- `misconception_bank.jsonl` - Error-linked remediation
+- `reinforcement_bank.jsonl` - Spaced repetition items
+- `quality_report.json` - Content quality analysis
+- `export_manifest.json` - Provenance and statistics
+
+---
+
+## 🧪 CI-Tested Example
+
+This exact command runs in CI on every commit:
+
+```bash
+algl-pdf process tests/fixtures/golden_chapter.pdf \
+  --output-dir ./test_output \
+  --filter-level strict
 ```
 
 ---
@@ -260,10 +222,6 @@ This project is grounded in established learning science:
 |----------|---------|
 | **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
 | **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
-| **[Output Spec](docs/OUTPUT_SPEC.md)** | JSON schemas, four-pack formats |
-| **[Event Logging](docs/EVENT_LOGGING_SPEC.md)** | xAPI/Caliper event taxonomy |
-| **[Provenance](docs/PROVENANCE_ARCHITECTURE.md)** | PROV-DM reproducibility |
-| **[AI Agent Guide](AGENTS.md)** | Development guidelines |
 
 ---
 
@@ -318,17 +276,6 @@ function logEvent(event: AttemptSubmittedEvent) {
 ## 📜 License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-This project integrates with:
-- **SQL-Adapt** - Adaptive SQL learning platform
-- **Cybernetic Sabotage** - Game-based SQL practice
-- **SQLBeyond Official** - Official SQL curriculum
-- **HintWise** - Intelligent hint system
-- **SQL-Engage Dataset** - Error taxonomy backbone
 
 ---
 

@@ -20,6 +20,13 @@ from pathlib import Path
 
 import pytest
 
+# Check if ocrmypdf is available
+try:
+    import ocrmypdf
+    HAS_OCRMYPDF = True
+except ImportError:
+    HAS_OCRMYPDF = False
+
 # Import after sys.path modification via conftest
 from algl_pdf_helper.indexer import build_index
 from algl_pdf_helper.models import IndexBuildOptions, PdfIndexDocument
@@ -1151,6 +1158,7 @@ class TestPipelineStageTransitions:
 class TestConfigurationCombinations:
     """Test all combinations of configuration flags."""
     
+    @pytest.mark.skipif(not HAS_OCRMYPDF, reason="ocrmypdf not installed")
     def test_ocr_auto_ocr_combinations(self, temp_dir):
         """Test ocr: true/false + auto_ocr: true/false combinations."""
         from algl_pdf_helper.extract import maybe_ocr_pdf

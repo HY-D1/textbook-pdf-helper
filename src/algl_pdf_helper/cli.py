@@ -31,6 +31,13 @@ try:
 except ImportError:
     pass  # Educational CLI is optional
 
+# Import unit library CLI
+try:
+    from .cli_unit_library import app as unit_library_app
+    app.add_typer(unit_library_app, name="unit", help="Unit library pipeline")
+except ImportError:
+    pass  # Unit library CLI is optional
+
 
 def resolve_output_dir(output_dir: Path | None) -> Path:
     """
@@ -337,7 +344,7 @@ def export_edu(
         from tqdm import tqdm
     except ImportError as e:
         typer.echo(f"❌ Error: Missing dependencies for educational export: {e}")
-        typer.echo("Install with: pip install -e '.[edu]'")
+        typer.echo("Install with: pip install -e '.[unit]'")
         raise typer.Exit(1)
     
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
@@ -1133,3 +1140,219 @@ def detect_regressions(
     
     if exit_code != 0:
         raise typer.Exit(exit_code)
+
+
+# =============================================================================
+# UNIT LIBRARY COMMANDS (re-exported from cli_unit_library)
+# =============================================================================
+
+try:
+    from .cli_unit_library import (
+        process_command as _process_cmd,
+        validate_command as _validate_cmd,
+        inspect_command as _inspect_cmd,
+        filter_command as _filter_cmd,
+        export_legacy_command as _export_legacy_cmd,
+    )
+    
+    @app.command()
+    def process(
+        pdf_path: Path = typer.Argument(
+            ...,
+            exists=True,
+            readable=True,
+            help="Path to the PDF file to process",
+        ),
+        output_dir: Path = typer.Option(
+            ...,
+            "--output-dir", "-o",
+            help="Output directory for the unit library (required)",
+        ),
+        doc_id: str | None = typer.Option(
+            None,
+            "--doc-id",
+            help="Document ID (auto-generated if not provided)",
+        ),
+        llm_provider: str = typer.Option(
+            "kimi",
+            "--llm-provider",
+            help="LLM provider: kimi, openai, or ollama",
+        ),
+        llm_model: str = typer.Option(
+            "kimi-k2-5",
+            "--llm-model",
+            help="LLM model to use",
+        ),
+        filter_level: str = typer.Option(
+            "strict",
+            "--filter-level",
+            help="Export filter level: strict (production-ready), production (validated), development (all content)",
+        ),
+        skip_reinforcement: bool = typer.Option(
+            False,
+            "--skip-reinforcement",
+            help="Skip generating reinforcement items",
+        ),
+        skip_misconceptions: bool = typer.Option(
+            False,
+            "--skip-misconceptions",
+            help="Skip generating misconception units",
+        ),
+        validate_sql: bool = typer.Option(
+            True,
+            "--validate-sql/--no-validate-sql",
+            help="Validate SQL examples",
+        ),
+        min_quality_score: float = typer.Option(
+            0.8,
+            "--min-quality-score",
+            min=0.0,
+            max=1.0,
+            help="Minimum quality score threshold",
+        ),
+    ):
+        """Process a PDF into a unit library.
+        
+        This command extracts content from a PDF, maps concepts, generates
+        instructional units at all adaptive stages (L1-L4), and exports
+        the grounded instructional unit graph.
+        
+        Example:
+            algl-pdf process ./textbook.pdf --output-dir ./output
+            algl-pdf process ./textbook.pdf -o ./output --filter-level production
+            algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
+        """
+        _process_cmd(
+            pdf_path=pdf_path,
+            output_dir=output_dir,
+            doc_id=doc_id,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            filter_level=filter_level,
+            skip_reinforcement=skip_reinforcement,
+            skip_misconceptions=skip_misconceptions,
+            validate_sql=validate_sql,
+            min_quality_score=min_quality_score,
+        )
+
+    @app.command()
+    def validate(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        detailed: bool = typer.Option(
+            False,
+            "--detailed",
+            help="Show detailed validation report",
+        ),
+    ):
+        """Validate an existing unit library.
+        
+        Runs all quality gates on the unit library and displays a quality report.
+        
+        Example:
+            algl-pdf validate ./output/unit-library/
+            algl-pdf validate ./output/unit-library/ --detailed
+        """
+        _validate_cmd(library_dir=library_dir, detailed=detailed)
+
+    @app.command()
+    def inspect(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        concept: str = typer.Option(
+            ...,
+            "--concept", "-c",
+            help="Concept ID to inspect",
+        ),
+        show_sql: bool = typer.Option(
+            True,
+            "--show-sql/--no-show-sql",
+            help="Show SQL examples with syntax highlighting",
+        ),
+    ):
+        """Inspect units for a specific concept.
+        
+        Display all variants (L1-L4) for a concept with source evidence.
+        
+        Example:
+            algl-pdf inspect ./output/unit-library/ --concept select-basic
+            algl-pdf inspect ./output/unit-library/ -c join-operations --no-show-sql
+        """
+        _inspect_cmd(library_dir=library_dir, concept=concept, show_sql=show_sql)
+
+    @app.command()
+    def filter(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        level: str = typer.Option(
+            "strict",
+            "--level",
+            help="Export filter level: strict, production, or development",
+        ),
+        output_dir: Path | None = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for filtered library (default: in-place)",
+        ),
+    ):
+        """Re-run export filters on existing library.
+        
+        Creates a filtered subset of the unit library based on the specified level.
+        
+        Example:
+            algl-pdf filter ./output/unit-library/ --level strict
+            algl-pdf filter ./output/unit-library/ -o ./output/filtered/ --level production
+        """
+        _filter_cmd(library_dir=library_dir, level=level, output_dir=output_dir)
+
+    @app.command(name="export-legacy")
+    def export_legacy(
+        concept_map_path: Path = typer.Argument(
+            ...,
+            exists=True,
+            readable=True,
+            help="Path to old concept-map.json file",
+        ),
+        output_dir: Path = typer.Option(
+            ...,
+            "--output-dir", "-o",
+            help="Output directory for new format (required)",
+        ),
+        filter_level: str = typer.Option(
+            "strict",
+            "--filter-level",
+            help="Export filter level: strict, production, or development",
+        ),
+    ):
+        """Convert old concept-map.json to new unit library format.
+        
+        Transforms the legacy concept map structure into the new grounded
+        instructional unit graph format.
+        
+        Example:
+            algl-pdf export-legacy ./old-output/concept-map.json --output-dir ./new-output/
+            algl-pdf export-legacy ./old/concept-map.json -o ./new/ --filter-level strict
+        """
+        _export_legacy_cmd(
+            concept_map_path=concept_map_path,
+            output_dir=output_dir,
+            filter_level=filter_level,
+        )
+
+except ImportError:
+    pass  # Unit library commands not available

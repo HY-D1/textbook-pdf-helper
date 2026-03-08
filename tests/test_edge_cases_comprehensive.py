@@ -928,6 +928,10 @@ startxref
     
     def test_output_directory_without_write_permissions(self, temp_dir):
         """Test handling of output directory without write permissions."""
+        # Skip if running as root (root can write to read-only directories)
+        if os.geteuid() == 0:
+            pytest.skip("Cannot test permission denial when running as root")
+        
         # Create a read-only directory
         read_only_dir = temp_dir / "readonly"
         read_only_dir.mkdir()
