@@ -732,6 +732,120 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
     ),
     
     # =========================================================================
+    # CTE (Common Table Expression) Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="cte_undefined_reference_v1",
+        error_subtype_id="cte_undefined_reference",
+        concept_id="cte",
+        pattern_name="CTE Name Not Defined Before Use",
+        learner_symptom="relation does not exist error when referencing CTE",
+        likely_prereq_failure="subqueries-intro",
+        sql_pattern=r"WITH\s+\w+\s+AS",
+        remediation_order=1,
+        example_bad_sql="SELECT * FROM dept_summary; WITH dept_summary AS (SELECT dept_id, COUNT(*) FROM employees GROUP BY dept_id); -- CTE defined after use",
+        example_good_sql="WITH dept_summary AS (SELECT dept_id, COUNT(*) FROM employees GROUP BY dept_id) SELECT * FROM dept_summary;",
+        common_error_messages=[
+            "relation 'dept_summary' does not exist",
+            "cte name is undefined",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="cte_missing_comma_v1",
+        error_subtype_id="cte_syntax_error",
+        concept_id="cte",
+        pattern_name="Missing Comma Between Multiple CTEs",
+        learner_symptom="syntax error at or near 'WITH' or unexpected token",
+        likely_prereq_failure="cte",
+        sql_pattern=r"WITH\s+\w+\s+AS\s*\([^)]+\)\s+\w+\s+AS",
+        remediation_order=1,
+        example_bad_sql="WITH cte1 AS (SELECT * FROM t1) cte2 AS (SELECT * FROM t2) SELECT * FROM cte1, cte2; -- missing comma",
+        example_good_sql="WITH cte1 AS (SELECT * FROM t1), cte2 AS (SELECT * FROM t2) SELECT * FROM cte1, cte2;",
+        common_error_messages=[
+            "syntax error at or near 'AS'",
+            "missing comma",
+        ],
+        related_patterns=["cte_undefined_reference_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="cte_recursive_missing_union_v1",
+        error_subtype_id="cte_recursive_error",
+        concept_id="cte",
+        pattern_name="Recursive CTE Missing UNION ALL",
+        learner_symptom="Recursive CTE must have anchor and recursive member connected by UNION",
+        likely_prereq_failure="cte",
+        sql_pattern=r"WITH\s+RECURSIVE\s+\w+\s+AS",
+        remediation_order=3,
+        example_bad_sql="WITH RECURSIVE nums AS (SELECT 1 AS n) SELECT n+1 FROM nums WHERE n < 5; -- missing UNION",
+        example_good_sql="WITH RECURSIVE nums AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM nums WHERE n < 5) SELECT * FROM nums;",
+        common_error_messages=[
+            "recursive query must have anchor and recursive members",
+            "missing UNION in recursive CTE",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Intersect and Except Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="set_operation_column_mismatch_v1",
+        error_subtype_id="set_operation_column_mismatch",
+        concept_id="intersect-except",
+        pattern_name="Column Count Mismatch in INTERSECT/EXCEPT",
+        learner_symptom="Each query in INTERSECT/EXCEPT must have same number of columns",
+        likely_prereq_failure="union",
+        sql_pattern=r"SELECT.*(INTERSECT|EXCEPT).*SELECT",
+        remediation_order=2,
+        example_bad_sql="SELECT name FROM employees INTERSECT SELECT name, salary FROM managers; -- column count mismatch",
+        example_good_sql="SELECT name, NULL AS salary FROM employees INTERSECT SELECT name, salary FROM managers;",
+        common_error_messages=[
+            "each query must have the same number of columns",
+            "INTERSECT/EXCEPT column count mismatch",
+        ],
+        related_patterns=["union_column_count_mismatch_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="intersect_vs_inner_join_confusion_v1",
+        error_subtype_id="set_operation_vs_join_confusion",
+        concept_id="intersect-except",
+        pattern_name="INTERSECT vs INNER JOIN Confusion",
+        learner_symptom="Using INTERSECT when JOIN would be more appropriate",
+        likely_prereq_failure="inner-join",
+        sql_pattern=r"SELECT\s+\w+\s+FROM.*INTERSECT",
+        remediation_order=2,
+        example_bad_sql="SELECT dept_id FROM employees INTERSECT SELECT id FROM departments; -- loses relationship context",
+        example_good_sql="SELECT e.dept_id FROM employees e INNER JOIN departments d ON e.dept_id = d.id; -- preserves row context",
+        common_error_messages=[
+            "unexpected result format",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="except_vs_not_exists_confusion_v1",
+        error_subtype_id="except_vs_not_exists_confusion",
+        concept_id="intersect-except",
+        pattern_name="EXCEPT vs NOT EXISTS Confusion",
+        learner_symptom="Using EXCEPT when NOT EXISTS would be more efficient",
+        likely_prereq_failure="exists-operator",
+        sql_pattern=r"SELECT.*FROM.*EXCEPT",
+        remediation_order=3,
+        example_bad_sql="SELECT dept_id FROM departments EXCEPT SELECT dept_id FROM employees; -- set operation approach",
+        example_good_sql="SELECT d.dept_id FROM departments d WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE e.dept_id = d.dept_id);",
+        common_error_messages=[
+            "performance warning",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
     # Correlated Subquery Errors
     # =========================================================================
     
@@ -847,6 +961,64 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
     ),
     
     # =========================================================================
+    # MERGE/UPSERT Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="merge_update_delete_conflict_v1",
+        error_subtype_id="merge_operation_conflict",
+        concept_id="merge-upsert",
+        pattern_name="MERGE UPDATE and DELETE on Same Row Conflict",
+        learner_symptom="A MERGE statement cannot UPDATE/DELETE the same row more than once",
+        likely_prereq_failure="update-statement",
+        sql_pattern=r"MERGE\s+INTO.*WHEN\s+MATCHED.*UPDATE.*DELETE",
+        remediation_order=3,
+        example_bad_sql="MERGE INTO target USING source ON t.id = s.id WHEN MATCHED THEN UPDATE SET val = s.val DELETE WHERE s.status = 'D'; -- conflicts",
+        example_good_sql="MERGE INTO target USING source ON t.id = s.id WHEN MATCHED AND s.status != 'D' THEN UPDATE SET val = s.val WHEN MATCHED AND s.status = 'D' THEN DELETE;",
+        common_error_messages=[
+            "cannot update/delete the same row more than once",
+            "MERGE operation conflict",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="merge_missing_source_target_v1",
+        error_subtype_id="merge_syntax_error",
+        concept_id="merge-upsert",
+        pattern_name="MERGE Missing Source or Target Specification",
+        learner_symptom="Syntax error in MERGE statement: missing source or target",
+        likely_prereq_failure="insert-statement",
+        sql_pattern=r"MERGE\s+(?!INTO)",
+        remediation_order=1,
+        example_bad_sql="MERGE target_table USING source_table ON id = sid; -- missing INTO",
+        example_good_sql="MERGE INTO target_table USING source_table ON target_table.id = source_table.sid;",
+        common_error_messages=[
+            "syntax error at or near 'MERGE'",
+            "missing INTO keyword",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="upsert_duplicate_key_v1",
+        error_subtype_id="upsert_duplicate_key",
+        concept_id="merge-upsert",
+        pattern_name="UPSERT Causing Duplicate Key Violation",
+        learner_symptom="Duplicate key value violates unique constraint in UPSERT",
+        likely_prereq_failure="insert-statement",
+        sql_pattern=r"INSERT\s+.*ON\s+(DUPLICATE|CONFLICT)",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO users (id, name) VALUES (1, 'John') ON DUPLICATE KEY UPDATE name = 'Jane'; -- wrong key assumption",
+        example_good_sql="INSERT INTO users (id, name) VALUES (1, 'John') ON DUPLICATE KEY UPDATE name = VALUES(name);",
+        common_error_messages=[
+            "Duplicate entry for key",
+            "unique constraint violation",
+        ],
+        related_patterns=["duplicate_primary_key_v1"],
+    ),
+    
+    # =========================================================================
     # DML Errors - UPDATE
     # =========================================================================
     
@@ -920,6 +1092,218 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "all rows deleted",
         ],
         related_patterns=["missing_where_clause_v1"],
+    ),
+    
+    # =========================================================================
+    # Database Design Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="database_design_missing_pk_v1",
+        error_subtype_id="missing_primary_key",
+        concept_id="database-design",
+        pattern_name="Table Missing Primary Key",
+        learner_symptom="Table without primary key can have duplicate rows",
+        likely_prereq_failure="create-table",
+        sql_pattern=r"CREATE\s+TABLE\s+\w+\s*\([^)]*\)(?!.*PRIMARY\s+KEY)",
+        remediation_order=2,
+        example_bad_sql="CREATE TABLE audit_log (log_date DATE, message TEXT); -- no primary key",
+        example_good_sql="CREATE TABLE audit_log (log_id INT PRIMARY KEY, log_date DATE, message TEXT);",
+        common_error_messages=[
+            "warning: table lacks primary key",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="database_design_no_normalization_v1",
+        error_subtype_id="denormalization_issue",
+        concept_id="database-design",
+        pattern_name="Denormalized Data Structure",
+        learner_symptom="Data redundancy causing update anomalies",
+        likely_prereq_failure="normalization",
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]*(?:name|title).*\w+_\w+_name",
+        remediation_order=3,
+        example_bad_sql="CREATE TABLE orders (order_id INT, customer_name VARCHAR(100), customer_address VARCHAR(200), customer_phone VARCHAR(20)); -- redundant customer data",
+        example_good_sql="CREATE TABLE orders (order_id INT, customer_id INT, FOREIGN KEY (customer_id) REFERENCES customers(id));",
+        common_error_messages=[
+            "data redundancy warning",
+            "update anomaly risk",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="database_design_missing_fk_v1",
+        error_subtype_id="missing_foreign_key",
+        concept_id="database-design",
+        pattern_name="Missing Foreign Key Constraint",
+        learner_symptom="Orphan records possible without FK constraints",
+        likely_prereq_failure="foreign-key",
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]*\w+_id\s+INT[^)]*\)(?!.*FOREIGN\s+KEY)",
+        remediation_order=2,
+        example_bad_sql="CREATE TABLE orders (order_id INT, customer_id INT); -- no FK constraint",
+        example_good_sql="CREATE TABLE orders (order_id INT, customer_id INT, FOREIGN KEY (customer_id) REFERENCES customers(id));",
+        common_error_messages=[
+            "referential integrity warning",
+        ],
+        related_patterns=["database_design_missing_pk_v1"],
+    ),
+    
+    # =========================================================================
+    # ERD Basics Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="erd_many_to_many_wrong_v1",
+        error_subtype_id="erd_relationship_error",
+        concept_id="erd-basics",
+        pattern_name="Many-to-Many Relationship Not Resolved",
+        learner_symptom="Direct foreign key references in many-to-many relationship",
+        likely_prereq_failure="database-design",
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]*\w+_id.*\w+_id.*FOREIGN\s+KEY",
+        remediation_order=3,
+        example_bad_sql="CREATE TABLE students_courses (student_id INT REFERENCES students, course_id INT REFERENCES courses, grade VARCHAR(2)); -- missing junction table concept",
+        example_good_sql="CREATE TABLE enrollments (enrollment_id INT PRIMARY KEY, student_id INT REFERENCES students, course_id INT REFERENCES courses, grade VARCHAR(2));",
+        common_error_messages=[
+            "composite key should be used for junction table",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="erd_wrong_cardinality_v1",
+        error_subtype_id="erd_cardinality_error",
+        concept_id="erd-basics",
+        pattern_name="Wrong Cardinality in Relationship Implementation",
+        learner_symptom="One-to-many implemented as one-to-one or vice versa",
+        likely_prereq_failure="erd-basics",
+        sql_pattern=r"CREATE\s+UNIQUE\s+INDEX.*\w+_id",
+        remediation_order=2,
+        example_bad_sql="CREATE UNIQUE INDEX idx_emp_dept ON employees(dept_id); -- prevents multiple employees per department",
+        example_good_sql="-- Remove UNIQUE for one-to-many: one department has many employees",
+        common_error_messages=[
+            "cannot insert duplicate key",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Normalization - First Normal Form (1NF)
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="first_normal_form_multivalue_v1",
+        error_subtype_id="first_normal_form_violation",
+        concept_id="first-normal-form",
+        pattern_name="Multi-Valued Attribute in Single Column",
+        learner_symptom="Storing multiple values in one column violates 1NF",
+        likely_prereq_failure="database-design",
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]*\w+\s+VARCHAR\s*\(\s*\d+\s*\)",
+        remediation_order=2,
+        example_bad_sql="CREATE TABLE employees (id INT, skills VARCHAR(200)); -- skills = 'SQL,Python,Java' violates 1NF",
+        example_good_sql="CREATE TABLE employees (id INT); CREATE TABLE employee_skills (emp_id INT, skill VARCHAR(50));",
+        common_error_messages=[
+            "multi-valued attribute detected",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="first_normal_form_repeating_groups_v1",
+        error_subtype_id="first_normal_form_violation",
+        concept_id="first-normal-form",
+        pattern_name="Repeating Groups in Table Structure",
+        learner_symptom="Multiple similar columns for same attribute type",
+        likely_prereq_failure="database-design",
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]*phone1.*phone2.*phone3",
+        remediation_order=2,
+        example_bad_sql="CREATE TABLE contacts (id INT, phone1 VARCHAR(20), phone2 VARCHAR(20), phone3 VARCHAR(20)); -- repeating group",
+        example_good_sql="CREATE TABLE contacts (id INT); CREATE TABLE contact_phones (contact_id INT, phone_number VARCHAR(20), phone_type VARCHAR(20));",
+        common_error_messages=[
+            "repeating groups violate 1NF",
+        ],
+        related_patterns=["first_normal_form_multivalue_v1"],
+    ),
+    
+    # =========================================================================
+    # Normalization - Second Normal Form (2NF)
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="second_normal_form_partial_dependency_v1",
+        error_subtype_id="second_normal_form_violation",
+        concept_id="second-normal-form",
+        pattern_name="Partial Dependency on Composite Key (2NF Violation)",
+        learner_symptom="Non-key column depends on only part of composite key",
+        likely_prereq_failure="first-normal-form",
+        sql_pattern=r"CREATE\s+TABLE.*PRIMARY\s+KEY\s*\([^)]+,[^)]+\)",
+        remediation_order=3,
+        example_bad_sql="CREATE TABLE enrollment (student_id INT, course_id INT, course_name VARCHAR(100), PRIMARY KEY (student_id, course_id)); -- course_name depends only on course_id",
+        example_good_sql="CREATE TABLE enrollments (student_id INT, course_id INT, PRIMARY KEY (student_id, course_id)); CREATE TABLE courses (course_id INT PRIMARY KEY, course_name VARCHAR(100));",
+        common_error_messages=[
+            "partial dependency detected",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Normalization - Third Normal Form (3NF)
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="third_normal_form_transitive_dependency_v1",
+        error_subtype_id="third_normal_form_violation",
+        concept_id="third-normal-form",
+        pattern_name="Transitive Dependency Violates 3NF",
+        learner_symptom="Non-key column depends on another non-key column",
+        likely_prereq_failure="second-normal-form",
+        sql_pattern=r"CREATE\s+TABLE.*\w+_name.*\w+_code",
+        remediation_order=3,
+        example_bad_sql="CREATE TABLE employees (emp_id INT PRIMARY KEY, dept_id INT, dept_name VARCHAR(100), salary DECIMAL); -- dept_name depends on dept_id, not emp_id",
+        example_good_sql="CREATE TABLE employees (emp_id INT PRIMARY KEY, dept_id INT, salary DECIMAL); CREATE TABLE departments (dept_id INT PRIMARY KEY, dept_name VARCHAR(100));",
+        common_error_messages=[
+            "transitive dependency detected",
+        ],
+        related_patterns=["second_normal_form_partial_dependency_v1"],
+    ),
+    
+    # =========================================================================
+    # Normalization - General Concept
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="normalization_over_normalization_v1",
+        error_subtype_id="over_normalization",
+        concept_id="normalization",
+        pattern_name="Over-Normalization Causing Performance Issues",
+        learner_symptom="Too many joins required for simple queries",
+        likely_prereq_failure="third-normal-form",
+        sql_pattern=r"SELECT.*FROM.*JOIN.*JOIN.*JOIN.*JOIN",
+        remediation_order=3,
+        example_bad_sql="SELECT e.name, d.name, l.city FROM employees e JOIN departments d ON e.dept_id = d.id JOIN locations l ON d.loc_id = l.id JOIN regions r ON l.region_id = r.id; -- excessive normalization",
+        example_good_sql="-- Consider denormalizing frequently accessed data into a summary table",
+        common_error_messages=[
+            "query performance degraded",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="normalization_ignoring_anomalies_v1",
+        error_subtype_id="normalization_ignored",
+        concept_id="normalization",
+        pattern_name="Not Normalizing Leading to Update Anomalies",
+        learner_symptom="Data inconsistency from redundant data storage",
+        likely_prereq_failure="database-design",
+        sql_pattern=r"UPDATE.*SET.*WHERE",
+        remediation_order=2,
+        example_bad_sql="UPDATE employees SET dept_name = 'Engineering' WHERE dept_id = 5; -- must update all employees in dept",
+        example_good_sql="UPDATE departments SET dept_name = 'Engineering' WHERE dept_id = 5; -- update in one place",
+        common_error_messages=[
+            "inconsistent data after update",
+        ],
+        related_patterns=["database_design_no_normalization_v1"],
     ),
     
     # =========================================================================
@@ -1077,6 +1461,123 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
     ),
     
     # =========================================================================
+    # Primary Key Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="duplicate_primary_key_v1",
+        error_subtype_id="duplicate_primary_key",
+        concept_id="primary-key",
+        pattern_name="Duplicate Primary Key Value",
+        learner_symptom="Duplicate entry error when inserting or updating row",
+        likely_prereq_failure=None,
+        sql_pattern=r"INSERT\s+INTO\s+\w+.*VALUES.*\([^)]*\d+",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO employees (emp_id, name) VALUES (1, 'John'); -- emp_id 1 already exists",
+        example_good_sql="INSERT INTO employees (emp_id, name) VALUES (100, 'John'); -- use unique emp_id",
+        common_error_messages=[
+            "Duplicate entry for key 'PRIMARY'",
+            "duplicate key value violates unique constraint",
+            "primary key violation",
+        ],
+        related_patterns=["unique_constraint_violation_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="primary_key_null_v1",
+        error_subtype_id="primary_key_null_violation",
+        concept_id="primary-key",
+        pattern_name="Primary Key Cannot Be NULL",
+        learner_symptom="Column cannot be null error for primary key column",
+        likely_prereq_failure="null-handling",
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s*\([^)]*\)\s*VALUES\s*\([^)]*NULL",
+        remediation_order=1,
+        example_bad_sql="INSERT INTO employees (emp_id, name) VALUES (NULL, 'John'); -- PK cannot be NULL",
+        example_good_sql="INSERT INTO employees (emp_id, name) VALUES (101, 'John'); -- provide valid PK value",
+        common_error_messages=[
+            "column cannot be null",
+            "violates not-null constraint",
+        ],
+        related_patterns=["null_constraint_violation_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="primary_key_auto_increment_confusion_v1",
+        error_subtype_id="auto_increment_misuse",
+        concept_id="primary-key",
+        pattern_name="Confusion About Auto-Increment Primary Keys",
+        learner_symptom="Manually specifying values for auto-increment column causing conflicts",
+        likely_prereq_failure=None,
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s*\(\s*\w+\s*\)\s*VALUES\s*\(\s*\d+",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO users (user_id, name) VALUES (5, 'Alice'); -- user_id is AUTO_INCREMENT",
+        example_good_sql="INSERT INTO users (name) VALUES ('Alice'); -- let auto-increment handle PK",
+        common_error_messages=[
+            "Duplicate entry for key",
+        ],
+        related_patterns=["duplicate_primary_key_v1"],
+    ),
+    
+    # =========================================================================
+    # Foreign Key Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="foreign_key_violation_insert_v1",
+        error_subtype_id="foreign_key_violation",
+        concept_id="foreign-key",
+        pattern_name="FK Constraint Violation When Inserting Child Row",
+        learner_symptom="Cannot add or update a child row: foreign key constraint fails",
+        likely_prereq_failure="primary-key",
+        sql_pattern=r"INSERT\s+INTO.*VALUES",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO orders (order_id, customer_id) VALUES (1, 999); -- customer_id 999 doesn't exist in parent table",
+        example_good_sql="INSERT INTO orders (order_id, customer_id) VALUES (1, 5); -- valid customer_id referencing existing parent",
+        common_error_messages=[
+            "Cannot add or update a child row: a foreign key constraint fails",
+            "foreign key constraint violation",
+            "violates foreign key constraint",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="foreign_key_violation_update_v1",
+        error_subtype_id="foreign_key_violation",
+        concept_id="foreign-key",
+        pattern_name="FK Constraint Violation When Updating Referenced Key",
+        learner_symptom="Cannot update parent row because child rows reference it",
+        likely_prereq_failure="foreign-key",
+        sql_pattern=r"UPDATE\s+\w+\s+SET\s+\w+\s*=",
+        remediation_order=3,
+        example_bad_sql="UPDATE customers SET customer_id = 999 WHERE customer_id = 5; -- referenced by orders table",
+        example_good_sql="UPDATE customers SET name = 'New Name' WHERE customer_id = 5; -- update non-key column instead",
+        common_error_messages=[
+            "Cannot update parent row: a foreign key constraint fails",
+            "foreign key constraint violation on update",
+        ],
+        related_patterns=["foreign_key_violation_insert_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="foreign_key_delete_cascade_v1",
+        error_subtype_id="foreign_key_delete_violation",
+        concept_id="foreign-key",
+        pattern_name="Deleting Parent Row Without Handling Children",
+        learner_symptom="Cannot delete parent row: foreign key constraint fails",
+        likely_prereq_failure="foreign-key",
+        sql_pattern=r"DELETE\s+FROM\s+\w+\s*(?!.*WHERE)",
+        remediation_order=2,
+        example_bad_sql="DELETE FROM departments WHERE dept_id = 1; -- employees still reference this department",
+        example_good_sql="DELETE FROM employees WHERE dept_id = 1; DELETE FROM departments WHERE dept_id = 1; -- delete children first",
+        common_error_messages=[
+            "Cannot delete parent row: a foreign key constraint fails",
+            "foreign key constraint violation on delete",
+        ],
+        related_patterns=["foreign_key_violation_insert_v1"],
+    ),
+    
+    # =========================================================================
     # Constraints Errors
     # =========================================================================
     
@@ -1095,7 +1596,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "foreign key constraint violation",
             "violates foreign key constraint",
         ],
-        related_patterns=[],
+        related_patterns=["foreign_key_violation_insert_v1"],
     ),
     
     MisconceptionPattern(
@@ -1130,6 +1631,122 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         common_error_messages=[
             "duplicate key value violates unique constraint",
             "unique constraint violation",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # String Functions Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="string_function_concat_vs_pipe_v1",
+        error_subtype_id="string_function_syntax_error",
+        concept_id="string-functions",
+        pattern_name="Incorrect String Function Usage (CONCAT vs ||)",
+        learner_symptom="Syntax error when using string concatenation operator",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT\s+.*\|\|",
+        remediation_order=2,
+        example_bad_sql="SELECT first_name || ' ' || last_name AS full_name FROM employees; -- || not supported in all databases",
+        example_good_sql="SELECT CONCAT(first_name, ' ', last_name) AS full_name FROM employees; -- use CONCAT function",
+        common_error_messages=[
+            "syntax error at or near '|'",
+            "operator does not exist: text || text",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="string_function_concat_missing_comma_v1",
+        error_subtype_id="string_function_syntax_error",
+        concept_id="string-functions",
+        pattern_name="Missing Comma in CONCAT Function",
+        learner_symptom="Wrong number of arguments or syntax error in CONCAT",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"CONCAT\s*\(\s*\w+\s+\w+",
+        remediation_order=1,
+        example_bad_sql="SELECT CONCAT(first_name last_name) FROM employees; -- missing comma",
+        example_good_sql="SELECT CONCAT(first_name, ' ', last_name) FROM employees;",
+        common_error_messages=[
+            "wrong number of arguments",
+            "syntax error",
+        ],
+        related_patterns=["string_function_concat_vs_pipe_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="string_function_case_confusion_v1",
+        error_subtype_id="string_function_misuse",
+        concept_id="string-functions",
+        pattern_name="UPPER vs LOWER Function Confusion",
+        learner_symptom="Case-insensitive search not working as expected",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+UPPER\s*\(\s*\w+\s*\)\s*=\s*'[a-z]+",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM users WHERE UPPER(name) = 'john'; -- comparing uppercase to lowercase literal",
+        example_good_sql="SELECT * FROM users WHERE UPPER(name) = 'JOHN'; -- both sides uppercase",
+        common_error_messages=[
+            "no rows returned",
+            "unexpected empty result",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Date Functions Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="date_format_mismatch_v1",
+        error_subtype_id="date_format_error",
+        concept_id="date-functions",
+        pattern_name="Date Format Mismatch in Comparison",
+        learner_symptom="Date format is not recognized or invalid date value",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+\w+\s*=\s*'\d{2}[/-]\d{2}[/-]\d{2,4}'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM orders WHERE order_date = '01/15/2023'; -- wrong format, use ISO 8601",
+        example_good_sql="SELECT * FROM orders WHERE order_date = '2023-01-15'; -- ISO format",
+        common_error_messages=[
+            "date format is not recognized",
+            "invalid date value",
+            "date/time field value out of range",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="date_function_string_literal_v1",
+        error_subtype_id="date_format_error",
+        concept_id="date-functions",
+        pattern_name="Date String Without Proper Casting",
+        learner_symptom="Operator does not exist when comparing date to string",
+        likely_prereq_failure="data-types",
+        sql_pattern=r"WHERE\s+\w+\s*[<>=]\s*'\d{4}-\d{2}-\d{2}'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM events WHERE event_date > '2023-01-01'; -- implicit string comparison",
+        example_good_sql="SELECT * FROM events WHERE event_date > DATE('2023-01-01'); -- explicit date conversion",
+        common_error_messages=[
+            "operator does not exist: date > text",
+            "invalid input syntax for type date",
+        ],
+        related_patterns=["date_format_mismatch_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="date_function_wrong_function_v1",
+        error_subtype_id="date_function_misuse",
+        concept_id="date-functions",
+        pattern_name="Using Wrong Date Function for Task",
+        learner_symptom="Unexpected date calculation results",
+        likely_prereq_failure="date-functions",
+        sql_pattern=r"SELECT\s+.*DAY\s*\(\s*\w+\s*\)",
+        remediation_order=2,
+        example_bad_sql="SELECT DAY(order_date) FROM orders; -- extracts day number, not day of week",
+        example_good_sql="SELECT DAYOFWEEK(order_date) FROM orders; -- get day of week",
+        common_error_messages=[
+            "unexpected date result",
         ],
         related_patterns=[],
     ),
@@ -1171,7 +1788,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "date format is not recognized",
             "invalid date value",
         ],
-        related_patterns=[],
+        related_patterns=["date_format_mismatch_v1"],
     ),
     
     MisconceptionPattern(
@@ -1717,6 +2334,59 @@ ERROR_SUBTYPE_TO_CONCEPT: dict[str, str] = {
     "in_subquery_null_issue": "subquery-in-where",
     "not_in_null_issue": "subquery-in-where",
     "exists_subquery_confusion": "subquery-in-where",
+    
+    # primary-key (new)
+    "duplicate_primary_key": "primary-key",
+    "primary_key_null_violation": "primary-key",
+    "auto_increment_misuse": "primary-key",
+    
+    # foreign-key (new)
+    "foreign_key_violation": "foreign-key",
+    "foreign_key_delete_violation": "foreign-key",
+    
+    # string-functions (new)
+    "string_function_syntax_error": "string-functions",
+    "string_function_misuse": "string-functions",
+    
+    # date-functions (new)
+    "date_function_misuse": "date-functions",
+    
+    # cte (new)
+    "cte_undefined_reference": "cte",
+    "cte_syntax_error": "cte",
+    "cte_recursive_error": "cte",
+    
+    # intersect-except (new)
+    "set_operation_column_mismatch": "intersect-except",
+    "set_operation_vs_join_confusion": "intersect-except",
+    "except_vs_not_exists_confusion": "intersect-except",
+    
+    # merge-upsert (new)
+    "merge_operation_conflict": "merge-upsert",
+    "merge_syntax_error": "merge-upsert",
+    "upsert_duplicate_key": "merge-upsert",
+    
+    # database-design (new)
+    "missing_primary_key": "database-design",
+    "denormalization_issue": "database-design",
+    "missing_foreign_key": "database-design",
+    
+    # erd-basics (new)
+    "erd_relationship_error": "erd-basics",
+    "erd_cardinality_error": "erd-basics",
+    
+    # first-normal-form (new)
+    "first_normal_form_violation": "first-normal-form",
+    
+    # second-normal-form (new)
+    "second_normal_form_violation": "second-normal-form",
+    
+    # third-normal-form (new)
+    "third_normal_form_violation": "third-normal-form",
+    
+    # normalization (new)
+    "over_normalization": "normalization",
+    "normalization_ignored": "normalization",
 }
 
 
