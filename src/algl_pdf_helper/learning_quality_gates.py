@@ -1164,10 +1164,10 @@ class LearningQualityGates:
                 
         elif target_stage == "L3_explanation":
             # Explicit takeaway or summary required
-            for field in ["key_takeaway", "takeaway", "summary", "one_sentence_summary"]:
-                if content.get(field):
-                    takeaway = content[field]
-                    takeaway_field = field
+            for field_name in ["key_takeaway", "takeaway", "summary", "one_sentence_summary"]:
+                if content.get(field_name):
+                    takeaway = content[field_name]
+                    takeaway_field = field_name
                     break
                     
         elif target_stage == "L4_reflective_note":
@@ -1189,10 +1189,10 @@ class LearningQualityGates:
                 takeaway_field = "recall_prompt"
         else:
             # Unknown stage - try all standard fields
-            for field in ["takeaway", "key_takeaway", "summary", "key_concept_summary", "one_sentence_summary"]:
-                if content.get(field):
-                    takeaway = content[field]
-                    takeaway_field = field
+            for field_name in ["takeaway", "key_takeaway", "summary", "key_concept_summary", "one_sentence_summary"]:
+                if content.get(field_name):
+                    takeaway = content[field_name]
+                    takeaway_field = field_name
                     break
         
         if not takeaway:

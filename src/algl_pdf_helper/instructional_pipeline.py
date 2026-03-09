@@ -54,14 +54,13 @@ from .instructional_models import (
     MisconceptionUnit,
     ReinforcementItem,
     UnitLibraryExport,
-    SourceSpan,
 )
 from .section_extractor import SectionExtractor, ContentBlock, ContentFilter, BlockType
-from .sql_ontology import ConceptOntology, SQL_CONCEPTS
+from .sql_ontology import ConceptOntology
 from .unit_generator import UnitGenerator, GenerationConfig as UnitGenerationConfig
 from .misconception_bank import MisconceptionBank, GenerationConfig as MisconceptionConfig
 from .reinforcement_bank import ReinforcementBank, ReinforcementConfig
-from .sql_validator import SQLValidator, ValidationLevel
+from .sql_validator import SQLValidator
 from .learning_quality_gates import LearningQualityGates, Severity
 from .export_filters import (
     ExportFilterEngine, 

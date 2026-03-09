@@ -24,10 +24,9 @@ Usage:
 from __future__ import annotations
 
 import random
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any
 
 from .instructional_models import (
     InstructionalUnit,
@@ -35,7 +34,6 @@ from .instructional_models import (
     ReinforcementType,
 )
 from .misconception_bank import (
-    GenerationConfig,
     MisconceptionBank,
     MisconceptionPattern,
 )
