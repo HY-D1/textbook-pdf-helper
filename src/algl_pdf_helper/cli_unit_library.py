@@ -106,16 +106,17 @@ __all__ = ["process_command", "validate_command", "inspect_command", "filter_com
 # Filter level enum for CLI
 FilterLevelCLI = typer.Option(
     "production",
-    help="Export filter level: strict (production-ready), production (validated), development (all content)"
+    help="Export filter level: strict, production (default), or development"
 )
 
 LLMProviderCLI = typer.Option(
-    "ollama",
-    help="LLM provider: ollama (default), kimi, openai, or none (grounded only). Note: only ollama is currently implemented."
+    "grounded",
+    help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented."
 )
 
 # Provider-specific default models
 DEFAULT_MODELS: dict[str, str] = {
+    "grounded": "none",
     "kimi": "kimi-k2-5",
     "openai": "gpt-4",
     "ollama": "llama3.2:3b",
@@ -950,7 +951,7 @@ def inspect_command(
                 # Content preview
                 content = getattr(unit, "content", {})
                 if content:
-                    if stage_name == "L1":
+                    if stage_name == "L1_hint":
                         hint = content.get("hint_text", "") if isinstance(content, dict) else ""
                         if hint:
                             console.print(f"    Hint: {hint[:100]}...")

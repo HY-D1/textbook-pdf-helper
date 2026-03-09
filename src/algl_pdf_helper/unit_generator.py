@@ -975,8 +975,8 @@ class UnitGenerator:
     
     def _call_llm(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
         """Call LLM with prompt and return structured response."""
-        # If provider is "none", skip silently (quiet fallback mode)
-        if config.llm_provider == "none":
+        # Grounded mode: no LLM, use extracted content only
+        if config.llm_provider in ("grounded", "none"):
             return {}
         
         try:

@@ -1169,19 +1169,19 @@ try:
             help="Document ID (auto-generated if not provided)",
         ),
         llm_provider: str = typer.Option(
-            "ollama",
+            "grounded",
             "--llm-provider",
-            help="LLM provider: ollama (default), kimi, or openai. Note: only ollama is currently implemented.",
+            help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented.",
         ),
         llm_model: str | None = typer.Option(
             None,
             "--llm-model",
-            help="LLM model to use (defaults: kimi-k2-5, gpt-4, llama3.2:3b)",
+            help="LLM model to use (only used with non-grounded providers)",
         ),
         filter_level: str = typer.Option(
             "production",
             "--filter-level",
-            help="Export filter level: strict (production-ready), production (validated), development (all content)",
+            help="Export filter level: strict, production (default), or development",
         ),
         skip_reinforcement: bool = typer.Option(
             False,
