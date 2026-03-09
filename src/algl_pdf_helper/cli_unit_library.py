@@ -424,6 +424,32 @@ def process_command(
         stats_table.add_row("Elapsed Time", f"{elapsed_time:.1f}s")
     
     console.print(stats_table)
+    
+    # Show blocked units with reasons if any were filtered
+    if result.blocked_units_with_reasons:
+        console.print()
+        console.print("[yellow bold]Units blocked from production:[/yellow bold]")
+        blocked_table = Table(show_header=True, box=None)
+        blocked_table.add_column("Unit ID", style="cyan", no_wrap=True)
+        blocked_table.add_column("Reason", style="white")
+        
+        for unit_id, reasons in result.blocked_units_with_reasons[:10]:
+            # Get the first/highest priority reason
+            reason = reasons[0] if reasons else "Unknown reason"
+            # Truncate long reasons
+            if len(reason) > 60:
+                reason = reason[:57] + "..."
+            blocked_table.add_row(unit_id, reason)
+        
+        if len(result.blocked_units_with_reasons) > 10:
+            blocked_table.add_row(
+                "...", 
+                f"[dim]and {len(result.blocked_units_with_reasons) - 10} more[/dim]"
+            )
+        
+        console.print(blocked_table)
+        console.print("[dim]Run with --filter-level development to include these units with review flags[/dim]")
+    
     console.print()
     console.print(f"[green]✅ Unit library exported to:[/green] {output_dir}/")
     
