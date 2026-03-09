@@ -812,6 +812,8 @@ class InstructionalPipeline:
             keywords.update(["count", "sum", "avg", "min", "max"])
         if "null" in concept_id_lower:
             keywords.update(["null", "is null", "is not null"])
+        if "exists" in concept_id_lower:
+            keywords.update(["exists", "not exists", "existence", "semi-join"])
         
         # Learning objectives keywords
         for objective in concept.get("learning_objectives", []):
@@ -853,6 +855,10 @@ class InstructionalPipeline:
         for concept_id, blocks in concept_blocks.items():
             if not blocks:
                 continue
+            
+            # Debug logging for exists-operator when block count is low (potential issue)
+            if concept_id == "exists-operator" and len(blocks) < 5:
+                self._logger.warning(f"EXISTS-OPERATOR has only {len(blocks)} blocks mapped (potential content gap)")
             
             # Get prerequisites from ontology
             prereqs = []
