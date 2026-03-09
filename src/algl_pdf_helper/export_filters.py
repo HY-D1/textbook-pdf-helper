@@ -194,10 +194,14 @@ def _check_title_is_heading_fragment(unit: InstructionalUnit) -> tuple[bool, str
 
 
 def _check_low_relevance_score(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if grounding confidence is too low (uses unit.grounding_confidence)."""
+    """Check if grounding confidence is too low (uses unit.grounding_confidence).
+    
+    Relaxed threshold to allow grounded fallback content (0.3) while still
+    blocking truly ungrounded content (0.0).
+    """
     confidence = unit.grounding_confidence
-    if confidence < 0.6:
-        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.6)"
+    if confidence < 0.3:
+        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.3)"
     return True, f"Grounding confidence acceptable ({confidence:.2f})"
 
 
@@ -401,20 +405,25 @@ def _check_admin_only_concept(unit: InstructionalUnit) -> tuple[bool, str]:
 
 
 def _check_extraction_confidence_too_low(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if grounding confidence is too low."""
+    """Check if grounding confidence is too low.
+    
+    Relaxed threshold to allow grounded fallback content (0.3) while still
+    blocking truly ungrounded content (0.0).
+    """
     confidence = unit.grounding_confidence
     
-    if confidence < 0.5:
-        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.5)"
+    if confidence < 0.3:
+        return False, f"Grounding confidence too low ({confidence:.2f}, min 0.3)"
     
     return True, f"Grounding confidence acceptable ({confidence:.2f})"
 
 
 def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if all practice links are unresolved placeholders.
+    """Check if all practice links are unresolved placeholders - warn but don't block.
     
     Only applies to L3_explanation units with practice_links content.
-    If no real problems exist for a concept, the unit should be filtered in production.
+    Changed from HARD_BLOCK to WARN: practice system integration isn't ready yet,
+    so placeholder links are acceptable for now.
     """
     # Skip for non-explanation stages
     if unit.target_stage != "L3_explanation":
@@ -430,6 +439,7 @@ def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str
     
     # Check if all links are unresolved
     all_unresolved = True
+    unresolved_count = 0
     for link in practice_links:
         if isinstance(link, dict):
             needs_resolution = link.get("needs_resolution", False)
@@ -448,12 +458,168 @@ def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str
             )
             if has_real_problems:
                 all_unresolved = False
-                break
+            else:
+                unresolved_count += 1
+        else:
+            unresolved_count += 1
     
     if all_unresolved:
-        return False, "All practice links are unresolved placeholders"
+        # Changed: return True with warning message instead of False
+        return True, f"WARNING: All {len(practice_links)} practice links are unresolved placeholders"
+    
+    if unresolved_count > 0:
+        return True, f"WARNING: {unresolved_count}/{len(practice_links)} practice links are unresolved placeholders"
     
     return True, "Has resolved practice links with real problem IDs"
+
+
+def _check_broken_sql_example(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Block L2 units with broken SQL like 'SELECT;'."""
+    if unit.target_stage != "L2_hint_plus_example":
+        return True, f"Broken SQL check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check SQL"
+    
+    example_sql = content.get("example_sql", "")
+    if not example_sql:
+        return True, "No SQL example to check"
+    
+    # Check for broken examples
+    broken_patterns = [
+        r"^SELECT\s*;?$",
+        r"^INSERT\s*;?$",
+        r"^UPDATE\s*;?$",
+        r"^DELETE\s*;?$",
+    ]
+    
+    for pattern in broken_patterns:
+        if re.match(pattern, example_sql, re.IGNORECASE):
+            return False, f"L2 has broken SQL example: {example_sql[:30]}..."
+    
+    # Check for too-short examples
+    if len(example_sql) < 25:
+        return False, "L2 SQL example too short to be useful"
+    
+    return True, "L2 SQL example looks valid"
+
+
+def _check_generic_hint_text(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Block L1 units with generic/heading-like hints."""
+    if unit.target_stage != "L1_hint":
+        return True, f"Generic hint check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check hint"
+    
+    hint_text = content.get("hint_text", "")
+    if not hint_text:
+        return True, "No hint text to check"
+    
+    generic_patterns = [
+        r"^Remember how to use",
+        r"^Common Mistakes to Avoid:",
+        r"^Chapter \d+",
+        r"^Section \d+",
+        r"Golden Reference",
+        r"Key concepts:.*only$",  # Just a list of terms, no explanation
+    ]
+    
+    for pattern in generic_patterns:
+        if re.search(pattern, hint_text, re.IGNORECASE):
+            return False, f"L1 hint is generic/heading-like: {hint_text[:50]}..."
+    
+    return True, "L1 hint text looks instructional"
+
+
+def _check_generic_definition(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Block L3 units with TRULY weak generic definitions.
+    
+    Only blocks if the definition is generic AND there are no real examples.
+    Allows fallback content that has curated or extracted examples.
+    """
+    if unit.target_stage != "L3_explanation":
+        return True, f"Generic definition check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check definition"
+    
+    definition = content.get("definition", "")
+    if not definition:
+        return True, "No definition to check"
+    
+    # Check for generic patterns
+    generic_patterns = [
+        r"is an important SQL concept\.?$",
+        r"is a crucial SQL concept\.?$",
+        r"is an essential SQL concept\.?$",
+        r"is a fundamental SQL concept\.?$",
+        r"^Chapter \d+",
+        r"^Section \d+",
+        r"Golden Reference",
+    ]
+    
+    is_generic = any(
+        re.search(pattern, definition, re.IGNORECASE)
+        for pattern in generic_patterns
+    )
+    
+    if not is_generic:
+        return True, "L3 definition looks instructional"
+    
+    # Definition is generic - check if we have real examples to compensate
+    examples = content.get("examples", [])
+    has_real_examples = False
+    
+    for ex in examples:
+        if isinstance(ex, dict):
+            # Real if: from source, curated, or not marked synthetic
+            is_synthetic = ex.get("is_synthetic", False)
+            from_source = ex.get("from_source", False) or ex.get("schema_used") == "source"
+            is_curated = ex.get("is_curated", False)
+            
+            if from_source or is_curated or not is_synthetic:
+                has_real_examples = True
+                break
+    
+    # Only block if generic AND no real examples
+    if is_generic and not has_real_examples:
+        return False, f"L3 definition is generic with no real examples: {definition[:50]}..."
+    
+    # Allow if generic but has real examples (acceptable fallback)
+    return True, "L3 has generic definition but has real examples"
+
+
+def _check_synthetic_only_examples(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check L3 units with only synthetic examples - SOFT BLOCK only.
+    
+    Changed from HARD_BLOCK to SOFT_BLOCK behavior: warns about synthetic-only
+    content but allows export since grounded fallback mode often uses synthetic
+    examples when no source SQL is available.
+    """
+    if unit.target_stage != "L3_explanation":
+        return True, f"Synthetic-only check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check examples"
+    
+    examples = content.get("examples", [])
+    if not examples:
+        return True, "No examples to check"
+    
+    # Check if all examples are synthetic
+    all_synthetic = all(ex.get("is_synthetic", False) for ex in examples if isinstance(ex, dict))
+    
+    if all_synthetic:
+        # Return True (passed) but the message will be used as a warning
+        # This is handled by the caller checking the message content
+        return True, "WARNING: L3 has only synthetic examples (no extracted SQL)"
+    
+    return True, "L3 has at least one non-synthetic example"
 
 
 # =============================================================================
@@ -724,10 +890,38 @@ HARD_BLOCK_RULES: list[ExportRule] = [
     ),
     ExportRule(
         rule_id="unresolved_practice_links",
-        rule_type=RuleType.HARD_BLOCK,
+        rule_type=RuleType.WARN,  # Changed from HARD_BLOCK to WARN
         description="All practice links are unresolved placeholders",
         check_fn=_check_unresolved_practice_links,
-        error_message="All practice links are unresolved placeholders - real problem IDs required for production"
+        error_message="All practice links are unresolved placeholders - practice system integration pending"
+    ),
+    ExportRule(
+        rule_id="broken_sql_example",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L2 has broken SQL example like 'SELECT;'",
+        check_fn=_check_broken_sql_example,
+        error_message="L2 has broken SQL example - insufficient for learning"
+    ),
+    ExportRule(
+        rule_id="generic_hint_text",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L1 hint is generic/heading-like (e.g., 'Remember how to use X')",
+        check_fn=_check_generic_hint_text,
+        error_message="L1 hint is generic - not instructional content"
+    ),
+    ExportRule(
+        rule_id="generic_definition",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L3 definition is generic (e.g., 'X is an important SQL concept')",
+        check_fn=_check_generic_definition,
+        error_message="L3 definition is generic - not instructional content"
+    ),
+    ExportRule(
+        rule_id="synthetic_only_examples",
+        rule_type=RuleType.WARN,  # Changed from HARD_BLOCK to WARN
+        description="L3 has only synthetic examples (no extracted SQL)",
+        check_fn=_check_synthetic_only_examples,
+        error_message="L3 has only synthetic examples - no real SQL from textbook"
     ),
 ]
 
