@@ -198,7 +198,19 @@ def _check_low_relevance_score(unit: InstructionalUnit) -> tuple[bool, str]:
     
     Relaxed threshold to allow grounded fallback content (0.3) while still
     blocking truly ungrounded content (0.0).
+    
+    Curated content is always considered high relevance regardless of score.
     """
+    # Check if this is curated content
+    content = unit.content or {}
+    is_curated = content.get("_used_curated_fallback") or (
+        content.get("_metadata", {}).get("content_source") == "curated"
+    )
+    
+    if is_curated:
+        # Curated content passes this check
+        return True, "Curated content - high relevance"
+    
     confidence = unit.grounding_confidence
     if confidence < 0.3:
         return False, f"Grounding confidence too low ({confidence:.2f}, min 0.3)"
@@ -316,13 +328,34 @@ def _check_heading_like_definition(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, "Definition does not appear to be a heading"
 
 
+# Concepts that don't require SQL examples (theoretical/admin concepts)
+SQL_OPTIONAL_CONCEPTS = {
+    "transactions", 
+    "isolation-levels", 
+    "acid-properties",
+    "normalization", 
+    "erd-design", 
+    "schema-design",
+    "transaction-management",
+    "concurrency-control",
+    "database-design",
+}
+
+
 def _check_no_valid_example(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if there's at least one executable SQL example.
     
     Only applies to L2_hint_plus_example and L3_explanation units.
     Skipped for L1_hint (just hints), L4_reflective_note (reflection), 
     and reinforcement (practice) stages.
+    
+    Also skipped for theoretical concepts where SQL examples are optional
+    (e.g., transactions, isolation levels, ACID properties).
     """
+    # Skip for concepts where SQL examples are optional
+    if unit.concept_id in SQL_OPTIONAL_CONCEPTS:
+        return True, f"SQL examples optional for theoretical concept '{unit.concept_id}'"
+    
     # Only apply to L2 and L3 stages
     applicable_stages = {"L2_hint_plus_example", "L3_explanation"}
     if unit.target_stage not in applicable_stages:
@@ -378,8 +411,43 @@ def _check_no_source_evidence(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, "Source evidence present"
 
 
+# Concepts that should never be flagged as admin-only
+# These are legitimate SQL concepts that happen to contain words like "reference"
+NON_ADMIN_CONCEPTS = {
+    "correlated-subquery", 
+    "subquery", 
+    "scalar-subquery",
+    "exists-operator", 
+    "in-operator", 
+    "any-all-operators",
+    "nested-query",
+    "query-reference",
+    "table-reference",
+    "foreign-key",
+    "primary-key",
+    "unique-constraint",
+    "check-constraint",
+    "default-constraint",
+    "referential-integrity",
+    "cross-reference",
+    "self-reference",
+    "recursive-query",
+    "with-clause",
+    "cte",  # Common Table Expression
+    "common-table-expression",
+}
+
+
 def _check_admin_only_concept(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if concept is marked as admin/reference only."""
+    """Check if concept is marked as admin/reference only.
+    
+    Skips whitelisted concepts that may contain words like "reference"
+    but are legitimate SQL educational content.
+    """
+    # Skip for non-admin concepts that are whitelisted
+    if unit.concept_id in NON_ADMIN_CONCEPTS:
+        return True, f"Concept '{unit.concept_id}' is whitelisted as educational content"
+    
     # Check unit_type for admin content
     admin_types = {"admin", "reference", "metadata", "toc"}
     if unit.unit_type in admin_types:
@@ -391,7 +459,7 @@ def _check_admin_only_concept(unit: InstructionalUnit) -> tuple[bool, str]:
         pass
     
     # Check for admin-only tags in error_subtypes (shouldn't have admin tags here but just in case)
-    admin_indicators = {"admin", "reference", "internal", "teacher-only", "instructor", "copyright", "preface"}
+    admin_indicators = {"admin", "internal", "teacher-only", "instructor", "copyright", "preface"}
     
     title_lower = _get_unit_title(unit).lower()
     definition_lower = _get_unit_definition(unit).lower()
@@ -400,6 +468,25 @@ def _check_admin_only_concept(unit: InstructionalUnit) -> tuple[bool, str]:
     for indicator in admin_indicators:
         if indicator in combined_text:
             return False, f"Admin-only indicator '{indicator}' found in content"
+    
+    # Special handling for "reference" - check for context that suggests admin content
+    reference_admin_patterns = [
+        r"system\s+table",
+        r"metadata\s+table",
+        r"information_schema",
+        r"pg_catalog",
+        r"sys\.",
+        r"reference\s+document",
+        r"golden\s+reference",
+        r"bibliography",
+        r"citation",
+        r"works\s+cited",
+    ]
+    
+    if "reference" in combined_text:
+        for pattern in reference_admin_patterns:
+            if re.search(pattern, combined_text):
+                return False, f"Admin-only context for 'reference' detected: '{pattern}'"
     
     return True, "Not an admin-only concept"
 
