@@ -425,25 +425,760 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         ],
         related_patterns=[],
     ),
+    
+    # =========================================================================
+    # NULL Handling Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="null_in_arithmetic_v1",
+        error_subtype_id="null_arithmetic_error",
+        concept_id="null-handling",
+        pattern_name="NULL in Arithmetic Operations",
+        learner_symptom="Unexpected NULL results in calculations",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT\s+.*\w+\s*\+\s*\w+.*FROM",
+        remediation_order=2,
+        example_bad_sql="SELECT salary + bonus AS total FROM employees; -- Returns NULL if bonus is NULL",
+        example_good_sql="SELECT COALESCE(salary, 0) + COALESCE(bonus, 0) AS total FROM employees;",
+        common_error_messages=[
+            "NULL result in expression",
+        ],
+        related_patterns=["incorrect_null_comparison_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="null_in_aggregate_v1",
+        error_subtype_id="null_aggregate_ignored",
+        concept_id="null-handling",
+        pattern_name="Not Understanding NULL is Ignored by Aggregates",
+        learner_symptom="Confusion about COUNT(*) vs COUNT(column) with NULLs",
+        likely_prereq_failure="aggregate-functions",
+        sql_pattern=r"COUNT\s*\(\s*\w+\s*\)",
+        remediation_order=2,
+        example_bad_sql="SELECT COUNT(manager_id) FROM employees; -- Excludes rows where manager_id is NULL",
+        example_good_sql="SELECT COUNT(*) FROM employees; -- Counts all rows",
+        common_error_messages=[
+            "unexpected count result",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Pattern Matching (LIKE) Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="like_wildcard_confusion_v1",
+        error_subtype_id="like_wildcard_misuse",
+        concept_id="pattern-matching",
+        pattern_name="LIKE Wildcard Confusion (% vs _)",
+        learner_symptom="Pattern matches too many or too few rows",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"LIKE\s+'[^%_]*'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM products WHERE name LIKE 'Apple'; -- Exact match, not pattern",
+        example_good_sql="SELECT * FROM products WHERE name LIKE 'Apple%'; -- Pattern match",
+        common_error_messages=[
+            "no rows returned",
+        ],
+        related_patterns=["like_no_quotes_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="like_no_quotes_v1",
+        error_subtype_id="like_pattern_syntax",
+        concept_id="pattern-matching",
+        pattern_name="LIKE Pattern Without Quotes",
+        learner_symptom="Column does not exist error when using LIKE",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"LIKE\s+[a-zA-Z_][a-zA-Z0-9_]*\s*(?:AND|OR|;|$)",
+        remediation_order=1,
+        example_bad_sql="SELECT * FROM products WHERE name LIKE Apple%;",
+        example_good_sql="SELECT * FROM products WHERE name LIKE 'Apple%';",
+        common_error_messages=[
+            "column 'apple%' does not exist",
+            "invalid identifier",
+        ],
+        related_patterns=["like_wildcard_confusion_v1"],
+    ),
+    
+    # =========================================================================
+    # ORDER BY Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="order_by_column_position_v1",
+        error_subtype_id="order_by_position_out_of_range",
+        concept_id="order-by",
+        pattern_name="ORDER BY Column Position Out of Range",
+        learner_symptom="ORDER BY position is out of range of selected columns",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"ORDER\s+BY\s+\d+",
+        remediation_order=2,
+        example_bad_sql="SELECT name, salary FROM employees ORDER BY 5; -- Only 2 columns selected",
+        example_good_sql="SELECT name, salary FROM employees ORDER BY 2;",
+        common_error_messages=[
+            "ORDER BY position is out of range",
+            "ORDER BY position 5 is not in select list",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="order_by_before_where_v1",
+        error_subtype_id="order_by_clause_order",
+        concept_id="order-by",
+        pattern_name="ORDER BY Before WHERE",
+        learner_symptom="Syntax error near ORDER BY",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT.*ORDER\s+BY.*WHERE",
+        remediation_order=1,
+        example_bad_sql="SELECT * FROM employees ORDER BY salary WHERE dept_id = 1;",
+        example_good_sql="SELECT * FROM employees WHERE dept_id = 1 ORDER BY salary;",
+        common_error_messages=[
+            "syntax error at or near 'WHERE'",
+            "syntax error at or near 'ORDER'",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # LIMIT/OFFSET Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="limit_negative_value_v1",
+        error_subtype_id="limit_negative_value",
+        concept_id="limit-offset",
+        pattern_name="Negative LIMIT or OFFSET Value",
+        learner_symptom="LIMIT must not be negative error",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"LIMIT\s+-\d+|OFFSET\s+-\d+",
+        remediation_order=1,
+        example_bad_sql="SELECT * FROM employees LIMIT -10;",
+        example_good_sql="SELECT * FROM employees LIMIT 10;",
+        common_error_messages=[
+            "LIMIT must not be negative",
+            "OFFSET must not be negative",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="limit_without_order_by_v1",
+        error_subtype_id="limit_without_order_by",
+        concept_id="limit-offset",
+        pattern_name="LIMIT Without ORDER BY",
+        learner_symptom="Indeterminate results when paginating",
+        likely_prereq_failure="order-by",
+        sql_pattern=r"SELECT.*FROM.*LIMIT\s+\d+(?!.*ORDER\s+BY)",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM employees LIMIT 10 OFFSET 20;",
+        example_good_sql="SELECT * FROM employees ORDER BY id LIMIT 10 OFFSET 20;",
+        common_error_messages=[
+            "unpredictable result ordering",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # ALIAS Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="alias_in_where_v1",
+        error_subtype_id="alias_reference_in_where",
+        concept_id="alias",
+        pattern_name="Using Column Alias in WHERE Clause",
+        learner_symptom="Column does not exist error for aliased column",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT.*AS\s+\w+.*WHERE.*\w+\s*=",
+        remediation_order=2,
+        example_bad_sql="SELECT salary * 12 AS annual_salary FROM employees WHERE annual_salary > 50000;",
+        example_good_sql="SELECT salary * 12 AS annual_salary FROM employees WHERE salary * 12 > 50000;",
+        common_error_messages=[
+            "column 'annual_salary' does not exist",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="alias_as_required_v1",
+        error_subtype_id="alias_syntax_error",
+        concept_id="alias",
+        pattern_name="Missing AS in Alias Declaration",
+        learner_symptom="Syntax error near identifier",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT\s+\w+\s+\w+\s+FROM",
+        remediation_order=1,
+        example_bad_sql="SELECT first_name f_name FROM employees;",
+        example_good_sql="SELECT first_name AS f_name FROM employees;",
+        common_error_messages=[
+            "syntax error at or near 'FROM'",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # DISTINCT Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="distinct_multiple_columns_v1",
+        error_subtype_id="distinct_scope_misunderstanding",
+        concept_id="distinct",
+        pattern_name="DISTINCT on Multiple Columns Misunderstanding",
+        learner_symptom="Unexpected duplicate values in results",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT\s+DISTINCT\s+\w+\s*,",
+        remediation_order=2,
+        example_bad_sql="SELECT DISTINCT first_name, DISTINCT last_name FROM employees;",
+        example_good_sql="SELECT DISTINCT first_name, last_name FROM employees;",
+        common_error_messages=[
+            "syntax error at or near 'DISTINCT'",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="distinct_placement_v1",
+        error_subtype_id="distinct_placement_error",
+        concept_id="distinct",
+        pattern_name="DISTINCT After SELECT",
+        learner_symptom="Syntax error at or near DISTINCT",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT\s+\w+.*DISTINCT",
+        remediation_order=1,
+        example_bad_sql="SELECT first_name DISTINCT FROM employees;",
+        example_good_sql="SELECT DISTINCT first_name FROM employees;",
+        common_error_messages=[
+            "syntax error at or near 'DISTINCT'",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # JOIN Type Specific Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="inner_join_null_confusion_v1",
+        error_subtype_id="inner_join_excludes_nulls",
+        concept_id="inner-join",
+        pattern_name="Not Understanding INNER JOIN Excludes Unmatched Rows",
+        learner_symptom="Missing rows expected in results",
+        likely_prereq_failure="joins-intro",
+        sql_pattern=r"INNER\s+JOIN",
+        remediation_order=2,
+        example_bad_sql="SELECT e.name, d.name FROM employees e INNER JOIN departments d ON e.dept_id = d.dept_id; -- Missing employees without departments",
+        example_good_sql="SELECT e.name, d.name FROM employees e LEFT JOIN departments d ON e.dept_id = d.dept_id;",
+        common_error_messages=[
+            "missing expected rows",
+        ],
+        related_patterns=["incorrect_join_type_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="outer_join_direction_confusion_v1",
+        error_subtype_id="outer_join_wrong_direction",
+        concept_id="outer-join",
+        pattern_name="LEFT vs RIGHT JOIN Direction Confusion",
+        learner_symptom="Wrong table's unmatched rows are missing",
+        likely_prereq_failure="inner-join",
+        sql_pattern=r"(LEFT|RIGHT)\s+JOIN",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM departments d LEFT JOIN employees e ON d.dept_id = e.dept_id; -- Trying to get all employees including those without departments",
+        example_good_sql="SELECT * FROM employees e LEFT JOIN departments d ON e.dept_id = d.dept_id;",
+        common_error_messages=[
+            "unexpected NULL values",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="self_join_no_alias_v1",
+        error_subtype_id="self_join_missing_alias",
+        concept_id="self-join",
+        pattern_name="Self-Join Without Table Aliases",
+        learner_symptom="Not unique table/alias error or ambiguous column",
+        likely_prereq_failure="alias",
+        sql_pattern=r"FROM\s+\w+\s+JOIN\s+\1",
+        remediation_order=1,
+        example_bad_sql="SELECT * FROM employees JOIN employees ON employees.manager_id = employees.emp_id;",
+        example_good_sql="SELECT e.name, m.name AS manager FROM employees e JOIN employees m ON e.manager_id = m.emp_id;",
+        common_error_messages=[
+            "Not unique table/alias",
+            "ambiguous column",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="cross_join_unintentional_v1",
+        error_subtype_id="unintentional_cartesian_product",
+        concept_id="cross-join",
+        pattern_name="Unintentional CROSS JOIN (Missing ON Clause)",
+        learner_symptom="Query returns exponentially more rows than expected",
+        likely_prereq_failure="joins-intro",
+        sql_pattern=r",\s*\w+\s+(?:WHERE|ORDER|GROUP|LIMIT|$)",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM employees, departments WHERE employees.dept_id = departments.dept_id; -- Old syntax without explicit JOIN",
+        example_good_sql="SELECT * FROM employees JOIN departments ON employees.dept_id = departments.dept_id;",
+        common_error_messages=[
+            "query returns too many rows",
+        ],
+        related_patterns=["missing_join_condition_v1"],
+    ),
+    
+    # =========================================================================
+    # Correlated Subquery Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="correlated_subquery_scope_v1",
+        error_subtype_id="correlated_subquery_reference_error",
+        concept_id="correlated-subquery",
+        pattern_name="Correlated Subquery Reference Error",
+        learner_symptom="Column does not exist in subquery",
+        likely_prereq_failure="subqueries-intro",
+        sql_pattern=r"SELECT.*FROM.*WHERE.*\(\s*SELECT.*FROM.*\)",
+        remediation_order=3,
+        example_bad_sql="SELECT * FROM employees e WHERE salary > (SELECT AVG(salary) FROM employees WHERE dept_id = d.dept_id); -- Wrong table alias reference",
+        example_good_sql="SELECT * FROM employees e WHERE salary > (SELECT AVG(salary) FROM employees WHERE dept_id = e.dept_id);",
+        common_error_messages=[
+            "column 'd.dept_id' does not exist",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="exists_with_columns_v1",
+        error_subtype_id="exists_with_select_star",
+        concept_id="exists-operator",
+        pattern_name="EXISTS with Column Selection",
+        learner_symptom="Unnecessary columns in EXISTS subquery (performance issue)",
+        likely_prereq_failure="correlated-subquery",
+        sql_pattern=r"EXISTS\s*\(\s*SELECT\s+\w+",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM departments d WHERE EXISTS (SELECT dept_id FROM employees e WHERE e.dept_id = d.dept_id);",
+        example_good_sql="SELECT * FROM departments d WHERE EXISTS (SELECT 1 FROM employees e WHERE e.dept_id = d.dept_id);",
+        common_error_messages=[
+            "performance warning",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # UNION Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="union_column_count_mismatch_v1",
+        error_subtype_id="union_column_count_mismatch",
+        concept_id="union",
+        pattern_name="UNION Column Count Mismatch",
+        learner_symptom="Each UNION query must have the same number of columns",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"SELECT.*UNION.*SELECT",
+        remediation_order=2,
+        example_bad_sql="SELECT name FROM employees UNION SELECT name, salary FROM managers;",
+        example_good_sql="SELECT name, NULL AS salary FROM employees UNION SELECT name, salary FROM managers;",
+        common_error_messages=[
+            "each UNION query must have the same number of columns",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="union_type_confusion_v1",
+        error_subtype_id="union_vs_union_all_confusion",
+        concept_id="union",
+        pattern_name="UNION vs UNION ALL Confusion",
+        learner_symptom="Missing duplicate rows that should be preserved",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"UNION\s+(?!ALL|DISTINCT)",
+        remediation_order=2,
+        example_bad_sql="SELECT customer_id FROM orders_2022 UNION SELECT customer_id FROM orders_2023; -- Removes duplicates",
+        example_good_sql="SELECT customer_id FROM orders_2022 UNION ALL SELECT customer_id FROM orders_2023;",
+        common_error_messages=[
+            "missing expected rows",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # DML Errors - INSERT
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="insert_column_value_mismatch_v1",
+        error_subtype_id="insert_column_count_mismatch",
+        concept_id="insert-statement",
+        pattern_name="INSERT Column/Value Count Mismatch",
+        learner_symptom="INSERT has more/expressions than target columns",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s*\([^)]+\)\s*VALUES\s*\([^)]+\)",
+        remediation_order=1,
+        example_bad_sql="INSERT INTO employees (name, salary) VALUES ('John', 50000, 'Engineering');",
+        example_good_sql="INSERT INTO employees (name, salary, dept) VALUES ('John', 50000, 'Engineering');",
+        common_error_messages=[
+            "INSERT has more expressions than target columns",
+            "INSERT has fewer expressions than target columns",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="insert_missing_column_list_v1",
+        error_subtype_id="insert_missing_column_list",
+        concept_id="insert-statement",
+        pattern_name="INSERT Without Column List",
+        learner_symptom="Column count mismatch when table schema changes",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s+VALUES",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO employees VALUES (1, 'John', 50000);",
+        example_good_sql="INSERT INTO employees (emp_id, name, salary) VALUES (1, 'John', 50000);",
+        common_error_messages=[
+            "INSERT has more expressions than target columns",
+        ],
+        related_patterns=["insert_column_value_mismatch_v1"],
+    ),
+    
+    # =========================================================================
+    # DML Errors - UPDATE
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="update_set_syntax_v1",
+        error_subtype_id="update_set_syntax_error",
+        concept_id="update-statement",
+        pattern_name="UPDATE SET Syntax Error",
+        learner_symptom="Syntax error at or near '='",
+        likely_prereq_failure="select-basic",
+        sql_pattern=r"UPDATE\s+\w+\s+SET\s+\w+\s*=.*=",
+        remediation_order=1,
+        example_bad_sql="UPDATE employees SET salary = 50000, bonus = 5000 WHERE id = 1;",
+        example_good_sql="UPDATE employees SET salary = 50000, bonus = 5000 WHERE id = 1;",
+        common_error_messages=[
+            "syntax error at or near '='",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="update_subquery_correlation_v1",
+        error_subtype_id="update_subquery_error",
+        concept_id="update-statement",
+        pattern_name="UPDATE with Subquery Reference",
+        learner_symptom="Table being updated is specified in FROM clause",
+        likely_prereq_failure="subqueries-intro",
+        sql_pattern=r"UPDATE\s+\w+\s+SET.*=\s*\(\s*SELECT",
+        remediation_order=3,
+        example_bad_sql="UPDATE employees SET salary = (SELECT AVG(salary) FROM employees); -- Attempting to update based on aggregate",
+        example_good_sql="UPDATE employees e SET salary = (SELECT AVG(salary) FROM employees WHERE dept_id = e.dept_id);",
+        common_error_messages=[
+            "cannot update table in subquery",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # DML Errors - DELETE
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="delete_alias_confusion_v1",
+        error_subtype_id="delete_alias_syntax",
+        concept_id="delete-statement",
+        pattern_name="DELETE with Table Alias Confusion",
+        learner_symptom="Syntax error with table alias in DELETE",
+        likely_prereq_failure="alias",
+        sql_pattern=r"DELETE\s+\w+\s+FROM",
+        remediation_order=2,
+        example_bad_sql="DELETE e FROM employees e WHERE e.status = 'inactive';",
+        example_good_sql="DELETE FROM employees WHERE status = 'inactive';",
+        common_error_messages=[
+            "syntax error at or near 'FROM'",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="delete_without_where_v1",
+        error_subtype_id="delete_all_rows_risk",
+        concept_id="delete-statement",
+        pattern_name="DELETE Without WHERE Clause",
+        learner_symptom="All rows deleted from table",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"DELETE\s+FROM\s+\w+\s*(?!WHERE)",
+        remediation_order=1,
+        example_bad_sql="DELETE FROM employees;",
+        example_good_sql="DELETE FROM employees WHERE status = 'terminated';",
+        common_error_messages=[
+            "all rows deleted",
+        ],
+        related_patterns=["missing_where_clause_v1"],
+    ),
+    
+    # =========================================================================
+    # DDL Errors - CREATE TABLE
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="create_table_duplicate_column_v1",
+        error_subtype_id="create_table_duplicate_column",
+        concept_id="create-table",
+        pattern_name="CREATE TABLE Duplicate Column Name",
+        learner_symptom="Column name already exists in table",
+        likely_prereq_failure=None,
+        sql_pattern=r"CREATE\s+TABLE.*\(\s*\w+\s+\w+.*\w+\s+\w+",
+        remediation_order=1,
+        example_bad_sql="CREATE TABLE employees (id INT, name VARCHAR(50), id INT);",
+        example_good_sql="CREATE TABLE employees (id INT, name VARCHAR(50), emp_code INT);",
+        common_error_messages=[
+            "column name 'id' appears more than once",
+            "duplicate column name",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="create_table_missing_datatype_v1",
+        error_subtype_id="create_table_syntax_error",
+        concept_id="create-table",
+        pattern_name="CREATE TABLE Missing Data Type",
+        learner_symptom="Syntax error at or near column name",
+        likely_prereq_failure=None,
+        sql_pattern=r"CREATE\s+TABLE.*\([^)]+\w+\s*,",
+        remediation_order=1,
+        example_bad_sql="CREATE TABLE employees (id, name VARCHAR(50));",
+        example_good_sql="CREATE TABLE employees (id INT, name VARCHAR(50));",
+        common_error_messages=[
+            "syntax error at or near ','",
+            "missing data type",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # DDL Errors - ALTER TABLE
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="alter_table_drop_column_v1",
+        error_subtype_id="alter_table_drop_column",
+        concept_id="alter-table",
+        pattern_name="ALTER TABLE DROP COLUMN Syntax",
+        learner_symptom="Syntax error near DROP",
+        likely_prereq_failure="create-table",
+        sql_pattern=r"ALTER\s+TABLE\s+\w+\s+DROP\s+\w+(?!\s+CASCADE|CONSTRAINT|COLUMN)",
+        remediation_order=2,
+        example_bad_sql="ALTER TABLE employees DROP salary;",
+        example_good_sql="ALTER TABLE employees DROP COLUMN salary;",
+        common_error_messages=[
+            "syntax error at or near 'salary'",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="alter_table_add_column_exists_v1",
+        error_subtype_id="alter_table_column_exists",
+        concept_id="alter-table",
+        pattern_name="ALTER TABLE ADD Column That Already Exists",
+        learner_symptom="Column already exists in table",
+        likely_prereq_failure="create-table",
+        sql_pattern=r"ALTER\s+TABLE.*ADD\s+(?:COLUMN\s+)?\w+",
+        remediation_order=2,
+        example_bad_sql="ALTER TABLE employees ADD COLUMN salary INT; -- Column already exists",
+        example_good_sql="ALTER TABLE employees ADD COLUMN bonus INT;",
+        common_error_messages=[
+            "column 'salary' of relation 'employees' already exists",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # DDL Errors - DROP TABLE
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="drop_table_if_exists_v1",
+        error_subtype_id="drop_table_if_exists",
+        concept_id="drop-table",
+        pattern_name="DROP TABLE Without IF EXISTS",
+        learner_symptom="Table does not exist error",
+        likely_prereq_failure="create-table",
+        sql_pattern=r"DROP\s+TABLE\s+(?!IF)\s*\w+",
+        remediation_order=2,
+        example_bad_sql="DROP TABLE employees; -- Table may not exist",
+        example_good_sql="DROP TABLE IF EXISTS employees;",
+        common_error_messages=[
+            "table 'employees' does not exist",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="drop_table_cascade_v1",
+        error_subtype_id="drop_table_dependencies",
+        concept_id="drop-table",
+        pattern_name="DROP TABLE With Dependencies",
+        learner_symptom="Cannot drop table with dependent objects",
+        likely_prereq_failure="create-table",
+        sql_pattern=r"DROP\s+TABLE\s+\w+\s*(?!CASCADE)",
+        remediation_order=3,
+        example_bad_sql="DROP TABLE departments; -- Has foreign key references from employees",
+        example_good_sql="DROP TABLE departments CASCADE;",
+        common_error_messages=[
+            "cannot drop table 'departments' because other objects depend on it",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Additional Aggregate Function Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="aggregate_in_select_without_group_by_v1",
+        error_subtype_id="aggregate_without_group_by",
+        concept_id="aggregate-functions",
+        pattern_name="Mixing Aggregates and Columns Without GROUP BY",
+        learner_symptom="Column must appear in GROUP BY clause or be used in aggregate",
+        likely_prereq_failure="group-by",
+        sql_pattern=r"SELECT\s+\w+.*,\s*(COUNT|SUM|AVG|MAX|MIN)\s*\(",
+        remediation_order=2,
+        example_bad_sql="SELECT dept_id, AVG(salary) FROM employees;",
+        example_good_sql="SELECT dept_id, AVG(salary) FROM employees GROUP BY dept_id;",
+        common_error_messages=[
+            "must appear in the GROUP BY clause",
+        ],
+        related_patterns=["missing_group_by_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="aggregate_where_filter_v1",
+        error_subtype_id="aggregate_in_where_clause",
+        concept_id="aggregate-functions",
+        pattern_name="Using Aggregate in WHERE Clause",
+        learner_symptom="Aggregate functions not allowed in WHERE",
+        likely_prereq_failure="having-clause",
+        sql_pattern=r"WHERE\s+.*(COUNT|SUM|AVG|MAX|MIN)\s*\(",
+        remediation_order=2,
+        example_bad_sql="SELECT dept_id FROM employees WHERE COUNT(*) > 5 GROUP BY dept_id;",
+        example_good_sql="SELECT dept_id FROM employees GROUP BY dept_id HAVING COUNT(*) > 5;",
+        common_error_messages=[
+            "aggregate functions are not allowed in WHERE",
+        ],
+        related_patterns=["where_having_confusion_v1"],
+    ),
 ]
 
 
 # Mapping from error subtype IDs to their primary concept IDs
 ERROR_SUBTYPE_TO_CONCEPT: dict[str, str] = {
+    # select-basic
     "missing_comma_in_select": "select-basic",
     "extra_comma_in_select": "select-basic",
+    
+    # where-clause
     "incorrect_null_comparison": "where-clause",
-    "missing_join_condition": "joins-intro",
-    "incorrect_join_type": "joins-intro",
-    "missing_group_by": "group-by",
-    "having_without_group_by": "having-clause",
-    "where_having_confusion": "having-clause",
-    "incorrect_aggregate_function": "aggregate-functions",
-    "ambiguous_column_reference": "joins-intro",
-    "missing_table_alias": "joins-intro",
-    "subquery_multiple_rows": "subqueries-intro",
     "missing_where_clause": "where-clause",
     "string_literal_error": "where-clause",
+    
+    # joins-intro
+    "missing_join_condition": "joins-intro",
+    "incorrect_join_type": "joins-intro",
+    "ambiguous_column_reference": "joins-intro",
+    "missing_table_alias": "joins-intro",
+    
+    # inner-join
+    "inner_join_excludes_nulls": "inner-join",
+    
+    # outer-join
+    "outer_join_wrong_direction": "outer-join",
+    
+    # self-join
+    "self_join_missing_alias": "self-join",
+    
+    # cross-join
+    "unintentional_cartesian_product": "cross-join",
+    
+    # group-by
+    "missing_group_by": "group-by",
+    
+    # having-clause
+    "having_without_group_by": "having-clause",
+    "where_having_confusion": "having-clause",
+    
+    # aggregate-functions
+    "incorrect_aggregate_function": "aggregate-functions",
+    "aggregate_without_group_by": "aggregate-functions",
+    "aggregate_in_where_clause": "aggregate-functions",
+    
+    # subqueries-intro
+    "subquery_multiple_rows": "subqueries-intro",
+    
+    # correlated-subquery
+    "correlated_subquery_reference_error": "correlated-subquery",
+    
+    # exists-operator
+    "exists_with_select_star": "exists-operator",
+    
+    # null-handling
+    "null_arithmetic_error": "null-handling",
+    "null_aggregate_ignored": "null-handling",
+    
+    # pattern-matching
+    "like_wildcard_misuse": "pattern-matching",
+    "like_pattern_syntax": "pattern-matching",
+    
+    # order-by
+    "order_by_position_out_of_range": "order-by",
+    "order_by_clause_order": "order-by",
+    
+    # limit-offset
+    "limit_negative_value": "limit-offset",
+    "limit_without_order_by": "limit-offset",
+    
+    # alias
+    "alias_reference_in_where": "alias",
+    "alias_syntax_error": "alias",
+    
+    # distinct
+    "distinct_scope_misunderstanding": "distinct",
+    "distinct_placement_error": "distinct",
+    
+    # union
+    "union_column_count_mismatch": "union",
+    "union_vs_union_all_confusion": "union",
+    
+    # insert-statement
+    "insert_column_count_mismatch": "insert-statement",
+    "insert_missing_column_list": "insert-statement",
+    
+    # update-statement
+    "update_set_syntax_error": "update-statement",
+    "update_subquery_error": "update-statement",
+    
+    # delete-statement
+    "delete_alias_syntax": "delete-statement",
+    "delete_all_rows_risk": "delete-statement",
+    
+    # create-table
+    "create_table_duplicate_column": "create-table",
+    "create_table_syntax_error": "create-table",
+    
+    # alter-table
+    "alter_table_drop_column": "alter-table",
+    "alter_table_column_exists": "alter-table",
+    
+    # drop-table
+    "drop_table_if_exists": "drop-table",
+    "drop_table_dependencies": "drop-table",
 }
 
 
