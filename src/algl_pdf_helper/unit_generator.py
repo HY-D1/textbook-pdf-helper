@@ -62,6 +62,7 @@ from .pedagogical_generator import (
 )
 from .generation_pipeline import MultiPassGenerator
 from .sql_ontology import get_concept
+from .ollama_repair import OllamaRepair, SelectiveRepairPass
 
 
 # =============================================================================
@@ -75,12 +76,20 @@ class L1Content(BaseModel):
     when_to_use: str = Field(default="", max_length=200, description="Usage context")
 
 
+class ExampleMetadata(BaseModel):
+    """Metadata about how an example was selected for L2 content."""
+    match_score: float = Field(..., description="Relevance score from _score_sql_for_concept")
+    source_type: str = Field(..., description="Type of source: 'extracted', 'curated', or 'default'")
+    selection_method: str = Field(..., description="Method used: 'scored', 'fallback_threshold', etc.")
+
+
 class L2Content(BaseModel):
     """Content for L2 hint+example stage - brief with example."""
     hint_text: str = Field(..., max_length=300, description="Brief hint")
     example_sql: str = Field(..., max_length=500, description="Minimal worked example")
     example_explanation: str = Field(..., max_length=300, description="Quick explanation")
     common_pitfall: str = Field(default="", max_length=200, description="One thing to watch")
+    example_metadata: ExampleMetadata | None = Field(default=None, description="Metadata about example selection")
 
 
 class L3Content(BaseModel):
@@ -152,6 +161,9 @@ class GenerationConfig:
         base_url: Optional API base URL override
         timeout_seconds: Request timeout
         allow_synthetic_examples: Whether to allow synthetic SQL examples when no real ones found
+        enable_ollama_repair: Whether to enable Ollama-based selective repair pass
+        repair_threshold: Quality score threshold below which to trigger repair (0.0-1.0)
+        ollama_model: Ollama model to use for repairs (default: qwen2.5:3b)
     """
     llm_provider: str = "kimi"
     model_name: str = "kimi-k2-5"
@@ -164,6 +176,9 @@ class GenerationConfig:
     base_url: str | None = None
     timeout_seconds: int = 60
     allow_synthetic_examples: bool = False  # Default to False for production
+    enable_ollama_repair: bool = True  # Enable selective Ollama repair by default
+    repair_threshold: float = 0.6  # Quality threshold for triggering repair
+    ollama_model: str = "qwen2.5:3b"  # Default Ollama model for repairs
     
     def __post_init__(self):
         """Validate configuration."""
@@ -171,6 +186,8 @@ class GenerationConfig:
             raise ValueError("Temperature must be between 0.0 and 1.0")
         if self.max_tokens < 100:
             raise ValueError("Max tokens must be at least 100")
+        if self.repair_threshold < 0.0 or self.repair_threshold > 1.0:
+            raise ValueError("repair_threshold must be between 0.0 and 1.0")
 
 
 # =============================================================================
@@ -798,6 +815,112 @@ class UnitGenerator:
         self.transformer = transformer or ContentTransformer()
         self._generation_stats: dict[str, Any] = {}
         self.logger = logging.getLogger(__name__)
+        self._ollama_repair: OllamaRepair | None = None
+        self._selective_repair: SelectiveRepairPass | None = None
+    
+    def _init_ollama_repair(self, config: GenerationConfig) -> bool:
+        """
+        Initialize Ollama repair if enabled and available.
+        
+        Args:
+            config: Generation configuration
+        
+        Returns:
+            True if Ollama repair is available, False otherwise
+        """
+        if not config.enable_ollama_repair:
+            return False
+        
+        if self._ollama_repair is None:
+            self._ollama_repair = OllamaRepair(model=config.ollama_model)
+            if self._ollama_repair.available:
+                self._selective_repair = SelectiveRepairPass(
+                    self._ollama_repair,
+                    repair_threshold=config.repair_threshold,
+                )
+                self.logger.info(f"Ollama repair initialized with model: {config.ollama_model}")
+            else:
+                self.logger.warning("Ollama repair enabled but server not available")
+                self._ollama_repair = None
+        
+        return self._ollama_repair is not None
+    
+    def _apply_selective_repair(
+        self,
+        variants: dict[str, InstructionalUnit],
+        source_blocks: list[ContentBlock],
+        config: GenerationConfig,
+    ) -> dict[str, InstructionalUnit]:
+        """
+        Apply selective Ollama repair to weak units.
+        
+        This method iterates through generated units, flags weak units for repair,
+        and applies repair only to flagged units. Repairs are tracked in metadata.
+        
+        Args:
+            variants: Dictionary of generated unit variants
+            source_blocks: Source content blocks for evidence
+            config: Generation configuration
+        
+        Returns:
+            Dictionary of units (potentially repaired)
+        """
+        # Check if repair is enabled and Ollama is available
+        if not self._init_ollama_repair(config):
+            return variants
+        
+        if self._selective_repair is None:
+            return variants
+        
+        repaired_variants: dict[str, InstructionalUnit] = {}
+        repair_stats = {"attempted": 0, "repaired": 0, "failed": 0, "skipped": 0}
+        
+        for stage, unit in variants.items():
+            # Only repair L2 and L3 stages (hint+example and explanation)
+            if stage not in ("L2_hint_plus_example", "L3_explanation"):
+                repaired_variants[stage] = unit
+                continue
+            
+            repair_stats["attempted"] += 1
+            
+            try:
+                result = self._selective_repair.repair_if_needed(
+                    unit=unit,
+                    source_blocks=source_blocks,
+                    concept_id=unit.concept_id,
+                )
+                
+                if result.repaired:
+                    repaired_variants[stage] = result.get_unit()
+                    repair_stats["repaired"] += 1
+                    self.logger.info(
+                        f"Repaired {unit.concept_id}/{stage}: {result.reason}"
+                    )
+                else:
+                    repaired_variants[stage] = unit
+                    if result.reason == "no_repair_needed":
+                        repair_stats["skipped"] += 1
+                    else:
+                        repair_stats["failed"] += 1
+                        self.logger.debug(
+                            f"Repair not applied to {unit.concept_id}/{stage}: {result.reason}"
+                        )
+            
+            except Exception as e:
+                self.logger.warning(f"Repair failed for {unit.concept_id}/{stage}: {e}")
+                repaired_variants[stage] = unit
+                repair_stats["failed"] += 1
+        
+        # Store repair stats
+        self._generation_stats["repair_stats"] = repair_stats
+        
+        if repair_stats["repaired"] > 0:
+            self.logger.info(
+                f"Selective repair complete: {repair_stats['repaired']} units repaired, "
+                f"{repair_stats['skipped']} skipped, {repair_stats['failed']} failed"
+            )
+        
+        return repaired_variants
     
     def generate_all_variants(
         self,
@@ -883,6 +1006,9 @@ class UnitGenerator:
             variants["reinforcement"] = self._create_fallback_unit(
                 concept_id, "reinforcement", "practice", config, str(e), subtypes
             )
+        
+        # Apply selective Ollama repair to weak units
+        variants = self._apply_selective_repair(variants, source_blocks, config)
         
         return variants
     
@@ -1751,8 +1877,9 @@ class UnitGenerator:
             "inner-join": "SELECT u.name, o.product FROM users u INNER JOIN orders o ON u.id = o.user_id;",
             "self-join": "SELECT e.name, m.name AS manager FROM employees e JOIN employees m ON e.manager_id = m.id;",
             "cross-join": "SELECT p.product, c.category FROM products p CROSS JOIN categories c;",
-            "having-clause": "SELECT department, AVG(salary) AS avg_salary FROM employees GROUP BY department HAVING AVG(salary) > 50000;",
-            "correlated-subquery": "SELECT name FROM employees e WHERE salary > (SELECT AVG(salary) FROM employees WHERE department = e.department);",
+            "having-clause": "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 50000;",
+            "correlated-subquery": "SELECT name FROM employees e WHERE salary > (SELECT AVG(salary) FROM employees WHERE dept = e.dept);",
+            "subquery-in-select": "SELECT name, (SELECT COUNT(*) FROM orders WHERE user_id = u.id) AS order_count FROM users u;",
             "order-by": "SELECT name, salary FROM employees ORDER BY salary DESC, name ASC;",
             "limit-offset": "SELECT name FROM employees ORDER BY salary DESC LIMIT 10 OFFSET 20;",
             "distinct": "SELECT DISTINCT department FROM employees;",
@@ -1763,7 +1890,8 @@ class UnitGenerator:
             "insert-statement": "INSERT INTO employees (name, salary, dept_id) VALUES ('John Doe', 50000, 1);",
             "update-statement": "UPDATE employees SET salary = salary * 1.1 WHERE department = 'Engineering';",
             "delete-statement": "DELETE FROM employees WHERE end_date < '2023-01-01';",
-            "create-table": "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100), email VARCHAR(100) UNIQUE);",
+            "create-table": "CREATE TABLE employees (id INT PRIMARY KEY, name VARCHAR(100), salary DECIMAL(10,2));",
+            "group-by": "SELECT department, COUNT(*), AVG(salary) FROM employees GROUP BY department;",
             "alter-table": "ALTER TABLE employees ADD COLUMN hire_date DATE;",
             "drop-table": "DROP TABLE IF EXISTS temp_data;",
             "constraints": "ALTER TABLE employees ADD CONSTRAINT fk_dept FOREIGN KEY (dept_id) REFERENCES departments(id);",
@@ -1772,7 +1900,7 @@ class UnitGenerator:
             "window-functions": "SELECT name, salary, RANK() OVER (ORDER BY salary DESC) AS salary_rank FROM employees;",
             "cte": "WITH high_earners AS (SELECT * FROM employees WHERE salary > 100000) SELECT * FROM high_earners;",
             "transactions": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; UPDATE accounts SET balance = balance + 100 WHERE id = 2; COMMIT;",
-            "isolation-levels": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; BEGIN; SELECT * FROM accounts WHERE id = 1; COMMIT;",
+            "isolation-levels": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN; SELECT * FROM accounts; COMMIT;",
         }
         return examples.get(concept_id, f"SELECT * FROM users LIMIT 5;")
     
@@ -3096,7 +3224,7 @@ class UnitGenerator:
         # Score and select the best example for this concept
         best_example = None
         best_page = None
-        best_score = -1
+        best_score = -1.0
         
         for ex in sql_examples:
             score = self._score_sql_for_concept(ex["sql"], concept_id)
@@ -3105,15 +3233,28 @@ class UnitGenerator:
                 best_example = ex["sql"]
                 best_page = ex["page"]
         
-        # Determine final example and explanation
-        if best_example and best_score >= 1.0:
-            # Use the best matched example
+        # Determine final example and explanation with metadata tracking
+        EXAMPLE_MATCH_THRESHOLD = 2.0
+        example_metadata: ExampleMetadata | None = None
+        
+        if best_example and best_score >= EXAMPLE_MATCH_THRESHOLD:
+            # Use the best matched example from source
             example_sql = best_example
             example_explanation = f"Example from page {best_page}."
+            example_metadata = ExampleMetadata(
+                match_score=best_score,
+                source_type="extracted",
+                selection_method="scored",
+            )
         else:
             # Fall back to concept-appropriate default example
             example_sql = self._get_default_example_sql(concept_id)
             example_explanation = "Basic usage example."
+            example_metadata = ExampleMetadata(
+                match_score=best_score if best_score > 0 else 0.0,
+                source_type="default",
+                selection_method="fallback_threshold",
+            )
         
         # Transform SQL to practice schema
         example_sql = self.transformer.transform_to_practice_schema(
@@ -3133,6 +3274,7 @@ class UnitGenerator:
             example_sql=example_sql[:500],
             example_explanation=example_explanation[:300],
             common_pitfall=common_pitfall[:200],
+            example_metadata=example_metadata,
         )
     
     def _extract_l3_from_blocks(self, blocks: list[ContentBlock], concept_id: str) -> dict:
