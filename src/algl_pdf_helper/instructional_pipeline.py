@@ -146,6 +146,7 @@ class PipelineConfig:
     skip_misconceptions: bool = False
     validate_sql: bool = True
     min_quality_score: float = 0.7
+    allow_synthetic_examples: bool = False  # Default to False for production
     
     # Provider-specific default models
     PROVIDER_DEFAULT_MODELS: ClassVar[dict[str, str]] = {
@@ -247,6 +248,7 @@ class PipelineResult:
         elapsed_time_seconds: Total pipeline execution time
         fallback_units: List of unit IDs that used fallback generation
         filtered_units: List of unit IDs that were filtered out
+        blocked_units_with_reasons: List of (unit_id, reasons) tuples for blocked units
     """
     
     success: bool = False
@@ -259,6 +261,7 @@ class PipelineResult:
     elapsed_time_seconds: float = 0.0
     fallback_units: list[str] = field(default_factory=list)
     filtered_units: list[str] = field(default_factory=list)
+    blocked_units_with_reasons: list[tuple[str, list[str]]] = field(default_factory=list)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -273,6 +276,7 @@ class PipelineResult:
             "elapsed_time_seconds": self.elapsed_time_seconds,
             "fallback_units": self.fallback_units,
             "filtered_units": self.filtered_units,
+            "blocked_units_with_reasons": self.blocked_units_with_reasons,
         }
     
     def get_summary(self) -> str:
@@ -492,6 +496,7 @@ class InstructionalPipeline:
         self._filtered_unit_ids: list[str] = []
         self._filtered_library: UnitLibraryExport | None = None
         self._generation_stats: dict[str, int] = {}
+        self._rejected_units: list[tuple[str, list[str]]] = []
         
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
@@ -573,6 +578,7 @@ class InstructionalPipeline:
             result.statistics = self._gather_statistics()
             result.filtered_units = getattr(self, '_filtered_unit_ids', [])
             result.fallback_units = getattr(self, '_fallback_unit_ids', [])
+            result.blocked_units_with_reasons = getattr(self, '_rejected_units', [])
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
@@ -843,6 +849,7 @@ class InstructionalPipeline:
         gen_config = UnitGenerationConfig(
             llm_provider=self.config.llm_provider,
             model_name=self.config.llm_model,
+            allow_synthetic_examples=self.config.allow_synthetic_examples,
         )
         
         # Initialize misconception bank for error subtype lookup
@@ -1301,17 +1308,17 @@ class InstructionalPipeline:
         filter_result = self._filter_engine.filter_unit_library(temp_library)
         filtered_library = self._filter_engine.get_exportable_subset(temp_library)
         
-        # Store filtered unit IDs for reporting
+        # Store filtered unit IDs and rejected units with reasons for reporting
         self._filtered_unit_ids = filter_result.filtered_units
+        self._rejected_units = self._filter_engine.get_rejected_units(temp_library)
         
         # In strict mode, fail if any units are filtered
         if self.config.filter_level == "strict" and filter_result.filtered_units:
-            rejected = self._filter_engine.get_rejected_units(temp_library)
             error_msg = f"Strict mode: {len(filter_result.filtered_units)} units blocked:\n"
-            for unit_id, reasons in rejected[:5]:
+            for unit_id, reasons in self._rejected_units[:5]:
                 error_msg += f"  - {unit_id}: {reasons[0] if reasons else 'Unknown reason'}\n"
-            if len(rejected) > 5:
-                error_msg += f"  ... and {len(rejected) - 5} more\n"
+            if len(self._rejected_units) > 5:
+                error_msg += f"  ... and {len(self._rejected_units) - 5} more\n"
             raise RuntimeError(error_msg)
         
         # Log filter results (skip detailed logging if CLI handles output)
