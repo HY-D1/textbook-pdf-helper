@@ -789,6 +789,42 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         related_patterns=[],
     ),
     
+    MisconceptionPattern(
+        pattern_id="cte_defined_but_not_used_v1",
+        error_subtype_id="unused_cte",
+        concept_id="cte",
+        pattern_name="CTE Defined But Not Used",
+        learner_symptom="CTE is defined but never referenced in the main query",
+        likely_prereq_failure="cte",
+        sql_pattern=r"WITH\s+\w+\s+AS\s*\([^)]+\)\s*SELECT",
+        remediation_order=1,
+        example_bad_sql="WITH dept_summary AS (SELECT dept_id, COUNT(*) FROM employees GROUP BY dept_id) SELECT * FROM employees; -- never uses dept_summary",
+        example_good_sql="WITH dept_summary AS (SELECT dept_id, COUNT(*) FROM employees GROUP BY dept_id) SELECT * FROM dept_summary;",
+        common_error_messages=[
+            "CTE is not used",
+            "unused CTE",
+        ],
+        related_patterns=["cte_undefined_reference_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="cte_recursive_no_anchor_v1",
+        error_subtype_id="recursive_cte_no_anchor",
+        concept_id="cte",
+        pattern_name="Recursive CTE Missing Anchor Member",
+        learner_symptom="Recursive CTE has no non-recursive anchor member",
+        likely_prereq_failure="cte",
+        sql_pattern=r"WITH\s+RECURSIVE\s+\w+\s+AS\s*\(\s*SELECT.*FROM\s+\w+",
+        remediation_order=3,
+        example_bad_sql="WITH RECURSIVE nums AS (SELECT n+1 FROM nums WHERE n < 5) SELECT * FROM nums; -- no anchor",
+        example_good_sql="WITH RECURSIVE nums AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM nums WHERE n < 5) SELECT * FROM nums;",
+        common_error_messages=[
+            "recursive member missing anchor",
+            "recursive CTE must start with non-recursive term",
+        ],
+        related_patterns=["cte_recursive_missing_union_v1"],
+    ),
+    
     # =========================================================================
     # Intersect and Except Errors
     # =========================================================================
@@ -843,6 +879,24 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "performance warning",
         ],
         related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="set_operation_order_missing_v1",
+        error_subtype_id="set_operation_column_mismatch",
+        concept_id="intersect-except",
+        pattern_name="Missing ORDER BY Placement in Set Operations",
+        learner_symptom="ORDER BY clause must be the final clause in set operations",
+        likely_prereq_failure="union",
+        sql_pattern=r"SELECT.*ORDER\s+BY.*INTERSECT|SELECT.*ORDER\s+BY.*EXCEPT",
+        remediation_order=2,
+        example_bad_sql="SELECT name FROM employees ORDER BY name INTERSECT SELECT name FROM managers; -- ORDER BY in wrong place",
+        example_good_sql="SELECT name FROM employees INTERSECT SELECT name FROM managers ORDER BY name;",
+        common_error_messages=[
+            "ORDER BY must appear after set operation",
+            "syntax error at or near 'INTERSECT'",
+        ],
+        related_patterns=["set_operation_column_mismatch_v1"],
     ),
     
     # =========================================================================
@@ -1016,6 +1070,40 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "unique constraint violation",
         ],
         related_patterns=["duplicate_primary_key_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="merge_not_matched_missing_v1",
+        error_subtype_id="merge_syntax_error",
+        concept_id="merge-upsert",
+        pattern_name="MERGE Missing NOT MATCHED Clause",
+        learner_symptom="MERGE statement doesn't handle rows that don't match",
+        likely_prereq_failure="merge-upsert",
+        sql_pattern=r"MERGE\s+INTO.*WHEN\s+MATCHED(?!.*WHEN\s+NOT\s+MATCHED)",
+        remediation_order=2,
+        example_bad_sql="MERGE INTO target USING source ON t.id = s.id WHEN MATCHED THEN UPDATE SET val = s.val; -- no insert for new rows",
+        example_good_sql="MERGE INTO target USING source ON t.id = s.id WHEN MATCHED THEN UPDATE SET val = s.val WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val);",
+        common_error_messages=[
+            "missing NOT MATCHED clause",
+        ],
+        related_patterns=["merge_missing_source_target_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="merge_condition_complex_v1",
+        error_subtype_id="merge_syntax_error",
+        concept_id="merge-upsert",
+        pattern_name="MERGE with Complex Condition Confusion",
+        learner_symptom="MERGE condition logic not working as expected with multiple predicates",
+        likely_prereq_failure="merge-upsert",
+        sql_pattern=r"MERGE\s+INTO.*ON\s+.*AND.*AND",
+        remediation_order=3,
+        example_bad_sql="MERGE INTO employees e USING updates u ON e.id = u.id AND e.status = 'active' AND u.valid = 1; -- complex matching",
+        example_good_sql="MERGE INTO employees e USING (SELECT * FROM updates WHERE valid = 1) u ON e.id = u.id AND e.status = 'active';",
+        common_error_messages=[
+            "merge condition too complex",
+        ],
+        related_patterns=[],
     ),
     
     # =========================================================================
@@ -1693,6 +1781,41 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         related_patterns=[],
     ),
     
+    MisconceptionPattern(
+        pattern_id="string_concat_null_result_v1",
+        error_subtype_id="concat_null_result",
+        concept_id="string-functions",
+        pattern_name="NULL Handling in CONCAT",
+        learner_symptom="CONCAT returns NULL when any argument is NULL",
+        likely_prereq_failure="null-handling",
+        sql_pattern=r"CONCAT\s*\([^)]*NULL",
+        remediation_order=2,
+        example_bad_sql="SELECT CONCAT(first_name, NULL, last_name) FROM employees; -- returns NULL",
+        example_good_sql="SELECT CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) FROM employees;",
+        common_error_messages=[
+            "unexpected NULL result",
+            "CONCAT returns NULL",
+        ],
+        related_patterns=["null_in_arithmetic_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="string_substring_index_confusion_v1",
+        error_subtype_id="string_function_misuse",
+        concept_id="string-functions",
+        pattern_name="SUBSTRING/SUBSTR Index Confusion",
+        learner_symptom="Extracted substring starts at wrong position or wrong length",
+        likely_prereq_failure="string-functions",
+        sql_pattern=r"SUBSTRING\s*\(\s*\w+\s*,\s*0\s*\)",
+        remediation_order=2,
+        example_bad_sql="SELECT SUBSTRING(phone, 0, 3) FROM contacts; -- position 0 doesn't exist in SQL",
+        example_good_sql="SELECT SUBSTRING(phone, 1, 3) FROM contacts; -- SQL uses 1-based indexing",
+        common_error_messages=[
+            "invalid substring start position",
+        ],
+        related_patterns=[],
+    ),
+    
     # =========================================================================
     # Date Functions Errors
     # =========================================================================
@@ -1749,6 +1872,42 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
             "unexpected date result",
         ],
         related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="date_invalid_date_format_v1",
+        error_subtype_id="date_format_error",
+        concept_id="date-functions",
+        pattern_name="Invalid Date Format Literal",
+        learner_symptom="Date/time field value out of range or invalid date format",
+        likely_prereq_failure="date-functions",
+        sql_pattern=r"WHERE\s+\w+\s*[<>=]\s*'\d{4}-\d{2}-\d{2}'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM orders WHERE order_date > '2024-13-45'; -- invalid month and day",
+        example_good_sql="SELECT * FROM orders WHERE order_date > '2024-12-31'; -- valid date",
+        common_error_messages=[
+            "date/time field value out of range",
+            "invalid date format",
+        ],
+        related_patterns=["date_format_mismatch_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="date_string_without_conversion_v1",
+        error_subtype_id="date_format_error",
+        concept_id="date-functions",
+        pattern_name="String Used as Date Without Conversion",
+        learner_symptom="Implicit conversion warning or unexpected comparison results",
+        likely_prereq_failure="date-functions",
+        sql_pattern=r"WHERE\s+\w+_date\s*[<>=]\s*'[A-Za-z]",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM events WHERE event_date > 'January 1, 2024'; -- string literal",
+        example_good_sql="SELECT * FROM events WHERE event_date > DATE('2024-01-01'); -- explicit conversion",
+        common_error_messages=[
+            "implicit conversion from data type varchar to date",
+            "conversion failed when converting date",
+        ],
+        related_patterns=["date_function_string_literal_v1"],
     ),
     
     # =========================================================================
@@ -2387,6 +2546,20 @@ ERROR_SUBTYPE_TO_CONCEPT: dict[str, str] = {
     # normalization (new)
     "over_normalization": "normalization",
     "normalization_ignored": "normalization",
+    
+    # Additional subtypes for expanded coverage
+    "concat_null_result": "string-functions",
+    "unused_cte": "cte",
+    "recursive_cte_no_anchor": "cte",
+}
+
+
+# Concepts where subtypes are NOT expected (design/theoretical concepts)
+# These concepts carry conceptual misconceptions rather than regex-detectable errors
+DESIGN_CONCEPTS_NO_SUBTYPES = {
+    "erd-basics",
+    "database-design", 
+    "normalization",
 }
 
 
@@ -2636,6 +2809,119 @@ class MisconceptionBank:
             "error_subtypes_covered": list(self._error_subtype_index.keys()),
             "avg_remediation_order": sum(p.remediation_order for p in self._patterns) / max(len(self._patterns), 1),
             "patterns_with_prereq": sum(1 for p in self._patterns if p.likely_prereq_failure),
+        }
+    
+    def get_subtype_coverage_report(self) -> dict[str, Any]:
+        """
+        Generate a subtype coverage report for all concepts.
+        
+        Returns a report distinguishing between:
+        - no_subtypes_expected: Design concepts where subtypes aren't applicable
+        - subtype_mapping_missing: Concepts that should have subtypes but don't
+        - subtypes_present: Concepts with proper subtype coverage
+        
+        Returns:
+            Dictionary with coverage status for each concept and summary stats
+        """
+        report: dict[str, Any] = {
+            "concepts": {},
+            "summary": {
+                "total_concepts": 0,
+                "no_subtypes_expected": 0,
+                "subtype_mapping_missing": 0,
+                "subtypes_present": 0,
+            }
+        }
+        
+        # Get all unique concept IDs from patterns
+        all_concepts = set(self._concept_index.keys())
+        
+        for concept_id in sorted(all_concepts):
+            report["summary"]["total_concepts"] += 1
+            
+            # Check if this is a design concept where subtypes aren't expected
+            if concept_id in DESIGN_CONCEPTS_NO_SUBTYPES:
+                report["concepts"][concept_id] = {
+                    "status": "no_subtypes_expected",
+                    "pattern_count": len(self._concept_index.get(concept_id, [])),
+                    "subtypes": [],
+                    "note": "Design/theoretical concept - subtypes intentionally not expected"
+                }
+                report["summary"]["no_subtypes_expected"] += 1
+                continue
+            
+            # Get patterns and subtypes for this concept
+            patterns = self._concept_index.get(concept_id, [])
+            subtypes = list(set(p.error_subtype_id for p in patterns))
+            
+            if not subtypes:
+                report["concepts"][concept_id] = {
+                    "status": "subtype_mapping_missing",
+                    "pattern_count": 0,
+                    "subtypes": [],
+                    "note": "No error subtypes mapped - needs coverage"
+                }
+                report["summary"]["subtype_mapping_missing"] += 1
+            else:
+                report["concepts"][concept_id] = {
+                    "status": "subtypes_present",
+                    "pattern_count": len(patterns),
+                    "subtypes": sorted(subtypes),
+                    "note": f"Covered by {len(patterns)} pattern(s) with {len(subtypes)} subtype(s)"
+                }
+                report["summary"]["subtypes_present"] += 1
+        
+        return report
+    
+    def get_concept_subtype_status(self, concept_id: str) -> dict[str, Any]:
+        """
+        Get subtype coverage status for a specific concept.
+        
+        Args:
+            concept_id: The concept to check
+            
+        Returns:
+            Dictionary with status and subtype information
+        """
+        # Check if concept exists in bank
+        if concept_id not in self._concept_index:
+            return {
+                "concept_id": concept_id,
+                "status": "unknown_concept",
+                "pattern_count": 0,
+                "subtypes": [],
+                "note": "Concept not found in misconception bank"
+            }
+        
+        # Check if design concept (no subtypes expected)
+        if concept_id in DESIGN_CONCEPTS_NO_SUBTYPES:
+            return {
+                "concept_id": concept_id,
+                "status": "no_subtypes_expected",
+                "pattern_count": len(self._concept_index[concept_id]),
+                "subtypes": [],
+                "note": "Design/theoretical concept - subtypes intentionally not expected"
+            }
+        
+        # Get subtypes for this concept
+        patterns = self._concept_index[concept_id]
+        subtypes = list(set(p.error_subtype_id for p in patterns))
+        
+        if not subtypes:
+            return {
+                "concept_id": concept_id,
+                "status": "subtype_mapping_missing",
+                "pattern_count": 0,
+                "subtypes": [],
+                "note": "No error subtypes mapped - needs coverage"
+            }
+        
+        return {
+            "concept_id": concept_id,
+            "status": "subtypes_present",
+            "pattern_count": len(patterns),
+            "subtypes": sorted(subtypes),
+            "note": f"Covered by {len(patterns)} pattern(s) with {len(subtypes)} subtype(s)"
         }
 
 
@@ -3119,6 +3405,7 @@ __all__ = [
     # Constants
     "COMMON_MISCONCEPTIONS",
     "ERROR_SUBTYPE_TO_CONCEPT",
+    "DESIGN_CONCEPTS_NO_SUBTYPES",
     
     # Classes
     "MisconceptionBank",
