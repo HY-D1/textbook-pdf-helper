@@ -242,6 +242,23 @@ def process_command(
         max=1.0,
         help="Minimum quality score threshold",
     ),
+    use_ollama_repair: bool = typer.Option(
+        True,
+        "--use-ollama-repair/--no-ollama-repair",
+        help="Use Ollama to repair weak L3 content (requires local Ollama server)",
+    ),
+    ollama_model: str = typer.Option(
+        "qwen2.5:3b",
+        "--ollama-model",
+        help="Ollama model for repair (qwen2.5:3b recommended for M1 Pro)",
+    ),
+    ollama_repair_threshold: float = typer.Option(
+        0.6,
+        "--ollama-repair-threshold",
+        min=0.0,
+        max=1.0,
+        help="Quality threshold below which to trigger Ollama repair",
+    ),
 ):
     """
     Process a PDF into a unit library.
@@ -250,10 +267,14 @@ def process_command(
     instructional units at all adaptive stages (L1-L4), and exports
     the grounded instructional unit graph.
     
+    The Ollama repair pass automatically improves weak L3 content using
+    a local Ollama instance (requires qwen2.5:3b or similar model).
+    
     Example:
         algl-pdf process ./textbook.pdf --output-dir ./output
         algl-pdf process ./textbook.pdf -o ./output --filter-level production
         algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
+        algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
     """
     if not HAS_EXPORTER:
         console.print("[red]❌ Error: Unit library exporter not available[/red]")
@@ -306,6 +327,9 @@ def process_command(
         skip_misconceptions=skip_misconceptions,
         validate_sql=validate_sql,
         min_quality_score=min_quality_score,
+        use_ollama_repair=use_ollama_repair,
+        ollama_model=ollama_model,
+        ollama_repair_threshold=ollama_repair_threshold,
     )
     
     # Run the pipeline with progress display
@@ -380,6 +404,7 @@ def process_command(
     exported_units = stats.get("exported_instructional_units", stats.get("exported_units", stats.get("instructional_units", 0)))
     filtered_out = stats.get("filtered_out_units", stats.get("filtered_out", 0))
     fallback_units = stats.get("fallback_units", 0)
+    repaired_units = stats.get("repaired_units", 0)
     misconception_units = stats.get("misconception_units", 0)
     reinforcement_items = stats.get("reinforcement_items", 0)
     concepts_mapped = stats.get("concepts_mapped", 0)
@@ -404,6 +429,10 @@ def process_command(
     # Show fallback units if any (these are quality failures)
     if fallback_units > 0:
         stats_table.add_row("Fallback Units", f"[yellow]{fallback_units}[/yellow]")
+    
+    # Show repaired units if any (Ollama repair was applied)
+    if repaired_units > 0:
+        stats_table.add_row("Repaired Units", f"[green]{repaired_units}[/green]")
     
     # Add quality report info if available
     if quality_report and "summary" in quality_report:
