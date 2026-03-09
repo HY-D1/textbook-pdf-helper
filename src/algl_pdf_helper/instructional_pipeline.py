@@ -128,6 +128,10 @@ class PipelineConfig:
         skip_misconceptions: Whether to skip misconception generation
         validate_sql: Whether to validate SQL examples
         min_quality_score: Minimum quality score for export (0.0-1.0)
+        use_ollama_repair: Whether to use Ollama for repairing weak L3 content
+        ollama_model: Ollama model for repair (qwen2.5:3b recommended for M1 Pro)
+        ollama_repair_threshold: Confidence threshold below which to trigger repair
+        ollama_host: Ollama API host URL
     """
     
     pdf_path: Path
@@ -147,6 +151,12 @@ class PipelineConfig:
     validate_sql: bool = True
     min_quality_score: float = 0.7
     allow_synthetic_examples: bool = False  # Default to False for production
+    
+    # Ollama repair configuration
+    use_ollama_repair: bool = True
+    ollama_model: str = "qwen2.5:3b"  # Good for M1 Pro
+    ollama_repair_threshold: float = 0.6  # Confidence below this triggers repair
+    ollama_host: str = "http://localhost:11434"
     
     # Provider-specific default models
     PROVIDER_DEFAULT_MODELS: ClassVar[dict[str, str]] = {
@@ -249,6 +259,7 @@ class PipelineResult:
         fallback_units: List of unit IDs that used fallback generation
         filtered_units: List of unit IDs that were filtered out
         blocked_units_with_reasons: List of (unit_id, reasons) tuples for blocked units
+        repaired_units: List of unit IDs that were repaired by Ollama
     """
     
     success: bool = False
@@ -262,6 +273,7 @@ class PipelineResult:
     fallback_units: list[str] = field(default_factory=list)
     filtered_units: list[str] = field(default_factory=list)
     blocked_units_with_reasons: list[tuple[str, list[str]]] = field(default_factory=list)
+    repaired_units: list[str] = field(default_factory=list)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -277,6 +289,7 @@ class PipelineResult:
             "fallback_units": self.fallback_units,
             "filtered_units": self.filtered_units,
             "blocked_units_with_reasons": self.blocked_units_with_reasons,
+            "repaired_units": self.repaired_units,
         }
     
     def get_summary(self) -> str:
@@ -295,6 +308,8 @@ class PipelineResult:
             lines.append(f"Fallback Units: {len(self.fallback_units)}")
         if self.filtered_units:
             lines.append(f"Filtered Units: {len(self.filtered_units)}")
+        if self.repaired_units:
+            lines.append(f"Repaired Units: {len(self.repaired_units)}")
         
         if self.stages_failed:
             lines.append("\nFailed Stages:")
@@ -579,6 +594,7 @@ class InstructionalPipeline:
             result.filtered_units = getattr(self, '_filtered_unit_ids', [])
             result.fallback_units = getattr(self, '_fallback_unit_ids', [])
             result.blocked_units_with_reasons = getattr(self, '_rejected_units', [])
+            result.repaired_units = getattr(self, '_repaired_unit_ids', [])
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
@@ -830,9 +846,10 @@ class InstructionalPipeline:
     
     def _generate_units(self, concept_blocks: dict[str, list[ContentBlock]] | None = None) -> list[InstructionalUnit]:
         """
-        Stage 5: Generate instructional units for all variants.
+        Stage 5: Generate instructional units for all variants with Ollama repair.
         
         Creates L1-L4 variants and reinforcement units for each concept.
+        Applies Ollama-based repair for weak L3 content when enabled.
         
         Args:
             concept_blocks: Optional concept block mapping (uses stored if None)
@@ -856,8 +873,23 @@ class InstructionalPipeline:
         if self._misconception_bank is None:
             self._misconception_bank = MisconceptionBank.load_default()
         
+        # Initialize Ollama repair if enabled
+        ollama_repair = None
+        if self.config.use_ollama_repair:
+            from .ollama_repair import OllamaRepair
+            ollama_repair = OllamaRepair(
+                model=self.config.ollama_model,
+                host=self.config.ollama_host,
+            )
+            if ollama_repair.available:
+                self._logger.info(f"Ollama repair enabled with model: {self.config.ollama_model}")
+            else:
+                self._logger.warning("Ollama repair enabled but server not available")
+                ollama_repair = None
+        
         self._instructional_units = []
         self._fallback_unit_ids = []
+        self._repaired_unit_ids = []
         
         for concept_id, blocks in concept_blocks.items():
             if not blocks:
@@ -885,20 +917,74 @@ class InstructionalPipeline:
                     error_subtypes=error_subtypes,
                 )
                 
-                # Add generated units
+                # Add generated units with optional L3 repair
                 for variant_name, unit in variants.items():
                     if unit.target_stage in self.config.generate_variants:
+                        # Apply Ollama repair for weak L3 content
+                        if (
+                            unit.target_stage == "L3_explanation"
+                            and ollama_repair
+                            and unit.content
+                        ):
+                            unit = self._repair_l3_if_needed(
+                                unit, concept_id, blocks, ollama_repair
+                            )
+                        
                         self._instructional_units.append(unit)
                         
                         # Track fallback units
                         if unit.content.get("_metadata", {}).get("is_fallback"):
                             self._fallback_unit_ids.append(unit.unit_id)
+                        
+                        # Track repaired units
+                        if unit.content.get("_repaired_by_ollama"):
+                            self._repaired_unit_ids.append(unit.unit_id)
                 
             except Exception as e:
                 self._logger.warning(f"Failed to generate units for {concept_id}: {e}")
                 continue
         
+        # Generate L3 units for concepts with curated content but no blocks
+        # This ensures high-quality curated content is included even for concepts
+        # not covered in the source PDF
+        concepts_with_blocks = set(concept_blocks.keys())
+        concepts_with_curated = self._unit_generator.get_concepts_with_curated_l3()
+        
+        # Find concepts that have curated content but weren't generated (no blocks)
+        curated_only_concepts = concepts_with_curated - concepts_with_blocks
+        
+        for concept_id in curated_only_concepts:
+            # Only generate L3_explanation from curated content
+            if "L3_explanation" not in self.config.generate_variants:
+                continue
+            
+            # Get prerequisites from ontology
+            prereqs = []
+            if self._ontology:
+                prereqs = self._ontology.get_prerequisites(concept_id)
+            
+            # Get error subtypes
+            error_subtypes = self._get_error_subtypes_for_concept(concept_id)
+            
+            try:
+                l3_unit = self._unit_generator.generate_l3_from_curated(
+                    concept_id=concept_id,
+                    config=gen_config,
+                    prerequisites=prereqs,
+                    error_subtypes=error_subtypes,
+                )
+                
+                if l3_unit:
+                    self._instructional_units.append(l3_unit)
+                    self._logger.info(f"Generated L3 for {concept_id} from curated content")
+            except Exception as e:
+                self._logger.warning(f"Failed to generate curated L3 for {concept_id}: {e}")
+                continue
+        
         self._logger.info(f"Generated {len(self._instructional_units)} instructional units")
+        
+        if self._repaired_unit_ids:
+            self._logger.info(f"Repaired {len(self._repaired_unit_ids)} units with Ollama")
         
         # Fail strict mode if fallback units exist
         if self.config.filter_level == "strict" and self._fallback_unit_ids:
@@ -908,6 +994,104 @@ class InstructionalPipeline:
             )
         
         return self._instructional_units
+    
+    def _repair_l3_if_needed(
+        self,
+        unit: InstructionalUnit,
+        concept_id: str,
+        blocks: list[ContentBlock],
+        ollama_repair: Any,
+    ) -> InstructionalUnit:
+        """
+        Repair weak L3 content using Ollama if needed.
+        
+        Assesses the quality of L3 content and applies Ollama repair if
+        the content is below the configured quality threshold.
+        
+        Args:
+            unit: The L3 instructional unit to potentially repair
+            concept_id: The concept identifier
+            blocks: Source content blocks for evidence
+            ollama_repair: OllamaRepair instance
+            
+        Returns:
+            The unit (potentially repaired with updated content)
+        """
+        content = unit.content
+        if not isinstance(content, dict):
+            return unit
+        
+        # Check if already flagged as weak or has quality issues
+        metadata = content.get("_metadata", {})
+        needs_repair = (
+            metadata.get("review_needed", False)
+            or metadata.get("content_quality") == "weak"
+            or metadata.get("content_quality") == "needs_review"
+        )
+        
+        # Assess content quality if not already flagged
+        if not needs_repair and ollama_repair:
+            quality_score = ollama_repair.assess_content_quality(content, blocks)
+            if quality_score < self.config.ollama_repair_threshold:
+                needs_repair = True
+                self._logger.debug(
+                    f"L3 content for {concept_id} scored {quality_score:.2f}, "
+                    f"below threshold {self.config.ollama_repair_threshold}"
+                )
+        
+        if needs_repair:
+            # Prepare weak content for repair
+            weak_content = {
+                "definition": content.get("definition", ""),
+                "why_it_matters": content.get("why_it_matters", ""),
+                "explanation": content.get("explanation", ""),
+            }
+            
+            # Gather source evidence
+            source_evidence = "\n\n".join(
+                b.text_content for b in blocks if b.text_content
+            )
+            
+            # Attempt repair
+            try:
+                repaired = ollama_repair.repair_l3_content(
+                    concept_id=concept_id,
+                    weak_content=weak_content,
+                    source_evidence=source_evidence,
+                )
+                
+                if repaired:
+                    # Update unit content with repaired fields
+                    new_content = dict(content)
+                    if "definition" in repaired and repaired["definition"]:
+                        new_content["definition"] = repaired["definition"]
+                    if "why_it_matters" in repaired and repaired["why_it_matters"]:
+                        new_content["why_it_matters"] = repaired["why_it_matters"]
+                    if "explanation" in repaired and repaired["explanation"]:
+                        new_content["explanation"] = repaired["explanation"]
+                    
+                    # Add repair metadata
+                    if "_metadata" not in new_content:
+                        new_content["_metadata"] = {}
+                    new_content["_metadata"].update({
+                        "_repaired_by_ollama": True,
+                        "_repair_model": repaired.get("_repair_model", "unknown"),
+                        "_repair_reason": metadata.get("review_reason", "quality_below_threshold"),
+                        "content_quality": "repaired",
+                        "review_needed": False,  # Clear review flag after repair
+                    })
+                    
+                    # Create updated unit
+                    from dataclasses import replace
+                    unit = replace(unit, content=new_content)
+                    self._logger.info(f"Repaired L3 content for {concept_id}")
+                else:
+                    self._logger.warning(f"Ollama repair returned no result for {concept_id}")
+                    
+            except Exception as e:
+                self._logger.warning(f"Ollama repair failed for {concept_id}: {e}")
+        
+        return unit
     
     def _get_error_subtypes_for_concept(self, concept_id: str) -> list[str]:
         """
@@ -1526,6 +1710,7 @@ class InstructionalPipeline:
         generated_units = stats.get('generated_units', len(self._instructional_units))
         filtered_out = stats.get('filtered_out', len(getattr(self, '_filtered_unit_ids', [])))
         fallback_count = len(getattr(self, '_fallback_unit_ids', []))
+        repaired_count = len(getattr(self, '_repaired_unit_ids', []))
         
         return {
             "extraction_blocks": len(self._content_blocks),
@@ -1541,6 +1726,7 @@ class InstructionalPipeline:
             "reinforcement_items": len(self._reinforcement_items),
             "filtered_units": len(getattr(self, '_filtered_unit_ids', [])),
             "fallback_units": fallback_count,
+            "repaired_units": repaired_count,
             "stage_timings": self.progress.get_stage_durations(),
         }
 

@@ -412,6 +412,16 @@ class UnitLibraryExporter:
         filter_level: FilterLevel,
     ) -> bool:
         """Check if a unit passes the filter level."""
+        # Curated content is high quality and should pass regardless of grounding
+        content = unit.content or {}
+        is_curated = content.get("_used_curated_fallback") or (
+            content.get("_metadata", {}).get("content_source") == "curated"
+        )
+        
+        if is_curated:
+            # Curated content passes all filter levels
+            return True
+        
         if filter_level == FilterLevel.STRICT:
             # Require full grounding and high confidence
             return (

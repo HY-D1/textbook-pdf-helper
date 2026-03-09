@@ -1,0 +1,297 @@
+{
+  "correlated-subquery": {
+    "definition": "A correlated subquery is a subquery that references columns from the outer query, executing once for each row in the outer query to enable row-by-row comparisons.",
+    "why_it_matters": "Correlated subqueries solve problems that are difficult or impossible with joins alone, like finding rows that exceed their group's average or comparing rows to aggregate values within the same context. They're essential for per-group filtering and complex analytical queries.",
+    "examples": [
+      {
+        "sql": "SELECT e.name, e.salary FROM employees e WHERE e.salary > (SELECT AVG(salary) FROM employees WHERE department = e.department);",
+        "explanation": "Find employees earning above their department average",
+        "scenario": "Identifying top performers within each team"
+      },
+      {
+        "sql": "SELECT c.name FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.total > 1000);",
+        "explanation": "Find customers who have placed at least one high-value order",
+        "scenario": "Targeting high-value customer segments"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Confusing correlated vs non-correlated subqueries",
+        "error_sql": "SELECT * FROM products WHERE price > (SELECT AVG(price) FROM products);",
+        "fix_sql": "SELECT * FROM products p WHERE price > (SELECT AVG(price) FROM products WHERE category = p.category);",
+        "key_takeaway": "Correlated subqueries reference outer table columns; they execute once per outer row"
+      },
+      {
+        "title": "Using IN instead of EXISTS for existence checks",
+        "error_sql": "SELECT * FROM employees e WHERE e.id IN (SELECT manager_id FROM employees WHERE manager_id = e.id);",
+        "fix_sql": "SELECT * FROM employees e WHERE EXISTS (SELECT 1 FROM employees WHERE manager_id = e.id);",
+        "key_takeaway": "EXISTS is more efficient than IN for correlated existence checks and better conveys intent"
+      }
+    ],
+    "reflection_prompts": [
+      "When is a correlated subquery better than a JOIN?",
+      "Why are correlated subqueries typically slower than joins, and when might this trade-off be acceptable?",
+      "How does EXISTS differ from IN when used with correlated subqueries?"
+    ],
+    "transfer_questions": [
+      "Find products priced above their category average",
+      "List departments that have at least one employee earning more than $100,000",
+      "Find customers who have not placed any orders in the last 6 months"
+    ]
+  },
+  "create-table": {
+    "definition": "CREATE TABLE is a Data Definition Language (DDL) statement that defines a new table structure, including column names, data types, constraints, and relationships to other tables.",
+    "why_it_matters": "Creating well-designed tables is the foundation of database architecture. Proper table design ensures data integrity, optimizes query performance, and establishes the relationships that make relational databases powerful. Poor design leads to data anomalies and maintenance headaches.",
+    "examples": [
+      {
+        "sql": "CREATE TABLE employees (\n  id INT PRIMARY KEY AUTO_INCREMENT,\n  name VARCHAR(100) NOT NULL,\n  email VARCHAR(100) UNIQUE,\n  department_id INT,\n  salary DECIMAL(10,2) CHECK (salary > 0),\n  hire_date DATE DEFAULT CURRENT_DATE,\n  FOREIGN KEY (department_id) REFERENCES departments(id)\n);",
+        "explanation": "Create an employees table with primary key, constraints, default values, and foreign key relationship",
+        "scenario": "Setting up a new HR database with data integrity rules"
+      },
+      {
+        "sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT NOT NULL,\n  order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  status VARCHAR(20) CHECK (status IN ('pending', 'shipped', 'delivered')),\n  total DECIMAL(10,2),\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
+        "explanation": "Create an orders table with check constraints and automatic timestamping",
+        "scenario": "E-commerce order tracking system"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Forgetting to add NOT NULL on required fields",
+        "error_sql": "CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(50), password VARCHAR(100));",
+        "fix_sql": "CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(50) NOT NULL UNIQUE, password VARCHAR(100) NOT NULL);",
+        "key_takeaway": "Always specify NOT NULL for columns that must have values"
+      },
+      {
+        "title": "Choosing inappropriate data types",
+        "error_sql": "CREATE TABLE products (id INT, price FLOAT, description VARCHAR(255));",
+        "fix_sql": "CREATE TABLE products (id INT PRIMARY KEY, price DECIMAL(10,2), description TEXT);",
+        "key_takeaway": "Use DECIMAL for money (not FLOAT), and TEXT/VARCHAR appropriately for string lengths"
+      }
+    ],
+    "reflection_prompts": [
+      "How do you decide between VARCHAR and TEXT for string columns?",
+      "What are the trade-offs between using synthetic keys (AUTO_INCREMENT) versus natural keys?",
+      "When should you add indexes at table creation time versus later?"
+    ],
+    "transfer_questions": [
+      "Design a table for a blog system with posts, authors, and categories",
+      "Create a many-to-many relationship table for students and courses",
+      "Design an audit log table that tracks changes to another table"
+    ]
+  },
+  "having-clause": {
+    "definition": "The HAVING clause filters grouped rows based on aggregate conditions, applying after GROUP BY aggregation, whereas WHERE filters individual rows before grouping.",
+    "why_it_matters": "HAVING is essential when you need to filter based on aggregated values like counts, sums, or averages. Without it, you'd have to retrieve all groups and filter them in application code, wasting database resources and network bandwidth.",
+    "examples": [
+      {
+        "sql": "SELECT department, COUNT(*) as emp_count, AVG(salary) as avg_salary\nFROM employees\nGROUP BY department\nHAVING COUNT(*) > 5 AND AVG(salary) > 50000;",
+        "explanation": "Find departments with more than 5 employees and average salary above $50,000",
+        "scenario": "Identifying well-staffed, high-compensation departments"
+      },
+      {
+        "sql": "SELECT customer_id, SUM(total) as total_spent\nFROM orders\nWHERE order_date >= '2024-01-01'\nGROUP BY customer_id\nHAVING SUM(total) > 1000\nORDER BY total_spent DESC;",
+        "explanation": "Find customers who spent over $1000 this year, ordered by spending",
+        "scenario": "Identifying high-value customers for loyalty programs"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using WHERE instead of HAVING for aggregate conditions",
+        "error_sql": "SELECT department, COUNT(*) FROM employees WHERE COUNT(*) > 5 GROUP BY department;",
+        "fix_sql": "SELECT department, COUNT(*) FROM employees GROUP BY department HAVING COUNT(*) > 5;",
+        "key_takeaway": "WHERE filters rows before aggregation; HAVING filters groups after aggregation"
+      },
+      {
+        "title": "Using column aliases in HAVING (in some databases)",
+        "error_sql": "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department HAVING avg_sal > 50000;",
+        "fix_sql": "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 50000;",
+        "key_takeaway": "Some databases don't allow aliases in HAVING; use the full aggregate expression for portability"
+      }
+    ],
+    "reflection_prompts": [
+      "Why can't you use aggregate functions in the WHERE clause?",
+      "When would you use both WHERE and HAVING in the same query?",
+      "How does the execution order of SQL clauses affect HAVING's behavior?"
+    ],
+    "transfer_questions": [
+      "Find product categories with more than 10 products and average price above $50",
+      "List months where total sales exceeded $100,000",
+      "Identify customers who have placed exactly 3 orders in the last month"
+    ]
+  },
+  "isolation-levels": {
+    "definition": "Transaction isolation levels define how much one transaction is protected from the effects of concurrently executing transactions, balancing consistency against concurrency performance.",
+    "why_it_matters": "Isolation levels let you tune the trade-off between data consistency and system throughput. Banking systems need strict consistency (SERIALIZABLE), while analytics dashboards might accept some inconsistency (READ COMMITTED) for better performance. Understanding isolation prevents bugs like lost updates and phantom reads.",
+    "examples": [
+      {
+        "sql": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;",
+        "explanation": "Ensure transfers don't read uncommitted changes from other transactions",
+        "scenario": "Banking transfers requiring protection from dirty reads"
+      },
+      {
+        "sql": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nBEGIN TRANSACTION;\nSELECT * FROM inventory WHERE product_id = 123;\nUPDATE inventory SET quantity = quantity - 1 WHERE product_id = 123;\nCOMMIT;",
+        "explanation": "Prevent phantom reads and ensure inventory accuracy under high concurrency",
+        "scenario": "E-commerce inventory management during flash sales"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using too high isolation level unnecessarily",
+        "error_sql": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; SELECT * FROM page_views;",
+        "fix_sql": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SELECT * FROM page_views;",
+        "key_takeaway": "SERIALIZABLE provides maximum consistency but severely limits concurrency; use the lowest level that meets your consistency needs"
+      },
+      {
+        "title": "Not handling non-repeatable reads",
+        "error_sql": "BEGIN; SELECT balance FROM accounts WHERE id = 1; -- other transaction updates -- SELECT balance FROM accounts WHERE id = 1; COMMIT;",
+        "fix_sql": "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; BEGIN; SELECT balance FROM accounts WHERE id = 1; -- balance remains consistent -- COMMIT;",
+        "key_takeaway": "At READ COMMITTED, the same query can return different results within a transaction"
+      }
+    ],
+    "reflection_prompts": [
+      "What anomalies can occur at each isolation level (dirty read, non-repeatable read, phantom read)?",
+      "Why don't all transactions just use SERIALIZABLE for maximum safety?",
+      "How do isolation levels interact with locking strategies?"
+    ],
+    "transfer_questions": [
+      "Design a booking system that prevents double-booking while maximizing concurrency",
+      "Choose appropriate isolation levels for a financial reporting system",
+      "Implement a counter that increments safely under high concurrent load"
+    ]
+  },
+  "outer-join": {
+    "definition": "An outer join returns all rows from one table (the preserved table) and matching rows from another table, using NULL where there's no match.",
+    "why_it_matters": "Outer joins are essential when you need ALL records from one side regardless of whether they have matches, like finding customers with no orders, products never purchased, or employees without assigned departments. They're crucial for data completeness in reporting.",
+    "examples": [
+      {
+        "sql": "SELECT c.name, o.order_id, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id;",
+        "explanation": "Show all customers and their orders, including customers who have never ordered (NULL values for order columns)",
+        "scenario": "Complete customer report showing purchase history or lack thereof"
+      },
+      {
+        "sql": "SELECT c.name\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nWHERE o.customer_id IS NULL;",
+        "explanation": "Find customers who have never placed an order",
+        "scenario": "Identifying inactive customers for re-engagement campaigns"
+      },
+      {
+        "sql": "SELECT e.name as employee, m.name as manager\nFROM employees e\nLEFT JOIN employees m ON e.manager_id = m.id;",
+        "explanation": "Show all employees with their managers, including the CEO who has no manager",
+        "scenario": "Organizational hierarchy reporting"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using wrong join direction",
+        "error_sql": "SELECT c.name FROM orders o LEFT JOIN customers c ON o.customer_id = c.id WHERE o.customer_id IS NULL;",
+        "fix_sql": "SELECT c.name FROM customers c LEFT JOIN orders o ON c.id = o.customer_id WHERE o.customer_id IS NULL;",
+        "key_takeaway": "Put the table you want ALL rows from on the LEFT side of LEFT JOIN"
+      },
+      {
+        "title": "Filtering in WHERE instead of ON clause",
+        "error_sql": "SELECT c.name, o.total FROM customers c LEFT JOIN orders o ON c.id = o.customer_id WHERE o.total > 100;",
+        "fix_sql": "SELECT c.name, o.total FROM customers c LEFT JOIN orders o ON c.id = o.customer_id AND o.total > 100;",
+        "key_takeaway": "Filtering in WHERE turns outer joins into inner joins; put conditions in ON to preserve unmatched rows"
+      }
+    ],
+    "reflection_prompts": [
+      "What's the difference between LEFT JOIN with WHERE IS NULL versus NOT EXISTS?",
+      "When would you use RIGHT JOIN instead of LEFT JOIN?",
+      "How does FULL OUTER JOIN differ from LEFT or RIGHT JOIN?"
+    ],
+    "transfer_questions": [
+      "Find all employees who have never been assigned to a project",
+      "List all products with their total sales (show 0 for products never sold)",
+      "Find departments that have no employees assigned"
+    ]
+  },
+  "self-join": {
+    "definition": "A self-join is a regular join where a table is joined to itself, typically using table aliases to distinguish between the two instances of the same table.",
+    "why_it_matters": "Self-joins solve hierarchical and comparative queries within a single table, like employee-manager relationships, finding similar records, or comparing rows to each other. They're essential for recursive or reflexive relationships without separate tables.",
+    "examples": [
+      {
+        "sql": "SELECT e.name AS employee, m.name AS manager\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
+        "explanation": "Display each employee alongside their manager's name",
+        "scenario": "Reporting organizational reporting structure"
+      },
+      {
+        "sql": "SELECT a.name AS employee1, b.name AS employee2, a.salary\nFROM employees a\nJOIN employees b ON a.manager_id = b.manager_id AND a.id < b.id\nWHERE a.salary > b.salary;",
+        "explanation": "Find employees earning more than their peers with the same manager",
+        "scenario": "Identifying salary inequities within teams"
+      },
+      {
+        "sql": "SELECT p1.name AS product1, p2.name AS product2, p1.category\nFROM products p1\nJOIN products p2 ON p1.category = p2.category AND p1.id < p2.id;",
+        "explanation": "List all pairs of products in the same category",
+        "scenario": "Product bundling or recommendation analysis"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Forgetting table aliases",
+        "error_sql": "SELECT name FROM employees JOIN employees ON manager_id = id;",
+        "fix_sql": "SELECT e.name, m.name FROM employees e JOIN employees m ON e.manager_id = m.id;",
+        "key_takeaway": "Always use aliases when self-joining to distinguish between the table instances"
+      },
+      {
+        "title": "Missing condition to prevent self-matching",
+        "error_sql": "SELECT a.name, b.name FROM employees a JOIN employees b ON a.manager_id = b.manager_id;",
+        "fix_sql": "SELECT a.name, b.name FROM employees a JOIN employees b ON a.manager_id = b.manager_id AND a.id != b.id;",
+        "key_takeaway": "Add a.id != b.id (or a.id < b.id for unique pairs) to prevent rows matching themselves"
+      }
+    ],
+    "reflection_prompts": [
+      "How do self-joins relate to recursive queries and CTEs?",
+      "When should you use a self-join versus restructuring your data model?",
+      "How can you find all employees in an organizational hierarchy using multiple self-joins?"
+    ],
+    "transfer_questions": [
+      "Find employees who earn more than their managers",
+      "List all products that have the same price as another product",
+      "Find students who are enrolled in the same courses as a specific student"
+    ]
+  },
+  "transactions": {
+    "definition": "A transaction is a logical unit of work that groups multiple database operations into an atomic, consistent, isolated, and durable (ACID) sequence that either completes entirely or not at all.",
+    "why_it_matters": "Transactions ensure data integrity when multiple related operations must succeed or fail together—like bank transfers, order processing, or inventory updates. Without transactions, system failures could leave data in inconsistent states, causing lost money, inventory errors, or corrupted records.",
+    "examples": [
+      {
+        "sql": "BEGIN TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;",
+        "explanation": "Transfer $100 between accounts atomically—both updates succeed or both fail",
+        "scenario": "Banking transfer ensuring money is neither lost nor created"
+      },
+      {
+        "sql": "BEGIN TRANSACTION;\nINSERT INTO orders (customer_id, total) VALUES (1, 150.00);\nSET @order_id = LAST_INSERT_ID();\nINSERT INTO order_items (order_id, product_id, quantity) VALUES (@order_id, 101, 2);\nINSERT INTO order_items (order_id, product_id, quantity) VALUES (@order_id, 102, 1);\nUPDATE inventory SET quantity = quantity - 2 WHERE product_id = 101;\nUPDATE inventory SET quantity = quantity - 1 WHERE product_id = 102;\nCOMMIT;",
+        "explanation": "Create a complete order with items and update inventory as a single atomic operation",
+        "scenario": "E-commerce order processing with inventory management"
+      },
+      {
+        "sql": "BEGIN TRANSACTION;\nSAVEPOINT before_discount;\nUPDATE orders SET total = total * 0.9 WHERE id = 1001;\n-- Logic to verify discount is valid --\nROLLBACK TO SAVEPOINT before_discount;\nCOMMIT;",
+        "explanation": "Apply a discount with the ability to undo it if validation fails",
+        "scenario": "Complex business logic with partial rollback capability"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Forgetting to COMMIT or ROLLBACK",
+        "error_sql": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- no COMMIT --",
+        "fix_sql": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; COMMIT;",
+        "key_takeaway": "Always explicitly commit or rollback; uncommitted transactions may hold locks indefinitely"
+      },
+      {
+        "title": "Catching errors without rolling back",
+        "error_sql": "BEGIN; INSERT INTO orders VALUES (...); -- error occurs -- INSERT INTO order_items VALUES (...); COMMIT;",
+        "fix_sql": "BEGIN; INSERT INTO orders VALUES (...); IF ERROR THEN ROLLBACK; ELSE COMMIT; END IF;",
+        "key_takeaway": "Use error handling to rollback on failure, don't continue after errors"
+      }
+    ],
+    "reflection_prompts": [
+      "What are the ACID properties and why does each matter?",
+      "When should you use SAVEPOINTs versus separate transactions?",
+      "How do transactions interact with database locks and concurrency?"
+    ],
+    "transfer_questions": [
+      "Implement a funds transfer with proper error handling and rollback",
+      "Design a reservation system that prevents overbooking using transactions",
+      "Create an audit trail that logs all changes within a transaction"
+    ]
+  }
+}
