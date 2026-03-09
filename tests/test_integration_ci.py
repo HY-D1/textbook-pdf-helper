@@ -12,6 +12,7 @@ These tests verify:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1149,6 +1150,58 @@ class TestPipelineStageTransitions:
             norm = sum(v * v for v in embedding) ** 0.5
             if norm > 0:  # Non-zero vectors
                 assert 0.99 <= norm <= 1.01
+
+
+# =============================================================================
+# REAL CLI SMOKE TESTS
+# =============================================================================
+
+class TestUnitLibraryProcessCommand:
+    """Real CLI smoke tests for the unit library pipeline."""
+    
+    def test_process_command_creates_units(self, tmp_path):
+        """Run actual process command and verify output."""
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "test_output"
+        fixture_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Determine command - use 'algl-pdf' if available, else python -m
+        cmd = [
+            "algl-pdf",
+            "process",
+            str(fixture_path),
+            "-o", str(output_dir),
+            "--filter-level", "production"
+        ]
+        
+        # Run the actual CLI command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+        
+        # Assert exit code 0
+        if result.returncode != 0:
+            pytest.fail(f"Process failed with exit code {result.returncode}:\n"
+                       f"stdout: {result.stdout}\nstderr: {result.stderr}")
+        
+        # Assert files exist
+        assert (output_dir / "instructional_units.jsonl").exists(), \
+            f"instructional_units.jsonl not found. stdout: {result.stdout}"
+        assert (output_dir / "export_manifest.json").exists(), \
+            f"export_manifest.json not found. stdout: {result.stdout}"
+        
+        # Assert non-empty
+        units_file = output_dir / "instructional_units.jsonl"
+        lines = units_file.read_text().strip().split('\n')
+        assert len(lines) > 0, "instructional_units.jsonl is empty"
+        
+        # Verify manifest
+        manifest = json.loads((output_dir / "export_manifest.json").read_text())
+        assert manifest["statistics"]["instructional_units"] > 0
 
 
 # =============================================================================
