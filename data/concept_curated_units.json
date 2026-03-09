@@ -1,0 +1,450 @@
+{
+  "stored-procedures": {
+    "L2_hint_plus_example": {
+      "hint_text": "Stored procedures are pre-written SQL programs stored in the database. They let you encapsulate reusable logic that can be executed with a simple CALL statement.",
+      "example_sql": "CREATE PROCEDURE GetUserCount()\nBEGIN\n  SELECT COUNT(*) FROM users;\nEND;",
+      "example_explanation": "This simple procedure counts all users. Unlike ad-hoc queries, procedures are compiled and stored on the server, making them faster for repeated operations.",
+      "common_pitfall": "Forgetting that procedures need to be called with CALL ProcedureName(), not just ProcedureName()"
+    },
+    "L3_explanation": {
+      "definition": "A stored procedure is a pre-compiled collection of SQL statements stored in the database that can accept parameters, perform operations, and return results. They encapsulate business logic directly in the database, reducing network traffic and centralizing code.",
+      "why_it_matters": "Stored procedures improve performance by reducing client-server communication, enhance security by controlling data access, and ensure consistency by centralizing business rules. They're essential for complex operations that must be atomic, like transferring funds between accounts. They also provide an API-like interface that applications can call rather than writing raw SQL.",
+      "examples": [
+        {
+          "title": "Simple procedure with parameter",
+          "sql": "CREATE PROCEDURE GetUserById(user_id INT)\nBEGIN\n  SELECT * FROM users WHERE id = user_id;\nEND;",
+          "explanation": "This procedure accepts a user_id parameter and returns matching rows. Procedures can have IN, OUT, and INOUT parameters.",
+          "scenario": "Creating a standardized way to fetch user details across all application modules."
+        },
+        {
+          "title": "Procedure with conditional logic",
+          "sql": "CREATE PROCEDURE GetUserStatus(user_id INT)\nBEGIN\n  DECLARE user_count INT;\n  SELECT COUNT(*) INTO user_count FROM users WHERE id = user_id;\n  IF user_count > 0 THEN\n    SELECT 'Active' AS status;\n  ELSE\n    SELECT 'Not Found' AS status;\n  END IF;\nEND;",
+          "explanation": "Shows variable declaration, SELECT INTO for assigning values, and IF/ELSE conditional logic.",
+          "scenario": "Checking if a user exists before attempting to process their order."
+        },
+        {
+          "title": "Transaction in a procedure",
+          "sql": "CREATE PROCEDURE TransferFunds(\n  IN from_account INT,\n  IN to_account INT,\n  IN amount DECIMAL(10,2)\n)\nBEGIN\n  START TRANSACTION;\n  UPDATE accounts SET balance = balance - amount WHERE id = from_account;\n  UPDATE accounts SET balance = balance + amount WHERE id = to_account;\n  COMMIT;\nEND;",
+          "explanation": "Procedures ensure atomic operations. Both updates succeed or both fail, maintaining data integrity.",
+          "scenario": "Bank transfer: ensuring money is deducted from one account AND added to another, or neither."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Calling a procedure without CALL",
+          "error_sql": "GetUserCount();",
+          "error_message": "You have an error in your SQL syntax",
+          "why_it_happens": "Unlike functions, stored procedures must be invoked with the CALL keyword.",
+          "fix_sql": "CALL GetUserCount();",
+          "key_takeaway": "Always use CALL ProcedureName() to execute stored procedures."
+        },
+        {
+          "title": "Using = instead of INTO for variable assignment",
+          "error_sql": "CREATE PROCEDURE test()\nBEGIN\n  DECLARE x INT;\n  SET x = SELECT COUNT(*) FROM users;\nEND;",
+          "error_message": "Syntax error near 'SELECT'",
+          "why_it_happens": "To assign a query result to a variable, you must use SELECT ... INTO syntax.",
+          "fix_sql": "SELECT COUNT(*) INTO x FROM users;",
+          "key_takeaway": "Use SELECT column INTO variable FROM table, not SET variable = SELECT."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Stored procedures represent a key architectural decision in database design. They move business logic from application code into the database layer, creating a centralized, reusable API for data operations.",
+      "key_takeaways": [
+        "Procedures reduce network traffic by sending only parameters, not entire SQL statements",
+        "They provide a security layer by restricting direct table access",
+        "Transactions within procedures ensure data consistency",
+        "Version control for procedures requires database migration strategies"
+      ],
+      "connection_prompts": [
+        "When does putting logic in a procedure make more sense than application code?",
+        "How do stored procedures compare to microservices architecture?",
+        "What are the debugging challenges with stored procedures?"
+      ]
+    }
+  },
+  "data-types": {
+    "L2_hint_plus_example": {
+      "hint_text": "Choosing the right data type ensures data integrity and optimizes storage. Use INT for whole numbers, DECIMAL for money, VARCHAR for text with limits, and DATE/TIMESTAMP for temporal data.",
+      "example_sql": "CREATE TABLE products (\n  id INT PRIMARY KEY,\n  name VARCHAR(200) NOT NULL,\n  price DECIMAL(10,2),\n  in_stock BOOLEAN,\n  created_at TIMESTAMP\n);",
+      "example_explanation": "This shows appropriate type choices: INT for IDs, VARCHAR for names with a length limit, DECIMAL(10,2) for exact monetary values, BOOLEAN for flags, and TIMESTAMP for tracking creation time.",
+      "common_pitfall": "Using FLOAT or DOUBLE for money causes rounding errors; always use DECIMAL"
+    },
+    "L3_explanation": {
+      "definition": "Data types define the kind of data that can be stored in a column, determining storage size, allowed operations, and data integrity rules. SQL supports numeric types (INT, DECIMAL, FLOAT), string types (CHAR, VARCHAR, TEXT), date/time types (DATE, TIME, TIMESTAMP), and specialized types (BOOLEAN, BLOB, JSON).",
+      "why_it_matters": "Proper data type selection affects storage efficiency, query performance, and data accuracy. Using VARCHAR(100) for a 50-character email field wastes space, while VARCHAR(10) truncates valid emails. DECIMAL ensures exact arithmetic for financial calculations where FLOAT introduces rounding errors. Correct types enable proper indexing, sorting, and validation.",
+      "examples": [
+        {
+          "title": "Creating a table with appropriate types",
+          "sql": "CREATE TABLE employees (\n  id INT PRIMARY KEY AUTO_INCREMENT,\n  email VARCHAR(255) UNIQUE NOT NULL,\n  salary DECIMAL(12,2) NOT NULL,\n  hire_date DATE,\n  is_active BOOLEAN DEFAULT TRUE,\n  notes TEXT\n);",
+          "explanation": "INT with AUTO_INCREMENT for unique IDs, VARCHAR for email with room for long addresses, DECIMAL(12,2) for exact salary storage, DATE for hire date (no time needed), BOOLEAN for flags, TEXT for unlimited notes.",
+          "scenario": "Employee database with proper type constraints for HR management."
+        },
+        {
+          "title": "Why DECIMAL beats FLOAT for money",
+          "sql": "SELECT \n  CAST(0.1 AS DECIMAL(10,2)) + CAST(0.2 AS DECIMAL(10,2)) AS exact_sum,\n  0.1 + 0.2 AS float_sum;",
+          "explanation": "DECIMAL stores numbers as strings (exact), while FLOAT uses binary floating-point (approximate). Financial calculations require exact precision.",
+          "scenario": "Comparing how different types handle the same calculation."
+        },
+        {
+          "title": "Date and time types",
+          "sql": "CREATE TABLE events (\n  id INT PRIMARY KEY,\n  event_date DATE,\n  start_time TIME,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
+          "explanation": "DATE stores calendar dates, TIME stores clock times, TIMESTAMP stores both and auto-updates with current time by default.",
+          "scenario": "Event scheduling: DATE for the day, TIME for the hour, TIMESTAMP for when the record was created."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using FLOAT for money",
+          "error_sql": "CREATE TABLE orders (total FLOAT);\nINSERT INTO orders VALUES (0.1 + 0.2);",
+          "error_message": "No error, but stores 0.30000000000000004 instead of 0.30",
+          "why_it_happens": "Floating-point uses binary representation which cannot exactly represent decimal fractions like 0.1.",
+          "fix_sql": "CREATE TABLE orders (total DECIMAL(10,2));",
+          "key_takeaway": "Always use DECIMAL(precision, scale) for money and measurements requiring exact precision."
+        },
+        {
+          "title": "VARCHAR that's too small",
+          "error_sql": "CREATE TABLE users (email VARCHAR(30));\nINSERT INTO users VALUES ('very.long.email.address@example.com');",
+          "error_message": "Data too long for column 'email'",
+          "why_it_happens": "Email addresses can be up to 254 characters; underestimating size causes data truncation errors.",
+          "fix_sql": "ALTER TABLE users MODIFY email VARCHAR(255);",
+          "key_takeaway": "Research maximum realistic lengths; VARCHAR(255) is standard for emails, VARCHAR(100) for country names."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Data type selection is a foundational database design decision that impacts performance, integrity, and maintainability. Types act as the first line of validation and determine how data can be queried and manipulated.",
+      "key_takeaways": [
+        "Data types constrain what can be stored, preventing invalid data at the database level",
+        "Type choice affects index performance and storage requirements",
+        "DECIMAL for exact math, FLOAT for scientific approximations",
+        "Consider future growth when setting VARCHAR lengths"
+      ],
+      "connection_prompts": [
+        "How would using TEXT instead of VARCHAR impact query performance?",
+        "When is it better to store dates as integers (Unix timestamps)?",
+        "How do data types in SQL compare to type systems in programming languages?"
+      ]
+    }
+  },
+  "date-functions": {
+    "L2_hint_plus_example": {
+      "hint_text": "Date functions extract parts of dates, calculate differences, and format temporal data. CURDATE() gives today, DATEDIFF() calculates days between dates, and DATE_FORMAT() controls display.",
+      "example_sql": "SELECT \n  name,\n  DATEDIFF(CURDATE(), hire_date) AS days_employed\nFROM employees;",
+      "example_explanation": "DATEDIFF calculates the number of days between two dates. CURDATE() returns the current date, making this query show how long each employee has been with the company.",
+      "common_pitfall": "Date arithmetic varies by database - use standard functions instead of math operators"
+    },
+    "L3_explanation": {
+      "definition": "Date and time functions manipulate temporal data: extracting components (YEAR, MONTH, DAY), calculating intervals (DATEDIFF, DATE_ADD), formatting output (DATE_FORMAT), and converting between types. They enable time-based analysis, age calculations, scheduling, and period comparisons.",
+      "why_it_matters": "Time-based analysis is essential for business reporting. Date functions enable period-over-period comparisons, aging reports, scheduling logic, and trend analysis. Without them, you'd need to export data to Excel or Python for date calculations. Understanding time zones, leap years, and formatting standards ensures accurate temporal analysis.",
+      "examples": [
+        {
+          "title": "Calculate employee tenure in years",
+          "sql": "SELECT \n  name,\n  hire_date,\n  TIMESTAMPDIFF(YEAR, hire_date, CURDATE()) AS years_employed\nFROM employees;",
+          "explanation": "TIMESTAMPDIFF calculates the difference between dates in specified units (YEAR, MONTH, DAY). More accurate than simple division for calculating ages and tenures.",
+          "scenario": "HR needs to identify employees eligible for 5-year anniversary bonuses."
+        },
+        {
+          "title": "Extract parts of dates for grouping",
+          "sql": "SELECT \n  YEAR(order_date) AS order_year,\n  MONTH(order_date) AS order_month,\n  COUNT(*) AS total_orders\nFROM orders\nGROUP BY YEAR(order_date), MONTH(order_date)\nORDER BY order_year, order_month;",
+          "explanation": "YEAR() and MONTH() extract components from dates, enabling aggregation by time periods for trend analysis.",
+          "scenario": "Sales reporting: monthly order totals for year-over-year comparison."
+        },
+        {
+          "title": "Find records from the last 30 days",
+          "sql": "SELECT * FROM orders\nWHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY);",
+          "explanation": "DATE_SUB subtracts a time interval from a date. INTERVAL 30 DAY is more readable and reliable than subtracting 30 (which could mean days or seconds depending on context).",
+          "scenario": "Generating a recent activity report showing orders from the past month."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Comparing dates with string literals",
+          "error_sql": "SELECT * FROM orders WHERE order_date = '2024-01-01';",
+          "error_message": "May return no results if order_date has time components",
+          "why_it_happens": "TIMESTAMP columns include time; '2024-01-01' as a string may not match timestamps with non-midnight times.",
+          "fix_sql": "SELECT * FROM orders WHERE DATE(order_date) = '2024-01-01';",
+          "key_takeaway": "Use DATE() to extract just the date portion when comparing against date literals."
+        },
+        {
+          "title": "Incorrect date arithmetic",
+          "error_sql": "SELECT * FROM orders WHERE order_date > CURDATE() - 30;",
+          "error_message": "No error, but may give wrong results depending on type",
+          "why_it_happens": "Subtracting 30 from a date does integer math in some contexts, not 30 days.",
+          "fix_sql": "SELECT * FROM orders WHERE order_date > DATE_SUB(CURDATE(), INTERVAL 30 DAY);",
+          "key_takeaway": "Always use DATE_SUB/DATE_ADD with INTERVAL for reliable date arithmetic."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Date functions bridge the gap between stored temporal data and meaningful time-based insights. They transform raw timestamps into business intelligence through period analysis, aging calculations, and trend identification.",
+      "key_takeaways": [
+        "Date functions handle timezone conversions and daylight saving time automatically",
+        "INTERVAL syntax is more readable and reliable than arithmetic operators",
+        "Consider using DATE_TRUNC or equivalent for grouping by periods",
+        "Age calculations need TIMESTAMPDIFF, not simple subtraction"
+      ],
+      "connection_prompts": [
+        "How would you handle date calculations across different time zones?",
+        "What's the difference between calendar months and 30-day intervals?",
+        "When should you store pre-calculated date components vs compute on the fly?"
+      ]
+    }
+  },
+  "string-functions": {
+    "L2_hint_plus_example": {
+      "hint_text": "String functions clean, transform, and search text data. CONCAT joins strings, UPPER/LOWER change case, SUBSTRING extracts portions, and LIKE with % and _ enables pattern matching.",
+      "example_sql": "SELECT \n  CONCAT(UPPER(first_name), ' ', UPPER(last_name)) AS full_name\nFROM employees;",
+      "example_explanation": "This combines first and last names with a space, converting both to uppercase. String functions are essential for formatting and standardizing messy real-world data.",
+      "common_pitfall": "LIKE patterns are case-insensitive in some databases but not others - know your database"
+    },
+    "L3_explanation": {
+      "definition": "String functions manipulate text data: changing case (UPPER, LOWER), extracting substrings (SUBSTRING, LEFT, RIGHT), concatenating (CONCAT, CONCAT_WS), trimming whitespace (TRIM, LTRIM, RTRIM), finding patterns (LIKE, POSITION, REPLACE), and measuring length (LENGTH, CHAR_LENGTH). They enable data cleaning, formatting, and text analysis.",
+      "why_it_matters": "Real-world data is messy - inconsistent capitalization, extra spaces, mixed formats. String functions clean and standardize data for consistent analysis and display. They're essential for formatting reports, parsing inputs, masking sensitive data (like showing only last 4 digits of credit cards), and implementing search functionality.",
+      "examples": [
+        {
+          "title": "Standardizing name formats",
+          "sql": "SELECT \n  CONCAT(UPPER(LEFT(first_name, 1)), LOWER(SUBSTRING(first_name, 2))) AS formatted_first,\n  CONCAT(UPPER(LEFT(last_name, 1)), LOWER(SUBSTRING(last_name, 2))) AS formatted_last\nFROM employees;",
+          "explanation": "LEFT extracts the first character, UPPER capitalizes it, SUBSTRING gets remaining characters, and LOWER makes them lowercase. This creates proper name capitalization.",
+          "scenario": "Cleaning user-submitted data where names might be all-caps or inconsistent."
+        },
+        {
+          "title": "Pattern matching with LIKE",
+          "sql": "SELECT * FROM customers\nWHERE email LIKE '%@gmail.com'\n  AND phone LIKE '555-___-____';",
+          "explanation": "% matches any sequence of characters, _ matches exactly one character. Great for flexible searching and validation patterns.",
+          "scenario": "Finding Gmail users with phone numbers in the 555 area code."
+        },
+        {
+          "title": "Cleaning whitespace and combining fields",
+          "sql": "SELECT \n  TRIM(CONCAT(first_name, ' ', last_name)) AS full_name,\n  REPLACE(phone, '-', '') AS digits_only\nFROM contacts;",
+          "explanation": "TRIM removes leading/trailing spaces from the concatenated name. REPLACE removes dashes from phone numbers for standardization.",
+          "scenario": "Preparing data for import into a system that requires specific formats."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using = instead of LIKE for patterns",
+          "error_sql": "SELECT * FROM customers WHERE name = '%Smith';",
+          "error_message": "No error, but returns no results",
+          "why_it_happens": "= does literal string comparison. % is only special in LIKE comparisons.",
+          "fix_sql": "SELECT * FROM customers WHERE name LIKE '%Smith';",
+          "key_takeaway": "Use LIKE (not =) when you need wildcard matching with % or _."
+        },
+        {
+          "title": "Forgetting CONCAT with multiple values",
+          "error_sql": "SELECT first_name + ' ' + last_name FROM employees;",
+          "error_message": "Returns 0 or unexpected numeric results",
+          "why_it_happens": "In SQL, + is arithmetic addition. Strings are converted to numbers (becoming 0), summed, and return 0.",
+          "fix_sql": "SELECT CONCAT(first_name, ' ', last_name) FROM employees;",
+          "key_takeaway": "Always use CONCAT() to join strings. Never use + for string concatenation in SQL."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "String functions are the data quality workhorses of SQL. They bridge the gap between messy real-world inputs and clean, analyzable data, enabling standardization, formatting, and text analytics.",
+      "key_takeaways": [
+        "Data cleaning should happen as early as possible - ideally at insertion",
+        "Collation settings affect string comparisons and sorting",
+        "Regular expressions provide more powerful pattern matching than LIKE",
+        "Consider application-level formatting vs database-level formatting trade-offs"
+      ],
+      "connection_prompts": [
+        "When should string cleaning happen in the database vs in application code?",
+        "How do different character encodings affect string functions?",
+        "What are the performance implications of string functions in WHERE clauses?"
+      ]
+    }
+  },
+  "database-design": {
+    "L2_hint_plus_example": {
+      "hint_text": "Good database design involves creating tables that store related data together while avoiding redundancy. Each table should represent one entity (like customers or orders) with a primary key for unique identification.",
+      "example_sql": "-- Good design: separate tables for related entities\nCREATE TABLE customers (\n  customer_id INT PRIMARY KEY,\n  name VARCHAR(100),\n  email VARCHAR(255)\n);\n\nCREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT REFERENCES customers(customer_id),\n  order_date DATE,\n  total DECIMAL(10,2)\n);",
+      "example_explanation": "This separates customers and orders into their own tables, linking them with a foreign key. Customer info isn't repeated for each order, making updates easier and preventing inconsistencies.",
+      "common_pitfall": "Putting everything in one wide table leads to data duplication and update anomalies"
+    },
+    "L3_explanation": {
+      "definition": "Database design is the process of structuring data into tables, columns, and relationships to efficiently store, retrieve, and maintain information. Core principles include: each table represents one entity type, each row represents one instance, use primary keys for uniqueness, foreign keys for relationships, and normalization to eliminate redundancy while maintaining integrity.",
+      "why_it_matters": "Good design determines database performance, data integrity, and maintainability for years. Poor design causes data duplication (wasting storage), update anomalies (inconsistent data), and query complexity. A well-designed schema grows with your application and adapts to new requirements. Design decisions like choosing between normalized and denormalized structures balance read performance against write consistency.",
+      "examples": [
+        {
+          "title": "One-to-many relationship design",
+          "sql": "CREATE TABLE departments (\n  dept_id INT PRIMARY KEY,\n  dept_name VARCHAR(50) NOT NULL\n);\n\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  dept_id INT,\n  FOREIGN KEY (dept_id) REFERENCES departments(dept_id)\n);",
+          "explanation": "Departments and employees are separate entities with a one-to-many relationship. The foreign key in employees links each person to their department without duplicating department info.",
+          "scenario": "HR system where each employee belongs to one department, but departments have many employees."
+        },
+        {
+          "title": "Junction table for many-to-many",
+          "sql": "CREATE TABLE students (\n  student_id INT PRIMARY KEY,\n  name VARCHAR(100)\n);\n\nCREATE TABLE courses (\n  course_id INT PRIMARY KEY,\n  title VARCHAR(100)\n);\n\nCREATE TABLE enrollments (\n  student_id INT REFERENCES students(student_id),\n  course_id INT REFERENCES courses(course_id),\n  enrollment_date DATE,\n  PRIMARY KEY (student_id, course_id)\n);",
+          "explanation": "Students and courses have a many-to-many relationship. The enrollments junction table links them, allowing a student to take multiple courses and a course to have multiple students.",
+          "scenario": "University registration system tracking which students are in which courses."
+        },
+        {
+          "title": "Poor design vs good design",
+          "sql": "-- POOR: Single table with redundancy\nCREATE TABLE bad_orders (\n  order_id INT,\n  customer_name VARCHAR(100),\n  customer_email VARCHAR(100),  -- repeated for every order\n  product_name VARCHAR(100)\n);\n\n-- GOOD: Normalized tables\nCREATE TABLE customers (\n  customer_id INT PRIMARY KEY,\n  name VARCHAR(100),\n  email VARCHAR(100)\n);\n\nCREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT REFERENCES customers(customer_id),\n  product_name VARCHAR(100)\n);",
+          "explanation": "The bad design repeats customer info for every order. If a customer changes email, you must update every row. The good design stores customer info once and references it.",
+          "scenario": "E-commerce: choosing between simple but redundant vs normalized but efficient design."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Storing comma-separated values",
+          "error_sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  products VARCHAR(500)  -- 'Widget,Gadget,Gizmo'\n);",
+          "error_message": "No immediate error, but creates major problems",
+          "why_it_happens": "Trying to avoid joins by storing multiple values in one column seems simpler initially.",
+          "fix_sql": "CREATE TABLE order_items (\n  order_id INT,\n  product_name VARCHAR(100),\n  PRIMARY KEY (order_id, product_name)\n);",
+          "key_takeaway": "Never store multiple values in one column. Use junction tables for many-to-many relationships."
+        },
+        {
+          "title": "Missing foreign key constraints",
+          "error_sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT  -- no foreign key constraint\n);",
+          "error_message": "No error, but data integrity not enforced",
+          "why_it_happens": "Foreign keys seem optional when prototyping, but without them, orphaned records can be created.",
+          "fix_sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT,\n  FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
+          "key_takeaway": "Always define foreign keys to maintain referential integrity and document relationships."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Database design is the foundation upon which all applications are built. A well-designed schema anticipates future needs while meeting current requirements, balancing normalization ideals against practical performance considerations.",
+      "key_takeaways": [
+        "Normalization reduces redundancy; denormalization improves read performance",
+        "Primary keys uniquely identify rows; foreign keys maintain relationships",
+        "Entity-Relationship diagrams help visualize and communicate design",
+        "Design for data integrity first, then optimize for performance where needed"
+      ],
+      "connection_prompts": [
+        "When is denormalization worth the data consistency risks?",
+        "How does database design differ between OLTP and OLAP systems?",
+        "What design patterns help schemas evolve without breaking existing applications?"
+      ]
+    }
+  },
+  "normalization": {
+    "L2_hint_plus_example": {
+      "hint_text": "Normalization organizes data to reduce redundancy and prevent anomalies. First Normal Form (1NF) means atomic values in cells. Second Normal Form (2NF) adds that non-key columns must depend on the whole primary key. Third Normal Form (3NF) removes transitive dependencies.",
+      "example_sql": "-- Not normalized: employee data with department info mixed in\nCREATE TABLE not_normalized (\n  emp_id INT,\n  emp_name VARCHAR(100),\n  dept_name VARCHAR(50),  -- repeated for every employee in dept\n  dept_location VARCHAR(50)  -- also repeated\n);\n\n-- Normalized: separate tables\nCREATE TABLE departments (\n  dept_id INT PRIMARY KEY,\n  dept_name VARCHAR(50),\n  location VARCHAR(50)\n);\n\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  dept_id INT REFERENCES departments(dept_id)\n);",
+      "example_explanation": "In the normalized version, department info is stored once and referenced by employees. Changing a department's location requires only one update, not changes to every employee row.",
+      "common_pitfall": "Over-normalization can hurt performance - sometimes strategic denormalization is appropriate"
+    },
+    "L3_explanation": {
+      "definition": "Normalization is the systematic process of organizing database tables and relationships to minimize data redundancy and prevent modification anomalies (insert, update, delete anomalies). The normal forms (1NF, 2NF, 3NF, BCNF) provide progressive rules: 1NF requires atomic values and no repeating groups, 2NF eliminates partial dependencies, 3NF eliminates transitive dependencies, and BCNF handles additional anomalies from composite keys.",
+      "why_it_matters": "Proper normalization prevents data inconsistencies that are expensive to fix. Without it, updating one fact requires changes in multiple places (risking inconsistencies), deleting a record might accidentally lose other information, and inserting data may require artificial placeholder values. However, over-normalization can hurt read performance by requiring many joins - skilled designers normalize to 3NF then denormalize selectively based on actual query patterns.",
+      "examples": [
+        {
+          "title": "1NF: Eliminating repeating groups",
+          "sql": "-- Violates 1NF: multiple phone numbers in one column\nCREATE TABLE violates_1nf (\n  employee_id INT,\n  name VARCHAR(100),\n  phone_numbers VARCHAR(200)  -- '555-0100,555-0101,555-0102'\n);\n\n-- 1NF Compliant: separate row per phone number\nCREATE TABLE employee_phones (\n  employee_id INT,\n  phone_number VARCHAR(20),\n  PRIMARY KEY (employee_id, phone_number)\n);",
+          "explanation": "1NF requires atomic values - each cell contains a single indivisible value. Repeating groups are moved to a separate table with a composite key.",
+          "scenario": "Contact management: an employee might have multiple phones (home, mobile, work)."
+        },
+        {
+          "title": "2NF and 3NF: Eliminating redundancy",
+          "sql": "-- Before normalization: transitive dependency\nCREATE TABLE employee_projects_bad (\n  emp_id INT,\n  project_id INT,\n  emp_name VARCHAR(100),  -- depends only on emp_id\n  project_name VARCHAR(100),  -- depends only on project_id\n  hours_worked INT,  -- depends on both emp_id AND project_id\n  PRIMARY KEY (emp_id, project_id)\n);\n\n-- After normalization to 3NF\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100)\n);\n\nCREATE TABLE projects (\n  project_id INT PRIMARY KEY,\n  project_name VARCHAR(100)\n);\n\nCREATE TABLE assignments (\n  emp_id INT REFERENCES employees(emp_id),\n  project_id INT REFERENCES projects(project_id),\n  hours_worked INT,\n  PRIMARY KEY (emp_id, project_id)\n);",
+          "explanation": "In the bad design, emp_name depends only on emp_id (partial dependency), violating 2NF. The normalized version separates entities: employees, projects, and their relationship (assignments with hours).",
+          "scenario": "Project management: tracking which employees work on which projects and for how many hours."
+        },
+        {
+          "title": "Update anomaly in unnormalized data",
+          "sql": "-- Problem: same department info stored with each employee\nCREATE TABLE employees_denormalized (\n  emp_id INT,\n  emp_name VARCHAR(100),\n  dept_name VARCHAR(50),\n  dept_budget DECIMAL(12,2)\n);\n\n-- Update anomaly: must update every row to change budget\nUPDATE employees_denormalized \nSET dept_budget = 500000\nWHERE dept_name = 'Engineering';\n\n-- Risk: forget a row, and data becomes inconsistent\n\n-- Normalized solution: single source of truth\nCREATE TABLE departments (\n  dept_id INT PRIMARY KEY,\n  dept_name VARCHAR(50),\n  budget DECIMAL(12,2)\n);",
+          "explanation": "In denormalized data, changing a department's budget requires updating every employee in that department. Missing one creates inconsistency. Normalized design stores the budget once.",
+          "scenario": "HR system: department budgets change annually; ensuring all records stay synchronized."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Leaving transitive dependencies in 3NF design",
+          "error_sql": "CREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  dept_id INT,\n  dept_name VARCHAR(50),  -- depends on dept_id, not emp_id\n  dept_location VARCHAR(50)  -- also depends on dept_id\n);",
+          "error_message": "No error, but violates 3NF and causes anomalies",
+          "why_it_happens": "It seems convenient to have department info readily available without a join, but this creates redundancy.",
+          "fix_sql": "CREATE TABLE departments (\n  dept_id INT PRIMARY KEY,\n  dept_name VARCHAR(50),\n  location VARCHAR(50)\n);\n\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  dept_id INT REFERENCES departments(dept_id)\n);",
+          "key_takeaway": "Non-key columns should depend only on the key, the whole key, and nothing but the key."
+        },
+        {
+          "title": "Over-normalizing for simple lookup tables",
+          "error_sql": "CREATE TABLE order_statuses (\n  status_id INT PRIMARY KEY,\n  status_name VARCHAR(20)\n);\n\nCREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  status_id INT REFERENCES order_statuses(status_id)\n);\n\n-- Requires join just to show 'Pending' or 'Shipped'",
+          "error_message": "Excessive joins for simple enumerated values",
+          "why_it_happens": "Blindly applying normalization without considering the actual data characteristics.",
+          "fix_sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  status ENUM('Pending', 'Shipped', 'Delivered')  -- or VARCHAR\n);",
+          "key_takeaway": "For simple, stable lookup values, an ENUM or direct VARCHAR may be more practical than a separate table."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Normalization is about trade-offs between data integrity and query performance. While the normal forms provide clear rules, real-world design requires judgment about when to denormalize for performance and how to handle the resulting consistency challenges.",
+      "key_takeaways": [
+        "1NF: Atomic values, no repeating groups",
+        "2NF: No partial dependencies on composite keys",
+        "3NF: No transitive dependencies",
+        "Denormalization is acceptable when performance requires it, but must be managed carefully"
+      ],
+      "connection_prompts": [
+        "How do NoSQL databases handle the normalization trade-off differently?",
+        "What patterns help maintain consistency in denormalized data?",
+        "When is BCNF necessary, and when is 3NF sufficient?"
+      ]
+    }
+  },
+  "erd-basics": {
+    "L2_hint_plus_example": {
+      "hint_text": "Entity-Relationship Diagrams (ERDs) visually represent database structure. Rectangles represent entities (tables), diamonds represent relationships, and lines connect them with cardinality notation (1:1, 1:N, M:N).",
+      "example_sql": "-- ERD concept translated to SQL\n-- Customer ||---O< Order (one customer has many orders)\n\nCREATE TABLE customers (\n  customer_id INT PRIMARY KEY,\n  name VARCHAR(100)\n);\n\nCREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT NOT NULL,\n  FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
+      "example_explanation": "This SQL implements a 1:N relationship shown on an ERD. The foreign key in orders references customers, establishing that each order belongs to exactly one customer, but customers can have many orders.",
+      "common_pitfall": "Crow's foot notation direction matters - the many side points toward the child table"
+    },
+    "L3_explanation": {
+      "definition": "Entity-Relationship Diagrams (ERDs) are visual tools for database design showing entities (tables) as rectangles, attributes as ovals or list items, and relationships as lines with cardinality notation. Common notations include Chen notation (rectangles, diamonds, ovals), Crow's Foot (lines with crow's feet for 'many' side), and UML class diagrams. Relationships show cardinality (1:1, 1:N, M:N) and participation (optional vs mandatory).",
+      "why_it_matters": "ERDs provide a common visual language for communicating database structure between technical and non-technical stakeholders. They help identify missing relationships, redundant data, and design flaws before implementation. ERDs serve as documentation for existing systems and a blueprint for new ones. Understanding ERD notation allows you to read designs created by others and create designs that can be reviewed and validated.",
+      "examples": [
+        {
+          "title": "Crow's Foot notation explained",
+          "sql": "-- One Department has many Employees (1:N)\n-- Visual: Department ||---O< Employee\n-- (| = one, O = zero, < = many/crow's foot)\n\nCREATE TABLE departments (\n  dept_id INT PRIMARY KEY,\n  dept_name VARCHAR(50)\n);\n\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  dept_id INT,  -- can be NULL (optional participation)\n  FOREIGN KEY (dept_id) REFERENCES departments(dept_id)\n);",
+          "explanation": "The crow's foot (<) points to the 'many' side. The circle (O) means optional - employees might not be assigned to a department. The vertical bar (|) means exactly one.",
+          "scenario": "Organization chart showing departments and their employees with optional assignment."
+        },
+        {
+          "title": "Many-to-many relationship with junction table",
+          "sql": "-- Students >---O< Courses (M:N)\n-- Visual: Student >---O< Course\n-- (> and < are crow's feet on both sides = many-to-many)\n\nCREATE TABLE students (\n  student_id INT PRIMARY KEY,\n  name VARCHAR(100)\n);\n\nCREATE TABLE courses (\n  course_id INT PRIMARY KEY,\n  title VARCHAR(100)\n);\n\n-- Junction table resolves M:N into two 1:N relationships\nCREATE TABLE enrollments (\n  student_id INT REFERENCES students(student_id),\n  course_id INT REFERENCES courses(course_id),\n  enrollment_date DATE,\n  PRIMARY KEY (student_id, course_id)\n);",
+          "explanation": "M:N relationships cannot be directly implemented in relational databases. The junction table (enrollments) breaks it into two 1:N relationships, storing the connection attributes (enrollment_date).",
+          "scenario": "University system: students enroll in multiple courses, courses have multiple students."
+        },
+        {
+          "title": "One-to-one relationship",
+          "sql": "-- Employee ||---|| EmployeeDetails (1:1)\n-- Visual: Employee ||---|| EmployeeDetails\n-- (| on both sides = exactly one to exactly one)\n\nCREATE TABLE employees (\n  emp_id INT PRIMARY KEY,\n  emp_name VARCHAR(100),\n  hire_date DATE\n);\n\nCREATE TABLE employee_details (\n  emp_id INT PRIMARY KEY,\n  ssn VARCHAR(11),\n  home_address VARCHAR(200),\n  FOREIGN KEY (emp_id) REFERENCES employees(emp_id)\n);",
+          "explanation": "1:1 relationships split an entity into two tables, often for security (SSN in separate table with restricted access) or optional attributes. The foreign key is also the primary key.",
+          "scenario": "HR system: basic employee info is widely accessible; sensitive details (SSN, salary) are in a restricted table."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Confusing crow's foot direction",
+          "error_sql": "-- Wrong: putting foreign key on wrong side\nCREATE TABLE customers (\n  customer_id INT PRIMARY KEY,\n  order_id INT REFERENCES orders(order_id)  -- WRONG\n);",
+          "error_message": "Circular reference or wrong relationship implementation",
+          "why_it_happens": "The crow's foot points TO the many side, but it's easy to reverse the mental model.",
+          "fix_sql": "-- Correct: foreign key goes on the 'many' side\nCREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT REFERENCES customers(customer_id)\n);",
+          "key_takeaway": "The crow's foot (<) points toward the child/many side. The foreign key goes in that table."
+        },
+        {
+          "title": "Trying to implement M:N without junction table",
+          "error_sql": "CREATE TABLE students (\n  student_id INT PRIMARY KEY,\n  course_ids VARCHAR(200)  -- '1,2,3' - trying to store multiple FKs\n);",
+          "error_message": "No error, but violates 1NF and creates query problems",
+          "why_it_happens": "Attempting to directly implement a many-to-many relationship from an ERD without understanding the junction table pattern.",
+          "fix_sql": "CREATE TABLE enrollments (\n  student_id INT REFERENCES students(student_id),\n  course_id INT REFERENCES courses(course_id),\n  PRIMARY KEY (student_id, course_id)\n);",
+          "key_takeaway": "All M:N relationships in ERDs must be resolved to two 1:N relationships with a junction table."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "ERDs bridge the gap between conceptual understanding and physical implementation. They serve as a communication tool between stakeholders and a blueprint for developers, capturing not just structure but the business rules that govern data relationships.",
+      "key_takeaways": [
+        "Different notations (Chen, Crow's Foot, UML) express the same concepts",
+        "Cardinality (1:1, 1:N, M:N) determines foreign key placement",
+        "Participation (optional vs mandatory) affects NULL constraints",
+        "ERDs are living documents that should evolve with the database"
+      ],
+      "connection_prompts": [
+        "When would you use a conceptual ERD vs a physical ERD?",
+        "How do ERDs for OLAP/data warehouse systems differ from OLTP systems?",
+        "What information can't be captured in standard ERD notation?"
+      ]
+    }
+  }
+}
