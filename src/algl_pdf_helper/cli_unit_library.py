@@ -111,7 +111,7 @@ FilterLevelCLI = typer.Option(
 
 LLMProviderCLI = typer.Option(
     "ollama",
-    help="LLM provider: ollama (default), kimi, or openai. Note: only ollama is currently implemented."
+    help="LLM provider: ollama (default), kimi, openai, or none (grounded only). Note: only ollama is currently implemented."
 )
 
 # Provider-specific default models
@@ -119,7 +119,31 @@ DEFAULT_MODELS: dict[str, str] = {
     "kimi": "kimi-k2-5",
     "openai": "gpt-4",
     "ollama": "llama3.2:3b",
+    "none": "none",
 }
+
+
+def _check_ollama_available(provider: str, model: str) -> bool:
+    """Check if Ollama server is available."""
+    if provider != "ollama":
+        return False  # Only check for ollama
+    
+    try:
+        import urllib.request
+        
+        req = urllib.request.Request(
+            "http://localhost:11434/api/tags",
+            method="GET",
+            headers={"Content-Type": "application/json"}
+        )
+        
+        with urllib.request.urlopen(req, timeout=2) as response:
+            if response.status == 200:
+                return True
+    except Exception:
+        pass
+    
+    return False
 
 
 def generate_doc_id() -> str:
@@ -258,6 +282,16 @@ def process_command(
     
     # Determine the model to use
     resolved_model = llm_model or DEFAULT_MODELS.get(llm_provider, "kimi-k2-5")
+    
+    # Check Ollama availability if using ollama provider
+    if llm_provider == "ollama":
+        if not _check_ollama_available(llm_provider, resolved_model):
+            console.print("[yellow]⚠️  Ollama server not available at localhost:11434[/yellow]")
+            console.print("[yellow]   Switching to grounded/no-LLM mode[/yellow]")
+            console.print()
+            # Override to use no-LLM path
+            llm_provider = "none"
+            resolved_model = "none"
     
     # Create pipeline configuration from CLI arguments
     config = PipelineConfig(
@@ -705,11 +739,20 @@ def validate_command(
                 quality_report = report_generator.generate_full_report(library)
             
             summary = quality_report.get("summary", {})
-            total_units = summary.get("total_units", 0)
+            
+            # Normalize report schema to handle both old (pipeline) and new (validator) formats
+            # Pipeline format: total_units_checked, overall_score, passed, pass_rate
+            # Validator format: total_units, passed_units, failed_units, overall_pass_rate, overall_passed
+            total_units = summary.get("total_units", summary.get("total_units_checked", 0))
             passed_units = summary.get("passed_units", 0)
-            failed_units = summary.get("failed_units", 0)
-            pass_rate = summary.get("overall_pass_rate", 0)
-            overall_passed = summary.get("overall_passed", False)
+            if "passed" in summary and "passed_units" not in summary:
+                # Derive passed_units from overall_score and pass_rate if available
+                pass_rate_val = summary.get("pass_rate", 0)
+                if total_units > 0 and pass_rate_val > 0:
+                    passed_units = int(total_units * pass_rate_val)
+            failed_units = summary.get("failed_units", total_units - passed_units)
+            pass_rate = summary.get("overall_pass_rate", summary.get("pass_rate", 0))
+            overall_passed = summary.get("overall_passed", summary.get("passed", False))
             
             quality_table = Table(show_header=False, box=None)
             quality_table.add_column("Metric", style="cyan")

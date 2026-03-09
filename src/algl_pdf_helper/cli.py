@@ -1244,6 +1244,16 @@ try:
             "--detailed",
             help="Show detailed validation report",
         ),
+        use_generated_report: bool = typer.Option(
+            False,
+            "--use-generated-report",
+            help="Use the quality report generated during export (if available)",
+        ),
+        recompute: bool = typer.Option(
+            False,
+            "--recompute",
+            help="Force recompute validation instead of using cached report",
+        ),
     ):
         """Validate an existing unit library.
         
@@ -1253,7 +1263,12 @@ try:
             algl-pdf validate ./output/unit-library/
             algl-pdf validate ./output/unit-library/ --detailed
         """
-        _validate_cmd(library_dir=library_dir, detailed=detailed)
+        _validate_cmd(
+            library_dir=library_dir,
+            detailed=detailed,
+            use_generated_report=use_generated_report,
+            recompute=recompute,
+        )
 
     @app.command()
     def inspect(
