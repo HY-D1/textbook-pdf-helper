@@ -63,7 +63,14 @@ from .misconception_bank import MisconceptionBank, GenerationConfig as Misconcep
 from .reinforcement_bank import ReinforcementBank, ReinforcementConfig
 from .sql_validator import SQLValidator, ValidationLevel
 from .learning_quality_gates import LearningQualityGates, Severity
-from .export_filters import ExportFilterEngine, PRODUCTION_FILTERS, STRICT_FILTERS, DEVELOPMENT_FILTERS
+from .export_filters import (
+    ExportFilterEngine, 
+    PRODUCTION_FILTERS, 
+    STRICT_FILTERS, 
+    DEVELOPMENT_FILTERS,
+    PROTOTYPE_FILTERS,
+    STUDENT_READY_FILTERS,
+)
 from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLevel
 
 
@@ -123,6 +130,7 @@ class PipelineConfig:
         llm_model: Specific model name to use (provider-specific default if None)
         concept_ontology_path: Optional path to custom ontology
         filter_level: Content filtering strictness (strict/production/development)
+        export_mode: Export mode - "prototype" (allows placeholders) or "student_ready" (strict)
         generate_variants: List of L1-L4 variants to generate
         skip_reinforcement: Whether to skip reinforcement generation
         skip_misconceptions: Whether to skip misconception generation
@@ -141,6 +149,7 @@ class PipelineConfig:
     llm_model: str | None = None  # Will be resolved to provider-specific default
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
+    export_mode: Literal["prototype", "student_ready"] = "prototype"
     generate_variants: list[str] = field(
         default_factory=lambda: [
             "L1_hint", "L2_hint_plus_example", "L3_explanation", "L4_reflective_note", "reinforcement"
@@ -1470,15 +1479,22 @@ class InstructionalPipeline:
         if reinforcement_items is None:
             reinforcement_items = self._reinforcement_items
         
-        # Select filter set based on config
-        filter_map = {
-            "strict": STRICT_FILTERS,
-            "production": PRODUCTION_FILTERS,
-            "development": DEVELOPMENT_FILTERS,
-        }
-        filters = filter_map.get(self.config.filter_level, PRODUCTION_FILTERS)
+        # Select filter set based on export_mode first, then filter_level
+        if self.config.export_mode == "student_ready":
+            # Student-ready mode uses strict filters
+            filters = STUDENT_READY_FILTERS
+            self._logger.info("Using STUDENT_READY_FILTERS (strict mode for production learner content)")
+        else:
+            # Prototype mode - use filter_level to select
+            filter_map = {
+                "strict": STRICT_FILTERS,
+                "production": PRODUCTION_FILTERS,
+                "development": DEVELOPMENT_FILTERS,
+            }
+            filters = filter_map.get(self.config.filter_level, PRODUCTION_FILTERS)
+            self._logger.info(f"Using {self.config.filter_level.upper()}_FILTERS (prototype mode)")
         
-        self._filter_engine = ExportFilterEngine(filters)
+        self._filter_engine = ExportFilterEngine(filters, export_mode=self.config.export_mode)
         
         # Create a temporary library for filtering
         temp_library = UnitLibraryExport(

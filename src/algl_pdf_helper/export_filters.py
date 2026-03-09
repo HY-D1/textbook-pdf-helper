@@ -78,12 +78,18 @@ class FilterResult:
         warnings: List of warning messages from soft blocks
         filtered_units: Unit IDs that were removed (hard blocked)
         passed_units: Unit IDs that passed all hard blocks
+        student_ready_passed: Whether all units passed student-ready checks
+        blocked_by_student_ready: List of unit IDs blocked by student-ready rules
+        quality_warnings: List of quality warnings even for passed units
     """
     can_export: bool
     blocked_by: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     filtered_units: list[str] = field(default_factory=list)
     passed_units: list[str] = field(default_factory=list)
+    student_ready_passed: bool = field(default=True)
+    blocked_by_student_ready: list[str] = field(default_factory=list)
+    quality_warnings: list[str] = field(default_factory=list)
     
     @property
     def total_units(self) -> int:
@@ -95,6 +101,13 @@ class FilterResult:
         """Percentage of units that passed."""
         total = self.total_units
         return len(self.passed_units) / total if total > 0 else 0.0
+    
+    @property
+    def student_ready_pass_rate(self) -> float:
+        """Percentage of units that passed student-ready checks."""
+        total = self.total_units
+        passed = total - len(self.blocked_by_student_ready)
+        return passed / total if total > 0 else 0.0
 
 
 @dataclass
@@ -710,6 +723,199 @@ def _check_synthetic_only_examples(unit: InstructionalUnit) -> tuple[bool, str]:
 
 
 # =============================================================================
+# STUDENT-READY CHECK FUNCTIONS (Strict Mode)
+# =============================================================================
+
+
+def _check_placeholder_practice_links(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check for placeholder practice links - HARD BLOCK for student-ready.
+    
+    Blocks units where practice_links contains any with:
+    - needs_resolution=True
+    - IDs starting with "unresolved-" or "problem-" (placeholder pattern)
+    """
+    # Only check L3 explanation units
+    if unit.target_stage != "L3_explanation":
+        return True, f"Practice link check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check practice links"
+    
+    practice_links = content.get("practice_links", [])
+    if not practice_links:
+        return True, "No practice links present"
+    
+    # Check for any placeholder links
+    for link in practice_links:
+        if isinstance(link, dict):
+            needs_resolution = link.get("needs_resolution", False)
+            problem_ids = link.get("problem_ids", [])
+        else:
+            # Handle PracticeLink objects
+            needs_resolution = getattr(link, "needs_resolution", False)
+            problem_ids = getattr(link, "problem_ids", [])
+        
+        # Check if this is a placeholder link
+        if needs_resolution:
+            return False, f"Practice link needs resolution: {link}"
+        
+        # Check for placeholder problem IDs
+        for pid in problem_ids:
+            if pid.startswith("unresolved-") or pid.startswith("problem-"):
+                return False, f"Placeholder practice ID found: {pid}"
+    
+    return True, "All practice links are resolved"
+
+
+def _check_default_only_l2_example(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if L2 unit uses default example instead of concept-appropriate SQL.
+    
+    Blocks L2 units with _used_default_example=True in metadata.
+    """
+    # Only check L2 units
+    if unit.target_stage != "L2_hint_plus_example":
+        return True, f"Default example check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check metadata"
+    
+    # Check for default example flag in content or metadata
+    metadata = content.get("_metadata", {})
+    used_default = content.get("_used_default_example", False) or metadata.get("_used_default_example", False)
+    
+    if used_default:
+        return False, "L2 unit uses generic default example instead of concept-appropriate SQL"
+    
+    return True, "L2 unit has concept-appropriate SQL example"
+
+
+def _check_synthetic_only_l3(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if L3 explanation is purely synthetic without source grounding.
+    
+    Blocks L3 units with _content_source="synthetic" and no source evidence spans.
+    """
+    # Only check L3 units
+    if unit.target_stage != "L3_explanation":
+        return True, f"Synthetic L3 check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check source"
+    
+    # Check if content is marked as synthetic
+    metadata = content.get("_metadata", {})
+    content_source = content.get("_content_source", "") or metadata.get("content_source", "")
+    
+    if content_source == "synthetic":
+        # Check for source evidence spans
+        if not unit.evidence_spans:
+            return False, "L3 explanation is purely synthetic with no source evidence spans"
+        # Also check grounding confidence
+        if unit.grounding_confidence < 0.3:
+            return False, "L3 explanation has low grounding confidence (< 0.3)"
+    
+    return True, "L3 explanation has source grounding"
+
+
+# Core concepts that require L3 explanation
+CORE_CONCEPTS = {
+    "select-basic",
+    "where-clause", 
+    "joins",
+    "join-inner",
+    "join-outer",
+    "join-left",
+    "join-right",
+    "join-cross",
+    "join-self",
+    "group-by",
+    "aggregation",
+    "order-by",
+    "limit-offset",
+}
+
+
+def _check_missing_l3_for_core_concepts(library: UnitLibraryExport) -> list[tuple[str, str]]:
+    """Check if core concepts are missing required L3 explanation.
+    
+    Returns list of (concept_id, message) tuples for blocked concepts.
+    """
+    violations = []
+    
+    # Get all concepts that have L3 units
+    concepts_with_l3 = set()
+    for unit in library.instructional_units:
+        if unit.target_stage == "L3_explanation":
+            concepts_with_l3.add(unit.concept_id)
+    
+    # Check which core concepts are missing L3
+    for concept_id in CORE_CONCEPTS:
+        if concept_id not in concepts_with_l3:
+            # Check if this concept exists in the library at all
+            has_any_unit = any(u.concept_id == concept_id for u in library.instructional_units)
+            if has_any_unit:
+                violations.append((
+                    concept_id, 
+                    f"Core concept '{concept_id}' missing required L3 explanation"
+                ))
+    
+    return violations
+
+
+def _check_low_quality_score(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit quality score is below threshold - SOFT BLOCK.
+    
+    Warns on units with quality score < 0.7 but allows export with flag.
+    """
+    # Get quality score from content metadata
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Cannot check quality score"
+    
+    metadata = content.get("_metadata", {})
+    quality_score = content.get("_quality_score", 0.0) or metadata.get("quality_score", 0.0)
+    
+    # Also consider grounding confidence as a quality indicator
+    if quality_score == 0.0 and unit.grounding_confidence > 0:
+        quality_score = unit.grounding_confidence
+    
+    if quality_score < 0.7:
+        return False, f"Unit quality score ({quality_score:.2f}) below threshold (0.7)"
+    
+    return True, f"Unit quality score acceptable ({quality_score:.2f})"
+
+
+def _check_weak_curated_fallback(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if curated fallback content is just placeholder text.
+    
+    Blocks curated content that is just a heading/title (length < 20 chars).
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check curated fallback"
+    
+    # Check if this is curated fallback
+    metadata = content.get("_metadata", {})
+    is_curated = content.get("_used_curated_fallback", False) or metadata.get("content_source") == "curated"
+    
+    if not is_curated:
+        return True, "Not curated fallback content"
+    
+    # Get the content to check length
+    definition = content.get("definition", "")
+    if not definition:
+        # Try other content fields
+        definition = content.get("explanation", "") or content.get("description", "")
+    
+    if len(definition.strip()) < 20:
+        return False, f"Curated fallback content appears to be placeholder text ({len(definition)} chars)"
+    
+    return True, "Curated fallback content has sufficient length"
+
+
+# =============================================================================
 # SOFT BLOCK CHECK FUNCTIONS
 # =============================================================================
 
@@ -1145,6 +1351,89 @@ DEVELOPMENT_FILTERS: list[ExportRule] = [
 
 
 # =============================================================================
+# EXPORT MODE FILTER SETS
+# =============================================================================
+
+PROTOTYPE_FILTERS: list[ExportRule] = PRODUCTION_FILTERS.copy()
+"""Prototype filters - current production behavior.
+
+Allows placeholder practice links with warnings but permits export.
+This is the default mode for backward compatibility.
+"""
+
+STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
+    # Convert unresolved practice links from WARN to HARD_BLOCK
+    ExportRule(
+        rule_id="placeholder_practice_links",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Practice links contain placeholder IDs (unresolved-*, problem-*)",
+        check_fn=_check_placeholder_practice_links,
+        error_message="Student-ready export cannot contain placeholder practice links"
+    ),
+    # Block L2 units using default examples
+    ExportRule(
+        rule_id="default_only_l2_example",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L2 unit uses generic default example instead of concept-appropriate SQL",
+        check_fn=_check_default_only_l2_example,
+        error_message="L2 unit uses generic default example instead of concept-appropriate SQL"
+    ),
+    # Block purely synthetic L3 without source grounding
+    ExportRule(
+        rule_id="synthetic_only_l3",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L3 explanation is purely synthetic with no source evidence",
+        check_fn=_check_synthetic_only_l3,
+        error_message="L3 explanation must be grounded in source text, not purely synthetic"
+    ),
+    # Block weak curated fallback (placeholder text)
+    ExportRule(
+        rule_id="weak_curated_fallback",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Curated fallback content appears to be placeholder text",
+        check_fn=_check_weak_curated_fallback,
+        error_message="Curated fallback content appears to be placeholder text"
+    ),
+    # Add critical soft blocks as hard blocks
+    ExportRule(
+        rule_id="missing_learning_objectives",
+        rule_type=RuleType.HARD_BLOCK,
+        description="No learning objectives defined",
+        check_fn=_check_missing_learning_objectives,
+        error_message="Missing learning objectives - required for student-ready export"
+    ),
+    ExportRule(
+        rule_id="example_not_validated",
+        rule_type=RuleType.HARD_BLOCK,
+        description="SQL examples not execution-tested",
+        check_fn=_check_example_not_validated,
+        error_message="SQL examples must be validated before student-ready export"
+    ),
+    # Quality score check as SOFT_BLOCK (warn but allow)
+    ExportRule(
+        rule_id="low_quality_score",
+        rule_type=RuleType.SOFT_BLOCK,
+        description="Unit quality score below 0.7",
+        check_fn=_check_low_quality_score,
+        error_message="Unit quality below threshold for student-ready export"
+    ),
+]
+"""Student-ready filters - strict mode for production learner content.
+
+Blocks:
+- Placeholder practice links (unresolved-*, problem-*)
+- L2 units using default examples
+- Purely synthetic L3 without source grounding
+- Weak curated fallback (placeholder text)
+- Missing learning objectives
+- Unvalidated SQL examples
+- Low quality scores (warning)
+
+Use this mode when exporting content for actual student consumption.
+"""
+
+
+# =============================================================================
 # EXPORT FILTER ENGINE
 # =============================================================================
 
@@ -1155,21 +1444,46 @@ class ExportFilterEngine:
     Applies a set of rules to each unit in a library, tracking which units
     pass, which are blocked, and collecting warnings for soft-blocked content.
     
+    Supports two export modes:
+    - "prototype": Allows placeholder content with warnings (default, backward compatible)
+    - "student_ready": Strict mode, blocks all weak/problematic content
+    
     Example:
         >>> engine = ExportFilterEngine(PRODUCTION_FILTERS)
         >>> result = engine.filter_unit_library(library)
         >>> print(f"Pass rate: {result.pass_rate:.1%}")
         >>> exportable = engine.get_exportable_subset(library)
+        
+        >>> # Student-ready mode
+        >>> engine = ExportFilterEngine(export_mode="student_ready")
+        >>> result = engine.filter_unit_library(library)
+        >>> print(f"Student-ready passed: {result.student_ready_passed}")
     """
     
-    def __init__(self, rules: list[ExportRule] | None = None):
+    def __init__(
+        self, 
+        rules: list[ExportRule] | None = None,
+        export_mode: str | None = None,
+    ):
         """
         Initialize the filter engine.
         
         Args:
-            rules: List of ExportRule to apply. If None, uses PRODUCTION_FILTERS.
+            rules: List of ExportRule to apply. If None, uses filters based on export_mode.
+            export_mode: Export mode - "prototype" or "student_ready". If provided and 
+                        rules is None, loads the appropriate filter set.
         """
-        self.rules = rules or PRODUCTION_FILTERS
+        self.export_mode = export_mode or "prototype"
+        
+        if rules is not None:
+            self.rules = rules
+        elif self.export_mode == "student_ready":
+            self.rules = STUDENT_READY_FILTERS
+        elif self.export_mode == "prototype":
+            self.rules = PROTOTYPE_FILTERS
+        else:
+            self.rules = PRODUCTION_FILTERS
+        
         self._rule_map: dict[str, ExportRule] = {r.rule_id: r for r in self.rules}
         
         # Categorize rules by type
@@ -1220,8 +1534,10 @@ class ExportFilterEngine:
         """
         blocked_by: list[str] = []
         warnings: list[str] = []
+        quality_warnings: list[str] = []
         filtered_units: list[str] = []
         passed_units: list[str] = []
+        student_ready_blocked: list[str] = []
         
         for unit in library.instructional_units:
             unit_result = self._filter_single_unit(unit)
@@ -1230,15 +1546,34 @@ class ExportFilterEngine:
                 passed_units.append(unit.unit_id)
                 # Still collect warnings
                 warnings.extend(unit_result.warnings)
+                # Track quality warnings separately
+                quality_warnings.extend([w for w in unit_result.warnings if "quality" in w.lower()])
             else:
                 filtered_units.append(unit.unit_id)
                 blocked_by.extend(unit_result.hard_block_reasons)
+                # Track student-ready specific blocks
+                if self.export_mode == "student_ready":
+                    student_ready_blocked.append(unit.unit_id)
+        
+        # Check for missing L3 for core concepts (student_ready mode only)
+        if self.export_mode == "student_ready":
+            missing_l3_violations = _check_missing_l3_for_core_concepts(library)
+            for concept_id, message in missing_l3_violations:
+                blocked_by.append(f"missing_l3_core_concept: {message}")
+                # Mark all units for this concept as blocked
+                for unit in library.instructional_units:
+                    if unit.concept_id == concept_id and unit.unit_id in passed_units:
+                        passed_units.remove(unit.unit_id)
+                        student_ready_blocked.append(unit.unit_id)
+                        if unit.unit_id not in filtered_units:
+                            filtered_units.append(unit.unit_id)
         
         # Deduplicate
         blocked_by = list(set(blocked_by))
         warnings = list(set(warnings))
         
         can_export = len(passed_units) > 0
+        student_ready_passed = len(student_ready_blocked) == 0
         
         return FilterResult(
             can_export=can_export,
@@ -1246,6 +1581,9 @@ class ExportFilterEngine:
             warnings=warnings,
             filtered_units=filtered_units,
             passed_units=passed_units,
+            student_ready_passed=student_ready_passed,
+            blocked_by_student_ready=student_ready_blocked,
+            quality_warnings=quality_warnings,
         )
     
     def _filter_single_unit(self, unit: InstructionalUnit) -> UnitFilterResult:
@@ -1430,16 +1768,31 @@ class ExportFilterEngine:
         print("EXPORT FILTER REPORT")
         print("=" * 70)
         
+        # Show export mode
+        print(f"\n🎯 Export Mode: {self.export_mode.upper()}")
+        if self.export_mode == "student_ready":
+            print("   (Strict mode - blocks placeholder and weak content)")
+        elif self.export_mode == "prototype":
+            print("   (Prototype mode - allows placeholders with warnings)")
+        
         print(f"\n📊 Summary:")
         print(f"   Total Units: {result.total_units}")
         print(f"   Passed: {len(result.passed_units)} ✅")
         print(f"   Filtered: {len(result.filtered_units)} ❌")
         print(f"   Pass Rate: {result.pass_rate:.1%}")
         
+        # Show student-ready specific summary
+        if self.export_mode == "student_ready":
+            print(f"\n📚 Student-Ready Summary:")
+            print(f"   Student-Ready Passed: {'✅ YES' if result.student_ready_passed else '❌ NO'}")
+            print(f"   Blocked for Student-Ready: {len(result.blocked_by_student_ready)} units")
+            if result.blocked_by_student_ready:
+                print(f"   Student-Ready Pass Rate: {result.student_ready_pass_rate:.1%}")
+        
         if result.can_export:
-            print(f"   ✅ Can export: YES")
+            print(f"\n   ✅ Can export: YES")
         else:
-            print(f"   ❌ Can export: NO (no units passed)")
+            print(f"\n   ❌ Can export: NO (no units passed)")
         
         if stats["top_violations"]:
             print(f"\n🔍 Top Rule Violations:")
@@ -1461,6 +1814,26 @@ class ExportFilterEngine:
                 print(f"   - {warning}")
             if len(result.warnings) > 5:
                 print(f"   ... and {len(result.warnings) - 5} more")
+        
+        # Show student-ready specific blocked reasons
+        if self.export_mode == "student_ready" and result.blocked_by_student_ready:
+            print(f"\n🚫 Blocked for Student-Ready Export ({len(result.blocked_by_student_ready)}):")
+            student_ready_rejected = [
+                (uid, reasons) for uid, reasons in rejected 
+                if uid in result.blocked_by_student_ready
+            ][:10]
+            for unit_id, reasons in student_ready_rejected:
+                print(f"   - {unit_id}:")
+                for reason in reasons[:2]:
+                    # Highlight student-ready specific rules
+                    is_student_rule = any(
+                        sr in reason.lower() 
+                        for sr in ["placeholder", "default", "synthetic", "curated"]
+                    )
+                    prefix = "   🎯" if is_student_rule else "      •"
+                    print(f"{prefix} {reason}")
+            if len(result.blocked_by_student_ready) > 10:
+                print(f"   ... and {len(result.blocked_by_student_ready) - 10} more")
         
         print("\n" + "=" * 70)
 
@@ -1572,6 +1945,11 @@ __all__ = [
     "STRICT_FILTERS",
     "PRODUCTION_FILTERS",
     "DEVELOPMENT_FILTERS",
+    "PROTOTYPE_FILTERS",
+    "STUDENT_READY_FILTERS",
+    
+    # Core concepts list
+    "CORE_CONCEPTS",
     
     # Main engine
     "ExportFilterEngine",
@@ -1580,4 +1958,12 @@ __all__ = [
     "create_custom_filter_set",
     "quick_filter_check",
     "should_export",
+    
+    # Student-ready check functions (for advanced use)
+    "_check_placeholder_practice_links",
+    "_check_default_only_l2_example",
+    "_check_synthetic_only_l3",
+    "_check_missing_l3_for_core_concepts",
+    "_check_low_quality_score",
+    "_check_weak_curated_fallback",
 ]

@@ -57,7 +57,14 @@ except ImportError:
     HAS_EXPORTER = False
 
 try:
-    from .export_filters import ExportFilterEngine, STRICT_FILTERS, PRODUCTION_FILTERS, DEVELOPMENT_FILTERS
+    from .export_filters import (
+        ExportFilterEngine, 
+        STRICT_FILTERS, 
+        PRODUCTION_FILTERS, 
+        DEVELOPMENT_FILTERS,
+        PROTOTYPE_FILTERS,
+        STUDENT_READY_FILTERS,
+    )
     HAS_FILTERS = True
 except ImportError:
     HAS_FILTERS = False
@@ -107,6 +114,11 @@ __all__ = ["process_command", "validate_command", "inspect_command", "filter_com
 FilterLevelCLI = typer.Option(
     "production",
     help="Export filter level: strict, production (default), or development"
+)
+
+ExportModeCLI = typer.Option(
+    "prototype",
+    help="Export mode: prototype (allows placeholders, default) or student_ready (strict)"
 )
 
 LLMProviderCLI = typer.Option(
@@ -220,6 +232,7 @@ def process_command(
         help="LLM model to use (defaults: kimi-k2-5, gpt-4, llama3.2:3b)",
     ),
     filter_level: str = FilterLevelCLI,
+    export_mode: str = ExportModeCLI,
     skip_reinforcement: bool = typer.Option(
         False,
         "--skip-reinforcement",
@@ -270,9 +283,19 @@ def process_command(
     The Ollama repair pass automatically improves weak L3 content using
     a local Ollama instance (requires qwen2.5:3b or similar model).
     
+    Export Modes:
+        prototype (default): Allows placeholder content with warnings.
+            Use for development and testing.
+        
+        student_ready: Strict mode, blocks all placeholder and weak content.
+            Use when exporting for actual student consumption.
+            Blocks: placeholder practice links, default L2 examples, 
+            synthetic-only L3, weak curated content.
+    
     Example:
         algl-pdf process ./textbook.pdf --output-dir ./output
         algl-pdf process ./textbook.pdf -o ./output --filter-level production
+        algl-pdf process ./textbook.pdf -o ./output --export-mode student_ready
         algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
         algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
     """
@@ -291,12 +314,14 @@ def process_command(
         doc_id = generate_doc_id()
     
     # Show header panel
+    export_mode_display = f"[green]{export_mode}[/green]" if export_mode == "student_ready" else export_mode
     console.print(Panel(
         f"[bold]ALGL PDF Helper - Unit Library Generation[/bold]\n"
         f"PDF: {pdf_path.name}\n"
         f"Output: {output_dir}/\n"
         f"Doc ID: {doc_id}\n"
-        f"Filter Level: {filter_level}",
+        f"Filter Level: {filter_level}\n"
+        f"Export Mode: {export_mode_display}",
         title="📚 Unit Library Pipeline",
         border_style="blue"
     ))
@@ -323,6 +348,7 @@ def process_command(
         llm_provider=llm_provider,  # type: ignore
         llm_model=resolved_model,
         filter_level=filter_level_to_literal(filter_level),  # type: ignore
+        export_mode=export_mode,  # type: ignore
         skip_reinforcement=skip_reinforcement,
         skip_misconceptions=skip_misconceptions,
         validate_sql=validate_sql,
@@ -425,6 +451,13 @@ def process_command(
     stats_table.add_row("Reinforcement Items", str(reinforcement_items))
     stats_table.add_row("Concepts Covered", str(concepts_mapped))
     stats_table.add_row("Teaching Blocks", str(teaching_blocks))
+    
+    # Show export mode
+    export_mode_value = getattr(config, 'export_mode', 'prototype')
+    if export_mode_value == "student_ready":
+        stats_table.add_row("Export Mode", "[green]student_ready (strict)[/green]")
+    else:
+        stats_table.add_row("Export Mode", f"{export_mode_value}")
     
     # Show fallback units if any (these are quality failures)
     if fallback_units > 0:
@@ -542,6 +575,7 @@ def _create_manifest(
     filter_level: str,
     llm_provider: str,
     llm_model: str,
+    export_mode: str = "prototype",
 ) -> dict[str, Any]:
     """Create export manifest."""
     return {
@@ -558,6 +592,7 @@ def _create_manifest(
         },
         "configuration": {
             "filter_level": filter_level,
+            "export_mode": export_mode,
             "llm_provider": llm_provider,
             "llm_model": llm_model,
         },
