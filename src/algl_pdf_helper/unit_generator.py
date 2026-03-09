@@ -897,6 +897,42 @@ class UnitGenerator:
         BlockType.UNKNOWN: "prose",
     }
 
+    # Mapping for string block types to canonical values
+    _BLOCK_TYPE_STR_MAPPING: dict[str, str] = {
+        # Headings
+        "heading": "heading",
+        "subheading": "heading",
+        "title": "heading",
+        # Prose
+        "explanatory_prose": "prose",
+        "sidebar": "prose",
+        "prose": "prose",
+        "text": "prose",
+        # Code
+        "sql_code": "code",
+        "code": "code",
+        "code_block": "code",
+        # Tables
+        "output_table": "table",
+        "table": "table",
+        # Figures
+        "figure": "figure",
+        "diagram": "figure",
+        "image": "figure",
+        # Exercise
+        "exercise": "exercise",
+        "practice": "exercise",
+        # Summary
+        "summary": "summary",
+        "glossary": "summary",
+        # Admin
+        "admin_text": "admin",
+        "admin": "admin",
+        "metadata": "admin",
+        # Fallback
+        "unknown": "prose",
+    }
+
     def _create_evidence_spans(self, blocks: list[ContentBlock], doc_id: str = "unknown") -> list[SourceSpan]:
         """Create evidence span references from content blocks."""
         evidence_spans = []
@@ -908,31 +944,10 @@ class UnitGenerator:
             block_type_str = "prose"  # Default fallback
             if hasattr(b, 'block_type'):
                 if isinstance(b.block_type, str):
-                    # Handle string block types - try to normalize to canonical values
-                    str_lower = b.block_type.lower()
-                    # Map common non-canonical values to canonical ones
-                    if str_lower in ("heading", "subheading"):
-                        block_type_str = "heading"
-                    elif str_lower in ("explanatory_prose", "sidebar"):
-                        block_type_str = "prose"
-                    elif str_lower == "sql_code":
-                        block_type_str = "code"
-                    elif str_lower == "output_table":
-                        block_type_str = "table"
-                    elif str_lower in ("figure", "diagram"):
-                        block_type_str = "figure"
-                    elif str_lower == "exercise":
-                        block_type_str = "exercise"
-                    elif str_lower in ("summary", "glossary"):
-                        block_type_str = "summary"
-                    elif str_lower == "admin_text":
-                        block_type_str = "admin"
-                    elif str_lower in ("heading", "prose", "code", "figure", "table", "exercise", "summary", "admin"):
-                        # Already canonical
-                        block_type_str = str_lower
-                    else:
-                        # Unknown - default to prose
-                        block_type_str = "prose"
+                    # Handle string block types - use comprehensive mapping
+                    block_type_str = self._BLOCK_TYPE_STR_MAPPING.get(
+                        b.block_type.lower(), "prose"
+                    )
                 else:
                     # It's a BlockType enum - use the canonical mapping
                     block_type_str = self._BLOCK_TYPE_CANONICAL_MAP.get(b.block_type, "prose")

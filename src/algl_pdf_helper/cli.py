@@ -1173,13 +1173,13 @@ try:
             "--llm-provider",
             help="LLM provider: kimi, openai, or ollama",
         ),
-        llm_model: str = typer.Option(
-            "kimi-k2-5",
+        llm_model: str | None = typer.Option(
+            None,
             "--llm-model",
-            help="LLM model to use",
+            help="LLM model to use (defaults: kimi-k2-5, gpt-4, llama3.2:3b)",
         ),
         filter_level: str = typer.Option(
-            "strict",
+            "production",
             "--filter-level",
             help="Export filter level: strict (production-ready), production (validated), development (all content)",
         ),

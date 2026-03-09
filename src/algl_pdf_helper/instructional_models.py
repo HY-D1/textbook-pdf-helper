@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 
 # =============================================================================
@@ -760,6 +760,7 @@ class UnitLibraryExport(BaseModel):
         default_factory=dict,
         description="Provenance and export metadata",
     )
+    _pre_filtered: bool = PrivateAttr(default=False)
     
     @field_validator("export_version")
     @classmethod

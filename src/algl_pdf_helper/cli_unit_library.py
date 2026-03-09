@@ -105,7 +105,7 @@ __all__ = ["process_command", "validate_command", "inspect_command", "filter_com
 
 # Filter level enum for CLI
 FilterLevelCLI = typer.Option(
-    "strict",
+    "production",
     help="Export filter level: strict (production-ready), production (validated), development (all content)"
 )
 
@@ -338,9 +338,9 @@ def process_command(
     stats_table.add_column("Value", style="white")
     
     # Get all metrics with clear naming
-    exported_units = stats.get("exported_units", stats.get("instructional_units", 0))
-    generated_units = stats.get("generated_units", exported_units)
-    filtered_out = stats.get("filtered_out", 0)
+    generated_units = stats.get("generated_instructional_units", stats.get("generated_units", stats.get("instructional_units", 0)))
+    exported_units = stats.get("exported_instructional_units", stats.get("exported_units", stats.get("instructional_units", 0)))
+    filtered_out = stats.get("filtered_out_units", stats.get("filtered_out", 0))
     fallback_units = stats.get("fallback_units", 0)
     misconception_units = stats.get("misconception_units", 0)
     reinforcement_items = stats.get("reinforcement_items", 0)
@@ -542,10 +542,10 @@ def validate_command(
         
         summary_table.add_row("Total Units", str(stats.get("total_units", 0)))
         summary_table.add_row("Exported Units", str(stats.get("exported_units", 0)))
-        summary_table.add_row("Filtered Units", str(stats.get("filtered_units", 0)))
+        summary_table.add_row("Filtered Units", str(stats.get("filtered_out", stats.get("filtered_units", 0))))
         summary_table.add_row("Concepts Covered", str(stats.get("concepts_covered", 0)))
-        summary_table.add_row("Misconceptions", str(stats.get("misconception_units", 0)))
-        summary_table.add_row("Reinforcement Items", str(stats.get("reinforcement_items", 0)))
+        summary_table.add_row("Misconceptions", str(stats.get("total_misconceptions", stats.get("misconception_units", 0))))
+        summary_table.add_row("Reinforcement Items", str(stats.get("total_reinforcement", stats.get("reinforcement_items", 0))))
         
         console.print(summary_table)
         console.print()
@@ -696,6 +696,8 @@ def validate_command(
     except FileNotFoundError as e:
         console.print(f"[red]❌ Error: Could not load library:[/red] {e}")
         raise typer.Exit(1)
+    except typer.Exit:
+        raise  # Re-raise typer.Exit to preserve exit code
     except Exception as e:
         console.print(f"[red]❌ Validation failed:[/red] {e}")
         import traceback

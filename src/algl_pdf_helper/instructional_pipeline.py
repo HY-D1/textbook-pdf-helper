@@ -1304,6 +1304,9 @@ class InstructionalPipeline:
         
         self._exporter = UnitLibraryExporter()
         
+        # Mark library as already filtered to prevent double-filtering in exporter
+        library._pre_filtered = True
+        
         filter_level_map = {
             "strict": FilterLevel.STRICT,
             "production": FilterLevel.PRODUCTION,

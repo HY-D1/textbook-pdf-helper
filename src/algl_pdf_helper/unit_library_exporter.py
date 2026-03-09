@@ -301,8 +301,13 @@ class UnitLibraryExporter:
         # Create output directory
         config.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Apply filter level
-        filtered_library = self._apply_filter(library, config.filter_level)
+        # Apply filter level (skip if library was already filtered by the pipeline)
+        already_filtered = getattr(library, '_pre_filtered', False)
+        if already_filtered:
+            self._logger.info("Library was already filtered by pipeline, skipping second filter pass")
+            filtered_library = library
+        else:
+            filtered_library = self._apply_filter(library, config.filter_level)
         
         # Extract source spans from units
         source_spans = self._extract_all_source_spans(filtered_library)
