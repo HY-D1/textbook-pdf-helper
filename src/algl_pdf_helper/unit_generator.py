@@ -45,6 +45,87 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# =============================================================================
+# HEADING DETECTION PATTERNS
+# =============================================================================
+
+# Patterns that indicate heading/TOC text - used to reject section titles as definitions
+HEADING_PATTERNS = [
+    r"^(How to|Working with|Understanding|Introduction to|Overview of)",
+    r"^(Chapter|Section|Part|Unit|Module|Lesson)\s+\d+",
+    r"^\d+\.\d+\s+",  # Section numbers like "3.2"
+    r"^(In this chapter|Learning objectives|Summary|Exercises|Review|Quiz)",
+    r"^[A-Z][a-z]+ing\s+[a-z\s]+$",  # Gerund phrases like "Creating Tables"
+    r"^Reference\s+(Document|Manual|Guide)",
+    r"^Golden\s+Reference",
+    r"^Table of Contents",
+    r"^Appendix\s+[A-Z0-9]",
+    r"^Index$",
+    r"^Glossary$",
+    r"^Bibliography$",
+    r"^Acknowledgments?$",
+    r"^Preface$",
+    r"^Foreword$",
+]
+
+
+def _looks_like_heading(text: str) -> bool:
+    """Check if text looks like a section heading rather than a definition.
+    
+    This function identifies text that is likely a chapter title, section heading,
+    or table of contents entry - content that should NOT be used as a concept
+    definition in L3 units.
+    
+    Args:
+        text: The text to check
+        
+    Returns:
+        True if the text appears to be a heading/section title
+        
+    Examples:
+        >>> _looks_like_heading("How to create tables")
+        True
+        >>> _looks_like_heading("A table is a structured collection of data.")
+        False
+        >>> _looks_like_heading("3.2 Join Operations")
+        True
+    """
+    if not text:
+        return True
+    
+    text = text.strip()
+    text_lower = text.lower()
+    
+    # Check explicit heading patterns
+    for pattern in HEADING_PATTERNS:
+        if re.match(pattern, text, re.IGNORECASE):
+            return True
+    
+    # Check for short title-like text (less than 10 words, mostly capitalized)
+    words = text.split()
+    if len(words) < 10:
+        # Count capitalized words (excluding common small words)
+        small_words = {'a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 
+                       'and', 'or', 'is', 'are', 'with', 'by', 'as'}
+        content_words = [w for w in words if w.lower() not in small_words and w.isalpha()]
+        if content_words:
+            capitalized = sum(1 for w in content_words if w[0].isupper())
+            if capitalized / len(content_words) > 0.7:
+                return True
+    
+    # Check for patterns ending in section markers
+    section_endings = (' - Overview', ' - Summary', ' - Details', ' - Examples',
+                       ': Overview', ': Summary', ': Details', ': Examples')
+    if any(text.endswith(ending) for ending in section_endings):
+        return True
+    
+    # Check for all-caps (likely a heading)
+    if text.isupper():
+        return True
+    
+    return False
+
+
 from .instructional_models import (
     InstructionalUnit,
     MisconceptionExample,
@@ -790,6 +871,47 @@ class ContentTransformer:
 # =============================================================================
 # UNIT GENERATOR
 # =============================================================================
+
+# Concepts that are theoretical/design-oriented and should use concept-based L2 examples
+# instead of forcing SQL examples
+CONCEPTS_WITHOUT_SQL = {
+    "normalization",
+    "database-design",
+    "erd-basics",
+    "first-normal-form",
+    "second-normal-form", 
+    "third-normal-form",
+    "1nf",
+    "2nf",
+    "3nf",
+    "functional-dependency",
+    "bcnf",
+    "denormalization",
+    "entity-relationship",
+    "relational-model",
+    "database-architecture",
+    "acid-properties",
+    "cap-theorem",
+}
+
+
+# L2 subtype classification
+L2_SQL_EXAMPLE_CONCEPTS = {
+    "select-basic", "where-clause", "order-by", "limit-offset",
+    "alias", "distinct", "joins-intro", "inner-join", "outer-join",
+    "self-join", "cross-join", "aggregate-functions", "group-by",
+    "having-clause", "subqueries-intro", "subquery-in-select",
+    "subquery-in-where", "correlated-subquery", "exists-operator",
+    "union", "insert-statement", "update-statement", "delete-statement",
+    "create-table", "alter-table", "drop-table", "constraints",
+    "views", "indexes", "window-functions", "cte", "triggers",
+    "stored-procedures", "functions", "transactions", "isolation-levels",
+    "null-handling", "pattern-matching", "string-functions", "date-functions",
+    "data-types", "case-expressions", "coalesce", "nullif",
+}
+
+L2_CONCEPT_EXAMPLE_CONCEPTS = CONCEPTS_WITHOUT_SQL
+
 
 class UnitGenerator:
     """
@@ -1822,8 +1944,30 @@ class UnitGenerator:
             "window-functions": ["over(", "partition by", "row_number", "rank()"],
             "cte": ["with ", "as ("],
             "triggers": ["trigger", "before", "after", "on insert"],
-            "stored-procedures": ["procedure", "call", "parameter"],
-            "data-types": ["varchar", "int", "decimal", "timestamp", "boolean"],
+            "stored-procedures": [
+                "create procedure", "call", "delimiter", "begin", "end",
+                "inout", "out parameter", "in parameter", "procedure",
+            ],
+            "data-types": [
+                "varchar", "int", "decimal", "timestamp", "boolean",
+                "text", "float", "double", "bigint", "smallint",
+                "char", "date", "datetime", "time", "blob",
+            ],
+            "string-functions": [
+                "concat", "substring", "trim", "length", "replace",
+                "upper", "lower", "left", "right", "instr", "char_length",
+                "lpad", "rpad", "ltrim", "rtrim", "reverse", "format",
+            ],
+            "date-functions": [
+                "current_date", "current_timestamp", "date_add", "date_sub",
+                "extract", "datediff", "date_format", "now()", "curdate()",
+                "date_diff", "timestampdiff", "year(", "month(", "day(",
+                "hour(", "minute(", "second(", "date(", "time(",
+            ],
+            "normalization": [
+                "first normal form", "second normal form", "third normal form",
+                "1nf", "2nf", "3nf", "functional dependency", "normalization",
+            ],
         }
         
         # Get keywords for this concept, or use concept name as default
@@ -1857,6 +2001,57 @@ class UnitGenerator:
             # Look for pattern like "FROM employees e JOIN employees m"
             self_join_pattern = r"from\s+(\w+)\s+\w+\s+join\s+\1\s+\w+"
             if re.search(self_join_pattern, sql_lower):
+                score += 5.0
+        
+        # ===== EXPANDED BONUS SCORING FOR MURACH CONCEPTS =====
+        
+        # Stored procedures: bonus for CREATE PROCEDURE and CALL
+        if concept_id == "stored-procedures":
+            if "create procedure" in sql_lower:
+                score += 5.0
+            if re.search(r'\bcall\s+\w+', sql_lower):
+                score += 3.0
+            if "delimiter" in sql_lower:
+                score += 2.0
+            if "begin" in sql_lower and "end" in sql_lower:
+                score += 2.0
+        
+        # Data types: bonus for CREATE TABLE with type declarations
+        if concept_id == "data-types":
+            if "create table" in sql_lower:
+                # Count type declarations in CREATE TABLE
+                type_pattern = r'\b\w+\s+(?:varchar|int|decimal|timestamp|boolean|text|float|double|bigint|char|date)'
+                type_count = len(re.findall(type_pattern, sql_lower))
+                score += min(type_count * 3, 9)  # Cap at 9 points
+        
+        # String functions: bonus for actual function calls
+        if concept_id == "string-functions":
+            func_calls = ["concat(", "substring(", "trim(", "length(", "replace(", 
+                         "upper(", "lower(", "left(", "right(", "instr(", "char_length("]
+            for func in func_calls:
+                if func in sql_lower:
+                    score += 5.0
+                    break  # Only count once
+        
+        # Date functions: bonus for function calls
+        if concept_id == "date-functions":
+            func_calls = ["current_date", "current_timestamp", "date_add", "date_sub",
+                         "extract(", "datediff", "date_format", "now()", "curdate()",
+                         "year(", "month(", "day(", "date_diff", "timestampdiff"]
+            for func in func_calls:
+                if func in sql_lower:
+                    score += 5.0
+                    break  # Only count once
+            if "date" in sql_lower and ("function" in sql_lower or "calculate" in sql_lower):
+                score += 2.0
+        
+        # Subquery-in-where: stronger detection
+        if concept_id == "subquery-in-where":
+            if re.search(r'where.*in\s*\(\s*select', sql_lower):
+                score += 5.0
+            if re.search(r'where.*exists\s*\(\s*select', sql_lower):
+                score += 5.0
+            if re.search(r'where.*[=<>]+\s*\(\s*select', sql_lower):
                 score += 5.0
         
         return score
@@ -2787,6 +2982,33 @@ class UnitGenerator:
         except Exception:
             return None
 
+    def _load_curated_unit_pack(self, concept_id: str) -> dict | None:
+        """Load comprehensive curated unit pack (L2, L3, L4) for weak concepts.
+        
+        This method loads from concept_curated_units.json which contains
+        stage-specific overrides for concepts that underperform with
+        automatic extraction or generation.
+        
+        Args:
+            concept_id: The canonical concept ID
+            
+        Returns:
+            Dictionary with L2_hint_plus_example, L3_explanation, L4_reflective_note
+            keys, or None if no curated content exists for this concept.
+        """
+        curated_path = Path(__file__).parent.parent.parent / "data" / "concept_curated_units.json"
+        
+        if not curated_path.exists():
+            return None
+        
+        try:
+            with open(curated_path) as f:
+                all_curated = json.load(f)
+            
+            return all_curated.get(concept_id)
+        except Exception:
+            return None
+
     def _assess_l3_quality(self, content: dict) -> float:
         """Score L3 content quality 0-1."""
         # If curated content was used, it's high quality
@@ -2982,6 +3204,13 @@ class UnitGenerator:
         Returns a list of PracticeLink objects if found, or None if no mapping exists.
         Handles both simple string IDs and rich metadata objects.
         
+        Supports format_version 2.0 with fields:
+        - real_problem_id: The actual SQL-Engage problem ID
+        - supports_hintwise: Whether the problem supports HintWise hints
+        - supports_replay: Whether the problem supports replay functionality
+        - url: Direct URL to the problem
+        - is_placeholder: Whether this is a placeholder entry
+        
         Args:
             concept_id: The concept ID to look up
             
@@ -3004,16 +3233,20 @@ class UnitGenerator:
             if not concept_problems:
                 return None
             
-            # Check if this is using placeholder status
-            metadata_status = practice_map.get("_metadata", {}).get("status", "")
+            # Check metadata for format version and status
+            metadata = practice_map.get("_metadata", {})
+            metadata_status = metadata.get("status", "")
+            format_version = metadata.get("format_version", "1.0")
             is_placeholder_format = metadata_status == "placeholder"
+            is_v2_format = format_version == "2.0" and metadata_status == "active"
             
             links = []
             problem_ids = []
+            real_problem_ids = []
             
             for problem in concept_problems:
                 if isinstance(problem, str):
-                    # Simple string ID format
+                    # Simple string ID format (legacy v1.0)
                     problem_ids.append(problem)
                     links.append(
                         PracticeLink(
@@ -3023,21 +3256,43 @@ class UnitGenerator:
                         )
                     )
                 elif isinstance(problem, dict):
-                    # Rich object with metadata
+                    # Rich object with metadata (v2.0 format)
                     problem_id = problem.get("id", f"unresolved-{concept_id}")
                     problem_ids.append(problem_id)
                     
+                    # Extract real_problem_id if available (v2.0)
+                    real_problem_id = problem.get("real_problem_id", problem_id)
+                    real_problem_ids.append(real_problem_id)
+                    
                     # Determine if this needs resolution
+                    # In v2.0, check is_placeholder flag; in v1.0, infer from ID pattern
                     needs_resolution = problem.get("is_placeholder", False)
                     if not needs_resolution and is_placeholder_format:
                         needs_resolution = problem_id.startswith("problem-")
+                    
+                    # Build metadata with v2.0 fields if available
+                    problem_metadata = {
+                        # Core fields
+                        "id": problem_id,
+                        "real_problem_id": real_problem_id,
+                        "title": problem.get("title", ""),
+                        "difficulty": problem.get("difficulty", ""),
+                        "concepts": problem.get("concepts", []),
+                        "error_subtypes": problem.get("error_subtypes", []),
+                        # Feature flags (v2.0+)
+                        "supports_hintwise": problem.get("supports_hintwise", False),
+                        "supports_replay": problem.get("supports_replay", False),
+                        # Integration fields
+                        "url": problem.get("url", ""),
+                        "is_placeholder": problem.get("is_placeholder", False),
+                    }
                     
                     links.append(
                         PracticeLink(
                             concept_id=concept_id,
                             problem_ids=[problem_id],
                             needs_resolution=needs_resolution,
-                            metadata=problem,  # Store full metadata
+                            metadata=problem_metadata,
                         )
                     )
             
@@ -3047,11 +3302,25 @@ class UnitGenerator:
                 any_needs_resolution = any(link.needs_resolution for link in links)
                 
                 # Collect metadata from all links
+                problem_metadatas = [link.metadata for link in links if link.metadata]
                 combined_metadata = {
-                    "problems": [link.metadata for link in links if link.metadata],
-                    "format_version": practice_map.get("_metadata", {}).get("format_version", "1.0"),
+                    "problems": problem_metadatas,
+                    "format_version": format_version,
                     "status": metadata_status,
+                    "is_v2_format": is_v2_format,
                 }
+                
+                # Add summary fields for v2.0 format
+                if is_v2_format and problem_metadatas:
+                    combined_metadata["has_hintwise_support"] = any(
+                        p.get("supports_hintwise", False) for p in problem_metadatas
+                    )
+                    combined_metadata["has_replay_support"] = any(
+                        p.get("supports_replay", False) for p in problem_metadatas
+                    )
+                    combined_metadata["real_problem_ids"] = [
+                        p.get("real_problem_id", p.get("id")) for p in problem_metadatas
+                    ]
                 
                 return [
                     PracticeLink(
@@ -3217,7 +3486,35 @@ class UnitGenerator:
         
         Uses concept-specific scoring to select the best matching SQL example
         from extracted content, ensuring examples match the concept being taught.
+        
+        Checks for curated content first for concepts that need high-quality
+        pre-written L2 units.
         """
+        # Check for curated L2 content first
+        curated_pack = self._load_curated_unit_pack(concept_id)
+        if curated_pack and "L2_hint_plus_example" in curated_pack:
+            curated_l2 = curated_pack["L2_hint_plus_example"]
+            example_sql = curated_l2.get("example_sql", "")
+            # Transform SQL to practice schema
+            if example_sql:
+                example_sql = self.transformer.transform_to_practice_schema(
+                    example_sql, ["Sailors", "Boats", "Reserves"]
+                )
+            
+            example_metadata = ExampleMetadata(
+                match_score=1.0,
+                source_type="curated",
+                selection_method="curated_pack",
+            )
+            
+            return L2Content(
+                hint_text=curated_l2.get("hint_text", l1_hint)[:300],
+                example_sql=example_sql[:500],
+                example_explanation=curated_l2.get("example_explanation", "")[:300],
+                common_pitfall=curated_l2.get("common_pitfall", "")[:200],
+                example_metadata=example_metadata,
+            )
+        
         # Extract SQL examples from blocks
         sql_examples = self._extract_sql_examples_from_blocks(blocks)
         
@@ -3319,8 +3616,16 @@ class UnitGenerator:
         
         Uses curated fallback for weak concepts to ensure high-quality content
         even when textbook source material is insufficient.
+        
+        Checks for comprehensive curated unit pack first, then falls back to
+        legacy curated L3 content or extracted content.
         """
         config = config or GenerationConfig()
+        
+        # Check for comprehensive curated unit pack first
+        curated_pack = self._load_curated_unit_pack(concept_id)
+        if curated_pack and "L3_explanation" in curated_pack:
+            return self._build_l3_from_curated_pack(concept_id, curated_pack, config)
         
         # Get ontology info (for fallback use)
         ontology = self._get_ontology_info(concept_id)
@@ -3583,6 +3888,101 @@ class UnitGenerator:
             practice_links=practice_links,
         )
     
+    def _build_l3_from_curated_pack(
+        self,
+        concept_id: str,
+        curated_pack: dict,
+        config: GenerationConfig | None = None,
+    ) -> L3Content:
+        """Build L3 content from curated unit pack.
+        
+        This helper method constructs L3Content from the comprehensive
+        curated unit pack format, transforming SQL to practice schemas
+        and ensuring all required fields are populated.
+        
+        Args:
+            concept_id: The canonical concept ID
+            curated_pack: The curated unit pack dictionary
+            config: Optional generation configuration
+            
+        Returns:
+            L3Content populated from curated data
+        """
+        config = config or GenerationConfig()
+        curated_l3 = curated_pack.get("L3_explanation", {})
+        
+        # Build examples from curated content
+        examples: list[SQLExample] = []
+        for ex in curated_l3.get("examples", []):
+            sql = self.transformer.transform_to_practice_schema(
+                ex.get("sql", ""), ["Sailors", "Boats", "Reserves"]
+            )
+            examples.append(SQLExample(
+                title=ex.get("title", "Example"),
+                scenario=ex.get("scenario", f"Example of {concept_id}"),
+                sql=sql,
+                explanation=ex.get("explanation", ""),
+                expected_output="Returns matching rows",
+                schema_used="practice",
+                is_synthetic=False,
+            ))
+        
+        # Build common mistakes from curated content
+        mistakes: list[MisconceptionExample] = []
+        for m in curated_l3.get("common_mistakes", []):
+            # Ensure required fields have minimum length
+            error_msg = m.get("error_message", "")
+            if len(error_msg) < 5:
+                error_msg = f"Error: {m.get('title', 'Syntax error')}"
+            
+            why_happens = m.get("why_it_happens", "")
+            if len(why_happens) < 10:
+                why_happens = f"This error occurs when using {concept_id} incorrectly."
+            
+            mistakes.append(MisconceptionExample(
+                title=m.get("title", "Common Mistake"),
+                error_sql=self.transformer.transform_to_practice_schema(
+                    m.get("error_sql", ""), ["Sailors", "Boats", "Reserves"]
+                ),
+                error_message=error_msg,
+                why_it_happens=why_happens,
+                fix_sql=self.transformer.transform_to_practice_schema(
+                    m.get("fix_sql", ""), ["Sailors", "Boats", "Reserves"]
+                ),
+                key_takeaway=m.get("key_takeaway", "Check your syntax carefully"),
+            ))
+        
+        # Get learning objectives from ontology
+        learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
+        
+        # Build practice links
+        practice_links = self._lookup_real_problems(concept_id)
+        if not practice_links:
+            practice_links = [
+                PracticeLink(
+                    concept_id=concept_id,
+                    problem_ids=[f"unresolved-{concept_id}"],
+                    needs_resolution=True,
+                )
+            ]
+        
+        # Get definition and why_it_matters from curated or fallbacks
+        definition = curated_l3.get("definition") or self._get_default_definition(concept_id)
+        why_it_matters = curated_l3.get("why_it_matters") or self._get_default_why_it_matters(concept_id)
+        
+        # Mark as curated content
+        content = L3Content(
+            definition=definition[:1000],
+            why_it_matters=why_it_matters[:500],
+            learning_objectives=learning_objectives,
+            examples=examples if examples else self._get_default_sql_examples(concept_id),
+            contrast_example=None,
+            common_mistakes=mistakes if mistakes else self._get_default_misconceptions(concept_id),
+            practice_links=practice_links,
+        )
+        
+        return content
+    
     def _build_grounded_L4_content(
         self,
         concept_id: str,
@@ -3591,7 +3991,22 @@ class UnitGenerator:
         """Build L4 reflective content grounded in evidence spans (no-LLM path).
         
         Creates concept-specific reflective content rather than generic templates.
+        
+        Checks for curated L4 content first for concepts with pre-written
+        reflective notes.
         """
+        # Check for curated L4 content first
+        curated_pack = self._load_curated_unit_pack(concept_id)
+        if curated_pack and "L4_reflective_note" in curated_pack:
+            curated_l4 = curated_pack["L4_reflective_note"]
+            return L4Content(
+                key_concept_summary=curated_l4.get("note_text", "")[:500],
+                reflection_prompts=curated_l4.get("connection_prompts", [])[:5],
+                explain_in_own_words=f"Explain {concept_id} in your own words, focusing on its real-world applications."[:500],
+                transfer_questions=curated_l4.get("key_takeaways", [])[:3],
+                connections=[],
+            )
+        
         # Get ontology info
         ontology = self._get_ontology_info(concept_id)
         
