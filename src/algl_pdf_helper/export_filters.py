@@ -254,6 +254,64 @@ def _check_empty_definition(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, f"Definition length acceptable ({len(definition)} chars)"
 
 
+def _check_heading_like_definition(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if definition looks like a heading or reference text instead of actual content.
+    
+    Rejects definitions that are:
+    - Chapter titles ("Chapter 5: ...")
+    - Section headings ("Section 3.2 - Examples")
+    - Reference document text ("Golden Reference...")
+    - All-caps headings
+    - Title-only text with no sentence structure
+    
+    Only applies to L3_explanation units.
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"Heading-like definition check skipped for {unit.target_stage}"
+    
+    definition = _get_unit_definition(unit)
+    if not definition:
+        return True, "No definition to check"
+    
+    definition_lower = definition.lower()
+    
+    # REJECT: Chapter/section patterns
+    if re.match(r'^Chapter\s+\d+', definition, re.IGNORECASE):
+        return False, f"Definition appears to be a chapter title: {definition[:50]}"
+    
+    if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+', definition, re.IGNORECASE):
+        return False, f"Definition appears to be a heading: {definition[:50]}"
+    
+    # REJECT: Golden Reference / Reference Document patterns
+    if 'golden reference' in definition_lower:
+        return False, "Definition contains 'golden reference' - appears to be reference text"
+    
+    if 'reference document' in definition_lower:
+        return False, "Definition contains 'reference document' - appears to be reference text"
+    
+    # REJECT: "References" or "Bibliography" as standalone
+    if re.match(r'^References?$', definition.strip(), re.IGNORECASE):
+        return False, "Definition is just 'References' - not a valid definition"
+    
+    # REJECT: "X - Examples" or similar heading patterns
+    if re.search(r'\s+-\s+(Examples|Overview|Summary|Details|Introduction)$', definition, re.IGNORECASE):
+        return False, f"Definition appears to be a section heading: {definition[:50]}"
+    
+    # REJECT: All-caps (likely a heading)
+    if definition.isupper():
+        return False, "Definition is all uppercase - appears to be a heading"
+    
+    # REJECT: Title case only with no small words (likely a heading)
+    words = definition.split()
+    if len(words) > 1 and all(w[0].isupper() for w in words if w and w[0].isalpha()):
+        small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by']
+        if not any(w.lower() in small_words for w in words):
+            return False, "Definition appears to be title case heading with no sentence structure"
+    
+    return True, "Definition does not appear to be a heading"
+
+
 def _check_no_valid_example(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if there's at least one executable SQL example.
     
@@ -621,6 +679,13 @@ HARD_BLOCK_RULES: list[ExportRule] = [
         description="Definition is empty or < 20 characters",
         check_fn=_check_empty_definition,
         error_message="Definition is missing or too short"
+    ),
+    ExportRule(
+        rule_id="heading_like_definition",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Definition looks like a chapter/section heading or reference text",
+        check_fn=_check_heading_like_definition,
+        error_message="Definition appears to be a heading or reference text, not actual content"
     ),
     ExportRule(
         rule_id="no_valid_example",
