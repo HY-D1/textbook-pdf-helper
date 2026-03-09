@@ -272,6 +272,11 @@ def process_command(
         max=1.0,
         help="Quality threshold below which to trigger Ollama repair",
     ),
+    clear_repair_cache: bool = typer.Option(
+        False,
+        "--clear-repair-cache",
+        help="Clear the repair cache before processing",
+    ),
 ):
     """
     Process a PDF into a unit library.
@@ -299,6 +304,16 @@ def process_command(
         algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
         algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
     """
+    # Clear repair cache if requested
+    if clear_repair_cache:
+        try:
+            from ..ollama_repair import RepairCache
+            cache = RepairCache()
+            count = cache.clear_cache()
+            console.print(f"[green]✓ Cleared {count} cached repairs[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not clear repair cache: {e}[/yellow]")
+    
     if not HAS_EXPORTER:
         console.print("[red]❌ Error: Unit library exporter not available[/red]")
         console.print("   Install required dependencies to use this command.")

@@ -1205,6 +1205,28 @@ try:
             max=1.0,
             help="Minimum quality score threshold",
         ),
+        export_mode: str = typer.Option(
+            "prototype",
+            "--export-mode",
+            help="Export mode: prototype (allows placeholders, default) or student_ready (strict)",
+        ),
+        use_ollama_repair: bool = typer.Option(
+            True,
+            "--use-ollama-repair/--no-ollama-repair",
+            help="Use Ollama to repair weak L3 content (requires local Ollama server)",
+        ),
+        ollama_model: str = typer.Option(
+            "qwen2.5:3b",
+            "--ollama-model",
+            help="Ollama model for repair (qwen2.5:3b recommended for M1 Pro)",
+        ),
+        ollama_repair_threshold: float = typer.Option(
+            0.6,
+            "--ollama-repair-threshold",
+            min=0.0,
+            max=1.0,
+            help="Quality threshold below which to trigger Ollama repair",
+        ),
     ):
         """Process a PDF into a unit library.
         
@@ -1212,10 +1234,24 @@ try:
         instructional units at all adaptive stages (L1-L4), and exports
         the grounded instructional unit graph.
         
+        The Ollama repair pass automatically improves weak L3 content using
+        a local Ollama instance (requires qwen2.5:3b or similar model).
+        
+        Export Modes:
+            prototype (default): Allows placeholder content with warnings.
+                Use for development and testing.
+            
+            student_ready: Strict mode, blocks all placeholder and weak content.
+                Use when exporting for actual student consumption.
+                Blocks: placeholder practice links, default L2 examples, 
+                synthetic-only L3, weak curated content.
+        
         Example:
             algl-pdf process ./textbook.pdf --output-dir ./output
             algl-pdf process ./textbook.pdf -o ./output --filter-level production
+            algl-pdf process ./textbook.pdf -o ./output --export-mode student_ready
             algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
+            algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
         """
         _process_cmd(
             pdf_path=pdf_path,
@@ -1228,6 +1264,10 @@ try:
             skip_misconceptions=skip_misconceptions,
             validate_sql=validate_sql,
             min_quality_score=min_quality_score,
+            export_mode=export_mode,
+            use_ollama_repair=use_ollama_repair,
+            ollama_model=ollama_model,
+            ollama_repair_threshold=ollama_repair_threshold,
         )
 
     @app.command()
@@ -1364,5 +1404,55 @@ try:
             filter_level=filter_level,
         )
 
+
 except ImportError:
     pass  # Unit library commands not available
+
+
+# Cache management command (always available)
+@app.command(name="cache")
+def cache_command(
+    action: str = typer.Argument(
+        "stats",
+        help="Action: stats, clear, or show-path",
+    ),
+):
+    """
+    Manage the Ollama repair cache.
+    
+    View cache statistics, clear cached repairs, or show cache directory.
+    
+    Example:
+        algl-pdf cache stats     # Show cache statistics
+        algl-pdf cache clear     # Clear all cached repairs
+        algl-pdf cache show-path # Show cache directory path
+    """
+    try:
+        from .ollama_repair import RepairCache
+        
+        cache = RepairCache()
+        
+        if action == "clear":
+            count = cache.clear_cache()
+            typer.echo(f"✅ Cleared {count} cached repairs")
+        elif action == "show-path":
+            typer.echo(f"Cache directory: {cache.cache_dir}")
+        elif action == "stats":
+            stats = cache.get_cache_stats()
+            typer.echo("📊 Repair Cache Statistics:")
+            typer.echo(f"  Cache directory: {stats['cache_dir']}")
+            typer.echo(f"  Cached files: {stats['cached_files']}")
+            typer.echo(f"  Total size: {stats['total_size_bytes']:,} bytes")
+            if stats['hits'] + stats['misses'] > 0:
+                typer.echo(f"  Cache hits: {stats['hits']}")
+                typer.echo(f"  Cache misses: {stats['misses']}")
+                typer.echo(f"  Hit rate: {stats['hit_rate']:.1%}")
+        else:
+            typer.echo(f"❌ Unknown action: {action}")
+            typer.echo("Valid actions: stats, clear, show-path")
+            raise typer.Exit(1)
+            
+    except ImportError:
+        typer.echo("❌ Error: RepairCache not available")
+        raise typer.Exit(1)
+
