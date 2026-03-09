@@ -31,6 +31,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+# Import centralized schema definitions
+from .schemas import PRACTICE_SCHEMAS, FOREIGN_KEY_MAPPINGS
+
 # Optional import for sqlparse - validation features require [validation] extra
 try:
     import sqlparse
@@ -133,97 +136,13 @@ class PracticeSchemaManager:
     Handles creation of in-memory SQLite databases with practice schema tables
     and sample data. Also builds foreign key relationship graphs for semantic
     validation.
+    
+    Uses centralized schema definitions from schemas.py.
     """
     
-    # Default PRACTICE_SCHEMAS from pedagogical_generator
-    DEFAULT_SCHEMAS: dict[str, dict[str, Any]] = {
-        "users": {
-            "columns": ["id", "name", "email", "age", "city"],
-            "sample_data": [
-                (1, "Alice", "alice@email.com", 25, "Seattle"),
-                (2, "Bob", "bob@email.com", 30, "Portland"),
-                (3, "Charlie", "charlie@email.com", 22, "Seattle"),
-                (4, "Diana", "diana@email.com", 28, "San Jose"),
-                (5, "Evan", "evan@email.com", 35, "Portland"),
-            ],
-            "primary_key": "id",
-            "description": "Stores user information including name, email, age, and city",
-        },
-        "orders": {
-            "columns": ["order_id", "user_id", "product", "amount"],
-            "sample_data": [
-                (101, 1, "Laptop", 999.99),
-                (102, 1, "Mouse", 29.99),
-                (103, 2, "Keyboard", 79.99),
-                (104, 2, "Monitor", 219.99),
-                (105, 4, "Laptop", 1099.00),
-                (106, 4, "Mouse", 24.99),
-            ],
-            "primary_key": "order_id",
-            "foreign_keys": {"user_id": "users.id"},
-            "description": "Stores order information linked to users",
-        },
-        "products": {
-            "columns": ["id", "name", "category", "price"],
-            "sample_data": [
-                (1, "Laptop", "Electronics", 999.99),
-                (2, "Mouse", "Electronics", 29.99),
-                (3, "Keyboard", "Electronics", 79.99),
-                (4, "Desk", "Furniture", 299.99),
-                (5, "Chair", "Furniture", 199.99),
-                (6, "Lamp", "Home", 49.99),
-            ],
-            "primary_key": "id",
-            "description": "Stores product information with category and price",
-        },
-        "employees": {
-            "columns": ["emp_id", "emp_name", "salary", "dept_id", "manager_id", "hire_date"],
-            "sample_data": [
-                (1, "Alice", 90000, 1, None, "2020-01-15"),
-                (2, "Bob", 75000, 1, 1, "2021-03-20"),
-                (3, "Carol", 80000, 2, None, "2019-06-10"),
-                (4, "David", 65000, 2, 3, "2022-01-05"),
-                (5, "Eve", 70000, 3, None, "2021-09-15"),
-                (6, "Frank", 55000, 4, None, "2023-02-28"),
-            ],
-            "primary_key": "emp_id",
-            "foreign_keys": {"dept_id": "departments.dept_id", "manager_id": "employees.emp_id"},
-            "description": "Stores employee information including salary and department",
-        },
-        "departments": {
-            "columns": ["dept_id", "dept_name"],
-            "sample_data": [
-                (1, "Engineering"),
-                (2, "Sales"),
-                (3, "Marketing"),
-                (4, "HR"),
-            ],
-            "primary_key": "dept_id",
-            "description": "Stores department information",
-        },
-    }
-    
-    # Foreign key relationship mappings
-    FOREIGN_KEY_MAPPINGS: dict[str, dict[str, dict[str, str]]] = {
-        "users": {
-            "orders": {"from": "users.id", "to": "orders.user_id"},
-            "employees": {"from": "users.id", "to": "employees.manager_id"},
-        },
-        "orders": {
-            "users": {"from": "orders.user_id", "to": "users.id"},
-            "products": {"from": "orders.product", "to": "products.name"},
-        },
-        "products": {
-            "orders": {"from": "products.name", "to": "orders.product"},
-        },
-        "departments": {
-            "employees": {"from": "departments.dept_id", "to": "employees.dept_id"},
-        },
-        "employees": {
-            "departments": {"from": "employees.dept_id", "to": "departments.dept_id"},
-            "employees_self": {"from": "employees.manager_id", "to": "employees.emp_id"},
-        },
-    }
+    # Import centralized schema definitions
+    DEFAULT_SCHEMAS: dict[str, dict[str, Any]] = PRACTICE_SCHEMAS
+    FOREIGN_KEY_MAPPINGS: dict[str, dict[str, dict[str, str]]] = FOREIGN_KEY_MAPPINGS
     
     def __init__(self, schemas: dict[str, dict] | None = None):
         """Initialize with optional custom schemas.

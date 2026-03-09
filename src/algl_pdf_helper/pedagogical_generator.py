@@ -11,6 +11,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Import centralized schema definitions
+from .schemas import (
+    PRACTICE_SCHEMAS,
+    FOREIGN_KEY_MAPPINGS,
+    TEXTBOOK_TO_PRACTICE_MAPPING,
+    CONCEPT_TO_PROBLEMS,
+)
+
 from .provenance import (
     BlockRef,
     ProvenanceRecord,
@@ -19,185 +27,23 @@ from .provenance import (
 )
 
 
-# =============================================================================
-# PRACTICE SCHEMAS - Standardized schemas for all SQL examples
-# =============================================================================
-
-# =============================================================================
-# FOREIGN KEY MAPPINGS - For proper join condition transformation
-# =============================================================================
-
-FOREIGN_KEY_MAPPINGS: dict[str, dict[str, dict[str, str]]] = {
-    "users": {
-        "orders": {"from": "users.id", "to": "orders.user_id"},
-        "employees": {"from": "users.id", "to": "employees.manager_id"},
-    },
-    "orders": {
-        "users": {"from": "orders.user_id", "to": "users.id"},
-        "products": {"from": "orders.product", "to": "products.name"},
-    },
-    "products": {
-        "orders": {"from": "products.name", "to": "orders.product"},
-    },
-    "departments": {
-        "employees": {"from": "departments.dept_id", "to": "employees.dept_id"},
-    },
-    "employees": {
-        "departments": {"from": "employees.dept_id", "to": "departments.dept_id"},
-        "employees_self": {"from": "employees.manager_id", "to": "employees.emp_id"},
-    },
-}
+# Re-export schemas for backward compatibility
+# These are now defined centrally in schemas.py
+__all__ = [
+    "PRACTICE_SCHEMAS",
+    "FOREIGN_KEY_MAPPINGS", 
+    "TEXTBOOK_TO_PRACTICE_MAPPING",
+    "CONCEPT_TO_PROBLEMS",
+    "PedagogicalContentGenerator",
+]
 
 
-PRACTICE_SCHEMAS: dict[str, dict[str, Any]] = {
-    "users": {
-        "columns": ["id", "name", "email", "age", "city"],
-        "sample_data": [
-            (1, "Alice", "alice@email.com", 25, "Seattle"),
-            (2, "Bob", "bob@email.com", 30, "Portland"),
-            (3, "Charlie", "charlie@email.com", 22, "Seattle"),
-            (4, "Diana", "diana@email.com", 28, "San Jose"),
-            (5, "Evan", "evan@email.com", 35, "Portland"),
-        ],
-        "primary_key": "id",
-        "description": "Stores user information including name, email, age, and city",
-    },
-    "orders": {
-        "columns": ["order_id", "user_id", "product", "amount"],
-        "sample_data": [
-            (101, 1, "Laptop", 999.99),
-            (102, 1, "Mouse", 29.99),
-            (103, 2, "Keyboard", 79.99),
-            (104, 2, "Monitor", 219.99),
-            (105, 4, "Laptop", 1099.00),
-            (106, 4, "Mouse", 24.99),
-        ],
-        "primary_key": "order_id",
-        "foreign_keys": {"user_id": "users.id"},
-        "description": "Stores order information linked to users",
-    },
-    "products": {
-        "columns": ["id", "name", "category", "price"],
-        "sample_data": [
-            (1, "Laptop", "Electronics", 999.99),
-            (2, "Mouse", "Electronics", 29.99),
-            (3, "Keyboard", "Electronics", 79.99),
-            (4, "Desk", "Furniture", 299.99),
-            (5, "Chair", "Furniture", 199.99),
-            (6, "Lamp", "Home", 49.99),
-        ],
-        "primary_key": "id",
-        "description": "Stores product information with category and price",
-    },
-    "employees": {
-        "columns": ["emp_id", "emp_name", "salary", "dept_id", "manager_id", "hire_date"],
-        "sample_data": [
-            (1, "Alice", 90000, 1, None, "2020-01-15"),
-            (2, "Bob", 75000, 1, 1, "2021-03-20"),
-            (3, "Carol", 80000, 2, None, "2019-06-10"),
-            (4, "David", 65000, 2, 3, "2022-01-05"),
-            (5, "Eve", 70000, 3, None, "2021-09-15"),
-            (6, "Frank", 55000, 4, None, "2023-02-28"),
-        ],
-        "primary_key": "emp_id",
-        "foreign_keys": {"dept_id": "departments.dept_id", "manager_id": "employees.emp_id"},
-        "description": "Stores employee information including salary and department",
-    },
-    "departments": {
-        "columns": ["dept_id", "dept_name"],
-        "sample_data": [
-            (1, "Engineering"),
-            (2, "Sales"),
-            (3, "Marketing"),
-            (4, "HR"),
-        ],
-        "primary_key": "dept_id",
-        "description": "Stores department information",
-    },
-}
+# Create a merged TEXTBOOK_TO_PRACTICE_MAPPING with extended entries
+# Start with centralized mappings and add module-specific extensions
+TEXTBOOK_TO_PRACTICE_MAPPING = dict(TEXTBOOK_TO_PRACTICE_MAPPING)
 
-
-# =============================================================================
-# TEXTBOOK TO PRACTICE SCHEMA MAPPING
-# =============================================================================
-
-TEXTBOOK_TO_PRACTICE_MAPPING: dict[str, str] = {
-    # Table mappings (case-insensitive)
-    "Sailors": "users",
-    "sailors": "users",
-    "SAILORS": "users",
-    "Boats": "products",
-    "boats": "products",
-    "BOATS": "products",
-    "Reserves": "orders",
-    "reserves": "orders",
-    "RESERVES": "orders",
-    "Invoices": "orders",
-    "invoices": "orders",
-    "INVOICES": "orders",
-    "Invoice": "orders",
-    "invoice": "orders",
-    "INVOICE": "orders",
-    "vendors": "users",
-    "Vendors": "users",
-    "VENDORS": "users",
-    "vendor": "users",
-    "Vendor": "users",
-    "VENDOR": "users",
-    "customers": "users",
-    "Customers": "users",
-    "CUSTOMERS": "users",
-    "customer": "users",
-    "Customer": "users",
-    "CUSTOMER": "users",
-    "items": "products",
-    "Items": "products",
-    "ITEMS": "products",
-    "item": "products",
-    "Item": "products",
-    "ITEM": "products",
-    "Staff": "employees",
-    "staff": "employees",
-    "STAFF": "employees",
-    "worker": "employees",
-    "Worker": "employees",
-    "WORKER": "employees",
-    "workers": "employees",
-    "Workers": "employees",
-    "WORKERS": "employees",
-    "Divisions": "departments",
-    "divisions": "departments",
-    "DIVISIONS": "departments",
-    "Division": "departments",
-    "division": "departments",
-    "DIVISION": "departments",
-    "Teams": "departments",
-    "teams": "departments",
-    "TEAMS": "departments",
-    # Column mappings
-    "vendor_id": "user_id",
-    "vendor_name": "name",
-    "vendor_email": "email",
-    "customer_id": "user_id",
-    "customer_name": "name",
-    "customer_email": "email",
-    "invoice_total": "amount",
-    "payment_total": "amount",
-    "credit_total": "amount",
-    "invoice_amount": "amount",
-    "item_id": "id",
-    "item_name": "name",
-    "item_price": "price",
-    "unit_price": "price",
-    "sailor_id": "id",
-    "sailor_name": "name",
-    "boat_id": "id",
-    "boat_name": "name",
-    "bid": "id",
-    "sid": "id",
-    "rating": "age",
-    "reserve_date": "hire_date",
-    "day": "hire_date",
+# Extended entries specific to this module
+_EXTENDED_MAPPINGS = {
     "staff_id": "emp_id",
     "staff_name": "emp_name",
     "worker_id": "emp_id",
@@ -210,12 +56,19 @@ TEXTBOOK_TO_PRACTICE_MAPPING: dict[str, str] = {
     "department_name": "dept_name",
 }
 
+# Merge extended mappings
+TEXTBOOK_TO_PRACTICE_MAPPING.update(_EXTENDED_MAPPINGS)
+
 
 # =============================================================================
 # CONCEPT TO PRACTICE PROBLEM MAPPING
 # =============================================================================
 
-CONCEPT_TO_PROBLEMS: dict[str, list[str]] = {
+# Extend the centralized CONCEPT_TO_PROBLEMS with additional entries
+CONCEPT_TO_PROBLEMS = dict(CONCEPT_TO_PROBLEMS)
+
+# Extended entries specific to this module
+_EXTENDED_CONCEPT_PROBLEMS = {
     "select-basic": ["problem-1", "problem-2", "problem-5"],
     "where-clause": ["problem-2", "problem-6", "problem-7"],
     "joins": ["problem-3", "problem-8", "problem-9", "problem-10"],
@@ -244,6 +97,9 @@ CONCEPT_TO_PROBLEMS: dict[str, list[str]] = {
     "views": ["problem-37"],
     "indexes": ["problem-38"],
 }
+
+# Merge extended problem mappings
+CONCEPT_TO_PROBLEMS.update(_EXTENDED_CONCEPT_PROBLEMS)
 
 
 # =============================================================================
