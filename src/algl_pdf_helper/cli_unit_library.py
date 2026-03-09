@@ -110,8 +110,8 @@ FilterLevelCLI = typer.Option(
 )
 
 LLMProviderCLI = typer.Option(
-    "kimi",
-    help="LLM provider: kimi, openai, or ollama"
+    "ollama",
+    help="LLM provider: ollama (default), kimi, or openai. Note: only ollama is currently implemented."
 )
 
 # Provider-specific default models
@@ -284,6 +284,9 @@ def process_command(
         
         # Create pipeline instance
         pipeline = InstructionalPipeline(config)
+        
+        # Suppress duplicate filter logging (CLI handles output display)
+        pipeline._quiet_filter_logging = True
         
         # Run pipeline and capture result
         try:
@@ -498,15 +501,22 @@ def validate_command(
         "--detailed",
         help="Show detailed validation report",
     ),
+    use_generated_report: bool = typer.Option(
+        False,
+        "--use-generated-report",
+        help="Use the pre-filter generated quality report instead of exported report",
+    ),
 ):
     """
     Validate an existing unit library.
     
     Runs all quality gates on the unit library and displays a quality report.
+    Uses the exported units report by default (post-filter).
     
     Example:
         algl-pdf validate ./output/unit-library/
         algl-pdf validate ./output/unit-library/ --detailed
+        algl-pdf validate ./output/unit-library/ --use-generated-report
     """
     if not HAS_EXPORTER:
         console.print("[red]❌ Error: Unit library exporter not available[/red]")
@@ -524,6 +534,29 @@ def validate_command(
         # Load manifest
         manifest = get_manifest(library_dir)
         
+        # Check for quality report information
+        quality_reports = manifest.get("quality_reports", {})
+        files_section = manifest.get("files", {})
+        
+        # Determine which quality report to use
+        has_exported_report = quality_reports.get("exported") or files_section.get("quality_report_exported")
+        has_generated_report = quality_reports.get("generated") or files_section.get("quality_report_generated")
+        
+        # Default to exported report unless user requests generated report
+        if use_generated_report and has_generated_report:
+            selected_report_name = "generated"
+            selected_report_file = quality_reports.get("generated") or files_section.get("quality_report_generated")
+        elif has_exported_report:
+            selected_report_name = "exported"
+            selected_report_file = quality_reports.get("exported") or files_section.get("quality_report_exported")
+        elif has_generated_report:
+            # Fallback to generated if exported not available
+            selected_report_name = "generated"
+            selected_report_file = quality_reports.get("generated") or files_section.get("quality_report_generated")
+        else:
+            selected_report_name = "default"
+            selected_report_file = "quality_report.json"
+        
         # Load full library
         library = load_unit_library(library_dir)
         
@@ -540,15 +573,47 @@ def validate_command(
         summary_table.add_column("Field", style="cyan")
         summary_table.add_column("Value", style="white")
         
-        summary_table.add_row("Total Units", str(stats.get("total_units", 0)))
-        summary_table.add_row("Exported Units", str(stats.get("exported_units", 0)))
-        summary_table.add_row("Filtered Units", str(stats.get("filtered_out", stats.get("filtered_units", 0))))
+        # Read correct manifest keys (with fallbacks for different naming conventions)
+        total_units = stats.get("instructional_units", stats.get("total_units", 0))
+        filtered_out = stats.get("filtered_out", stats.get("filtered_out_units", stats.get("filtered_units", 0)))
+        
+        # Calculate generated units (total before filtering)
+        generated_units = stats.get("generated_instructional_units", stats.get("generated_units",
+                                 stats.get("total_units_generated", total_units + filtered_out)))
+        
+        summary_table.add_row("Generated Units", str(generated_units))
+        summary_table.add_row("Filtered Out", str(filtered_out))
+        summary_table.add_row("Exported Units", str(total_units))
         summary_table.add_row("Concepts Covered", str(stats.get("concepts_covered", 0)))
         summary_table.add_row("Misconceptions", str(stats.get("total_misconceptions", stats.get("misconception_units", 0))))
         summary_table.add_row("Reinforcement Items", str(stats.get("total_reinforcement", stats.get("reinforcement_items", 0))))
         
         console.print(summary_table)
         console.print()
+        
+        # Display quality report info
+        if has_exported_report or has_generated_report:
+            console.print("[bold]Quality Reports:[/bold]")
+            report_table = Table(show_header=False, box=None)
+            report_table.add_column("Report", style="cyan")
+            report_table.add_column("File", style="white")
+            report_table.add_column("Status", style="white")
+            
+            if has_generated_report:
+                gen_file = quality_reports.get("generated") or files_section.get("quality_report_generated", "N/A")
+                is_selected = selected_report_name == "generated"
+                status = "[green]✓ selected[/green]" if is_selected else ""
+                report_table.add_row("Generated (pre-filter)", str(gen_file), status)
+            
+            if has_exported_report:
+                exp_file = quality_reports.get("exported") or files_section.get("quality_report_exported", "N/A")
+                is_selected = selected_report_name == "exported"
+                status = "[green]✓ selected[/green]" if is_selected else ""
+                report_table.add_row("Exported (post-filter)", str(exp_file), status)
+            
+            console.print(report_table)
+            console.print(f"[dim]Using {selected_report_name} quality report for validation[/dim]")
+            console.print()
         
         # Display validation results
         console.print("[bold]File Validation:[/bold]")

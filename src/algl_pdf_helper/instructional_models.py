@@ -75,6 +75,10 @@ class SQLExample(BaseModel):
         default=False,
         description="Whether this example has been validated"
     )
+    is_synthetic: bool = Field(
+        default=False,
+        description="Whether this example was generated (not extracted from source)"
+    )
     
     @field_validator("sql")
     @classmethod
@@ -107,11 +111,30 @@ class PracticeLink(BaseModel):
         default=None,
         description="(min_difficulty, max_difficulty) tuple"
     )
+    needs_resolution: bool = Field(
+        default=False,
+        description="Whether these problem IDs are placeholders requiring resolution"
+    )
     
     def add_problem(self, problem_id: str) -> None:
         """Add a problem ID if not already present."""
         if problem_id not in self.problem_ids:
             self.problem_ids.append(problem_id)
+    
+    def is_unresolved(self) -> bool:
+        """Check if this link contains only unresolved placeholder problem IDs."""
+        if not self.problem_ids:
+            return True
+        return all(pid.startswith("unresolved-") for pid in self.problem_ids)
+    
+    def get_real_problem_ids(self) -> list[str]:
+        """Get only the real (non-placeholder) problem IDs."""
+        return [pid for pid in self.problem_ids if not pid.startswith("unresolved-")]
+    
+    def mark_as_resolved(self, resolved_ids: list[str]) -> None:
+        """Replace placeholder IDs with resolved real problem IDs."""
+        self.problem_ids = resolved_ids
+        self.needs_resolution = False
 
 
 class MisconceptionExample(BaseModel):

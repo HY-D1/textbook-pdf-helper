@@ -690,12 +690,14 @@ class LearningQualityGates:
     
     def validate_explanation_quality(self, unit: InstructionalUnit) -> QualityCheck:
         """
-        Validate the quality of explanations in the unit.
+        Validate the quality of explanations in the unit (stage-aware).
         
-        Checks:
-        - Explains "why it matters"
-        - Includes at least one misconception
-        - Includes repair explanation
+        Different stages have different explanation requirements:
+        - L1_hint: hint_text, syntax_cue, when_to_use
+        - L2_hint_plus_example: hint_text, example_sql, example_explanation
+        - L3_explanation: definition, why_it_matters, common_mistakes
+        - L4_reflective_note: key_concept_summary, reflection_prompts, transfer_questions
+        - reinforcement: recall_prompt, quick_check_question, quick_check_answer
         
         Args:
             unit: The instructional unit to validate
@@ -713,43 +715,119 @@ class LearningQualityGates:
                 severity=Severity.WARNING,
             )
         
+        target_stage = unit.target_stage
         score = 1.0
         issues = []
+        checks = []
+        min_score = 0.6
         
-        # Check for "why it matters"
-        why_matters = content.get("why_it_matters", "")
-        if not why_matters or len(why_matters.strip()) < 20:
-            score -= 0.3
-            issues.append("missing or insufficient 'why it matters'")
+        if target_stage == "L1_hint":
+            # L1: Check hint quality, syntax cue, when_to_use
+            checks = [
+                ("hint_text", content.get("hint_text", "")),
+                ("syntax_cue", content.get("syntax_cue", "")),
+            ]
+            min_score = 0.6
+            # Optional: when_to_use gives bonus
+            if content.get("when_to_use"):
+                score = min(1.0, score + 0.1)
+                
+        elif target_stage == "L2_hint_plus_example":
+            # L2: Check hint + example + pitfall
+            checks = [
+                ("hint_text", content.get("hint_text", "")),
+                ("example_sql", content.get("example_sql", "")),
+                ("example_explanation", content.get("example_explanation", "")),
+            ]
+            min_score = 0.6
+            # Optional: common_pitfall gives bonus
+            if content.get("common_pitfall"):
+                score = min(1.0, score + 0.1)
+                
+        elif target_stage == "L3_explanation":
+            # L3: Full explanation criteria
+            checks = [
+                ("definition", content.get("definition", "")),
+                ("why_it_matters", content.get("why_it_matters", "")),
+            ]
+            min_score = 0.7
+            
+            # Check for misconceptions/common mistakes
+            common_mistakes = content.get("common_mistakes", [])
+            if not common_mistakes and "mistakes" in content:
+                common_mistakes = content.get("mistakes", [])
+            
+            if not common_mistakes:
+                score -= 0.3
+                issues.append("no misconceptions documented")
+            else:
+                # Check for repair explanations in mistakes
+                has_repair = False
+                for mistake in common_mistakes:
+                    if isinstance(mistake, dict):
+                        if mistake.get("fix_sql") or mistake.get("repair"):
+                            has_repair = True
+                            break
+                
+                if not has_repair:
+                    score -= 0.2
+                    issues.append("misconceptions missing repair explanations")
+                
+        elif target_stage == "L4_reflective_note":
+            # L4: Check summary + reflection + transfer
+            checks = [
+                ("key_concept_summary", content.get("key_concept_summary", "")),
+            ]
+            min_score = 0.6
+            
+            # reflection_prompts and transfer_questions are lists
+            reflection_prompts = content.get("reflection_prompts", [])
+            transfer_questions = content.get("transfer_questions", [])
+            
+            if not reflection_prompts:
+                score -= 0.2
+                issues.append("no reflection prompts")
+            if not transfer_questions:
+                score -= 0.2
+                issues.append("no transfer questions")
+                
+        elif target_stage == "reinforcement":
+            # Reinforcement: Check recall + quick check
+            checks = [
+                ("recall_prompt", content.get("recall_prompt", "")),
+                ("quick_check_question", content.get("quick_check_question", "")),
+                ("quick_check_answer", content.get("quick_check_answer", "")),
+            ]
+            min_score = 0.6
+        else:
+            # Unknown stage - use L3 as default with warning
+            checks = [
+                ("definition", content.get("definition", "")),
+                ("why_it_matters", content.get("why_it_matters", "")),
+            ]
+            min_score = 0.7
+            issues.append(f"unknown target_stage: {target_stage}")
         
-        # Check for misconceptions/common mistakes
-        common_mistakes = content.get("common_mistakes", [])
-        if not common_mistakes and "mistakes" in content:
-            common_mistakes = content.get("mistakes", [])
+        # Validate the required fields for this stage
+        for field_name, field_value in checks:
+            if isinstance(field_value, str):
+                if not field_value or len(field_value.strip()) < 10:
+                    score -= 0.3
+                    issues.append(f"missing or insufficient '{field_name}'")
+            elif isinstance(field_value, list):
+                if not field_value:
+                    score -= 0.3
+                    issues.append(f"missing '{field_name}'")
+            elif not field_value:
+                score -= 0.3
+                issues.append(f"missing '{field_name}'")
         
-        if not common_mistakes:
-            score -= 0.3
-            issues.append("no misconceptions documented")
-        
-        # Check for repair explanations in mistakes
-        has_repair = False
-        if common_mistakes:
-            for mistake in common_mistakes:
-                if isinstance(mistake, dict):
-                    if mistake.get("fix_sql") or mistake.get("repair"):
-                        has_repair = True
-                        break
-        
-        if common_mistakes and not has_repair:
-            score -= 0.2
-            issues.append("misconceptions missing repair explanations")
-        
-        if score < 0.7:
+        if score < min_score:
             return QualityCheck(
                 check_name="explanation_quality",
                 passed=False,
                 score=max(0.0, score),
-                message=f"Explanation quality issues: {', '.join(issues)}",
+                message=f"Explanation quality issues: {', '.join(issues)}" if issues else "insufficient explanation content",
                 severity=Severity.WARNING,
             )
         
@@ -757,17 +835,20 @@ class LearningQualityGates:
             check_name="explanation_quality",
             passed=True,
             score=max(0.0, score),
-            message="Explanation quality meets standards" + (f" ({len(common_mistakes)} misconceptions)" if common_mistakes else ""),
+            message=f"Explanation quality meets standards for {target_stage}" + (f" ({len(common_mistakes)} misconceptions)" if target_stage == "L3_explanation" and 'common_mistakes' in locals() and common_mistakes else ""),
             severity=Severity.INFO,
         )
     
     def validate_practice_included(self, unit: InstructionalUnit) -> QualityCheck:
         """
-        Validate that practice items are included.
+        Validate that practice items are included (stage-aware).
         
-        Checks:
-        - Has at least one practice item
-        - Practice aligns to concept
+        Different stages have different practice requirements:
+        - L1_hint: Practice optional
+        - L2_hint_plus_example: Example required, formal practice optional
+        - L3_explanation: Practice required
+        - L4_reflective_note: Transfer questions count as practice
+        - reinforcement: Quick check required
         
         Args:
             unit: The instructional unit to validate
@@ -785,43 +866,152 @@ class LearningQualityGates:
                 severity=Severity.WARNING,
             )
         
-        # Look for practice-related content
+        target_stage = unit.target_stage
         practice_links = content.get("practice_links", [])
         practice_items = content.get("practice_items", [])
         quick_check = content.get("quick_check_question", "")
         
-        total_practice = len(practice_links) + len(practice_items) + (1 if quick_check else 0)
-        
-        if total_practice == 0:
+        if target_stage == "L1_hint":
+            # Practice optional for L1 - hint itself is the practice
             return QualityCheck(
                 check_name="practice_included",
-                passed=False,
-                score=0.0,
-                message="No practice items included",
-                severity=Severity.WARNING,
+                passed=True,
+                score=1.0,
+                message="Practice optional for L1 hint units",
+                severity=Severity.INFO,
             )
-        
-        # Check practice alignment (basic check)
-        practice_content = str(practice_links) + str(practice_items) + str(quick_check)
-        concept_keywords = unit.concept_id.replace("-", " ").lower().split()
-        
-        alignment_score = sum(1 for kw in concept_keywords if kw in practice_content.lower())
-        score = min(1.0, 0.5 + (alignment_score / max(1, len(concept_keywords))) * 0.5)
-        
-        return QualityCheck(
-            check_name="practice_included",
-            passed=True,
-            score=score,
-            message=f"Found {total_practice} practice item(s)" + (", concept alignment unclear" if score < 0.7 else ""),
-            severity=Severity.INFO,
-        )
+            
+        elif target_stage == "L2_hint_plus_example":
+            # Example required, formal practice optional
+            has_example = bool(content.get("example_sql"))
+            if has_example:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=True,
+                    score=0.9,
+                    message="Example SQL present (formal practice optional for L2)",
+                    severity=Severity.INFO,
+                )
+            else:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=False,
+                    score=0.4,
+                    message="L2 units should have an example SQL",
+                    severity=Severity.WARNING,
+                )
+                
+        elif target_stage == "L3_explanation":
+            # Practice required for L3
+            total_practice = len(practice_links) + len(practice_items) + (1 if quick_check else 0)
+            
+            if total_practice == 0:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=False,
+                    score=0.0,
+                    message="No practice items included (required for L3)",
+                    severity=Severity.WARNING,
+                )
+            
+            # Check practice alignment (basic check)
+            practice_content = str(practice_links) + str(practice_items) + str(quick_check)
+            concept_keywords = unit.concept_id.replace("-", " ").lower().split()
+            
+            alignment_score = sum(1 for kw in concept_keywords if kw in practice_content.lower())
+            score = min(1.0, 0.5 + (alignment_score / max(1, len(concept_keywords))) * 0.5)
+            
+            return QualityCheck(
+                check_name="practice_included",
+                passed=True,
+                score=score,
+                message=f"Found {total_practice} practice item(s)" + (", concept alignment unclear" if score < 0.7 else ""),
+                severity=Severity.INFO,
+            )
+            
+        elif target_stage == "L4_reflective_note":
+            # Transfer questions count as practice
+            transfer_questions = content.get("transfer_questions", [])
+            reflection_prompts = content.get("reflection_prompts", [])
+            
+            has_transfer = bool(transfer_questions)
+            
+            if has_transfer:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=True,
+                    score=0.9,
+                    message=f"Transfer questions present ({len(transfer_questions)} items)",
+                    severity=Severity.INFO,
+                )
+            elif reflection_prompts:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=True,
+                    score=0.7,
+                    message="Reflection prompts present (transfer questions recommended)",
+                    severity=Severity.INFO,
+                )
+            else:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=False,
+                    score=0.3,
+                    message="L4 units should have transfer questions or reflection prompts",
+                    severity=Severity.WARNING,
+                )
+                
+        elif target_stage == "reinforcement":
+            # Quick check required
+            has_check = bool(content.get("quick_check_question"))
+            
+            if has_check:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=True,
+                    score=1.0,
+                    message="Quick check question present",
+                    severity=Severity.INFO,
+                )
+            else:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=False,
+                    score=0.0,
+                    message="Reinforcement units require a quick check question",
+                    severity=Severity.WARNING,
+                )
+        else:
+            # Unknown stage - default to checking for any practice
+            total_practice = len(practice_links) + len(practice_items) + (1 if quick_check else 0)
+            
+            if total_practice == 0:
+                return QualityCheck(
+                    check_name="practice_included",
+                    passed=False,
+                    score=0.0,
+                    message="No practice items included",
+                    severity=Severity.WARNING,
+                )
+            
+            return QualityCheck(
+                check_name="practice_included",
+                passed=True,
+                score=0.7,
+                message=f"Found {total_practice} practice item(s)",
+                severity=Severity.INFO,
+            )
     
     def validate_takeaway_present(self, unit: InstructionalUnit) -> QualityCheck:
         """
-        Validate that a concise takeaway is present.
+        Validate that a concise takeaway is present (stage-aware).
         
-        Checks:
-        - Has concise one-sentence takeaway
+        Different stages have different takeaway requirements:
+        - L1_hint: hint_text can serve as takeaway
+        - L2_hint_plus_example: hint or pitfall can count
+        - L3_explanation: explicit takeaway or summary required
+        - L4_reflective_note: key_concept_summary required
+        - reinforcement: quick_check can satisfy minimal summary
         
         Args:
             unit: The instructional unit to validate
@@ -839,34 +1029,88 @@ class LearningQualityGates:
                 severity=Severity.WARNING,
             )
         
-        # Look for takeaway in various possible fields
-        takeaway_fields = [
-            "takeaway",
-            "key_takeaway",
-            "summary",
-            "key_concept_summary",
-            "one_sentence_summary",
-        ]
-        
+        target_stage = unit.target_stage
         takeaway = None
-        for field in takeaway_fields:
-            if field in content and content[field]:
-                takeaway = content[field]
-                break
+        takeaway_field = None
+        
+        if target_stage == "L1_hint":
+            # Hint text can serve as takeaway
+            if content.get("hint_text"):
+                takeaway = content["hint_text"]
+                takeaway_field = "hint_text"
+            elif content.get("syntax_cue"):
+                takeaway = content["syntax_cue"]
+                takeaway_field = "syntax_cue"
+                
+        elif target_stage == "L2_hint_plus_example":
+            # Hint or pitfall can count
+            if content.get("hint_text"):
+                takeaway = content["hint_text"]
+                takeaway_field = "hint_text"
+            elif content.get("common_pitfall"):
+                takeaway = content["common_pitfall"]
+                takeaway_field = "common_pitfall"
+            elif content.get("key_takeaway"):
+                takeaway = content["key_takeaway"]
+                takeaway_field = "key_takeaway"
+                
+        elif target_stage == "L3_explanation":
+            # Explicit takeaway or summary required
+            for field in ["key_takeaway", "takeaway", "summary", "one_sentence_summary"]:
+                if content.get(field):
+                    takeaway = content[field]
+                    takeaway_field = field
+                    break
+                    
+        elif target_stage == "L4_reflective_note":
+            # key_concept_summary required
+            if content.get("key_concept_summary"):
+                takeaway = content["key_concept_summary"]
+                takeaway_field = "key_concept_summary"
+            elif content.get("summary"):
+                takeaway = content["summary"]
+                takeaway_field = "summary"
+                
+        elif target_stage == "reinforcement":
+            # Quick check can satisfy minimal summary
+            if content.get("quick_check_question"):
+                takeaway = content["quick_check_question"]
+                takeaway_field = "quick_check_question"
+            elif content.get("recall_prompt"):
+                takeaway = content["recall_prompt"]
+                takeaway_field = "recall_prompt"
+        else:
+            # Unknown stage - try all standard fields
+            for field in ["takeaway", "key_takeaway", "summary", "key_concept_summary", "one_sentence_summary"]:
+                if content.get(field):
+                    takeaway = content[field]
+                    takeaway_field = field
+                    break
         
         if not takeaway:
             return QualityCheck(
                 check_name="takeaway_present",
                 passed=False,
                 score=0.0,
-                message="No takeaway found (expected fields: takeaway, key_takeaway, summary)",
+                message=f"No takeaway found for {target_stage} unit",
                 severity=Severity.WARNING,
             )
         
         takeaway_str = str(takeaway).strip()
         
-        # Check if it's one sentence (roughly)
+        # Check if it's one sentence (roughly) - but be lenient for certain fields
         sentence_count = takeaway_str.count(".") + takeaway_str.count("!") + takeaway_str.count("?")
+        
+        # L1 and reinforcement can have multi-sentence takeaways
+        if target_stage in ("L1_hint", "reinforcement"):
+            return QualityCheck(
+                check_name="takeaway_present",
+                passed=True,
+                score=1.0,
+                message=f"Takeaway present via {takeaway_field} ({len(takeaway_str)} chars)",
+                severity=Severity.INFO,
+            )
+        
         if sentence_count > 2:
             return QualityCheck(
                 check_name="takeaway_present",
@@ -880,7 +1124,7 @@ class LearningQualityGates:
             check_name="takeaway_present",
             passed=True,
             score=1.0,
-            message=f"Concise takeaway present ({len(takeaway_str)} chars)",
+            message=f"Concise takeaway present via {takeaway_field} ({len(takeaway_str)} chars)",
             severity=Severity.INFO,
         )
     
@@ -1129,12 +1373,19 @@ class LearningQualityGates:
     
     def validate_no_placeholders(self, unit: InstructionalUnit) -> QualityCheck:
         """
-        Validate that no placeholder content exists.
+        Validate that no placeholder content exists (stage-aware).
         
         Checks:
         - No "see textbook" or "content could not be extracted"
-        - No empty definitions
+        - No empty required fields (stage-dependent)
         - No placeholder examples
+        
+        Different stages have different required fields:
+        - L1_hint: requires hint_text
+        - L2_hint_plus_example: requires hint_text
+        - L3_explanation: requires definition
+        - L4_reflective_note: requires key_concept_summary
+        - reinforcement: requires recall_prompt or quick_check_question
         
         Args:
             unit: The instructional unit to validate
@@ -1144,6 +1395,7 @@ class LearningQualityGates:
         """
         content = unit.content or {}
         content_str = str(content)
+        target_stage = unit.target_stage
         
         placeholder_count = 0
         placeholder_types = []
@@ -1154,12 +1406,54 @@ class LearningQualityGates:
                 placeholder_count += len(matches)
                 placeholder_types.append(pattern[:30])
         
-        # Check for empty definitions
+        # Stage-aware check for empty required fields
         if isinstance(content, dict):
-            definition = content.get("definition", "")
-            if not definition or len(definition.strip()) < 10:
-                placeholder_count += 1
-                placeholder_types.append("empty/missing definition")
+            if target_stage == "L3_explanation":
+                # L3 requires definition
+                definition = content.get("definition", "")
+                if not definition or len(definition.strip()) < 20:
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing definition")
+                    
+            elif target_stage == "L1_hint":
+                # L1 requires hint_text
+                hint = content.get("hint_text", "")
+                if not hint or len(hint.strip()) < 10:
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing hint")
+                    
+            elif target_stage == "L2_hint_plus_example":
+                # L2 requires hint_text
+                hint = content.get("hint_text", "")
+                if not hint or len(hint.strip()) < 10:
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing hint")
+                    # Also check for example if present but empty
+                    example = content.get("example_sql", "")
+                    if example and len(example.strip()) < 5:
+                        placeholder_count += 1
+                        placeholder_types.append("empty example_sql")
+                        
+            elif target_stage == "L4_reflective_note":
+                # L4 requires key_concept_summary
+                summary = content.get("key_concept_summary", "")
+                if not summary or len(summary.strip()) < 10:
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing key_concept_summary")
+                    
+            elif target_stage == "reinforcement":
+                # Reinforcement requires recall or quick check
+                recall = content.get("recall_prompt", "")
+                check = content.get("quick_check_question", "")
+                if (not recall or len(recall.strip()) < 10) and (not check or len(check.strip()) < 10):
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing recall or quick check")
+            else:
+                # Unknown stage - check definition as default
+                definition = content.get("definition", "")
+                if not definition or len(definition.strip()) < 10:
+                    placeholder_count += 1
+                    placeholder_types.append("empty/missing definition")
         
         if placeholder_count > 0:
             score = max(0.0, 1.0 - (placeholder_count * 0.2))

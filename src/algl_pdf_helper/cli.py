@@ -1169,9 +1169,9 @@ try:
             help="Document ID (auto-generated if not provided)",
         ),
         llm_provider: str = typer.Option(
-            "kimi",
+            "ollama",
             "--llm-provider",
-            help="LLM provider: kimi, openai, or ollama",
+            help="LLM provider: ollama (default), kimi, or openai. Note: only ollama is currently implemented.",
         ),
         llm_model: str | None = typer.Option(
             None,

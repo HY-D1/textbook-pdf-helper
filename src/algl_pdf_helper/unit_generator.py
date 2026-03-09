@@ -1243,13 +1243,25 @@ class UnitGenerator:
             if not mistakes:
                 mistakes = self._get_default_misconceptions(concept_id)
             
-            # Build practice links as canonical PracticeLink objects
-            practice_links = [
-                PracticeLink(
-                    concept_id=concept_id,
-                    problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
-                )
-            ]
+            # Build practice links - check for real problems first
+            real_problems = self._lookup_real_problems(concept_id)
+            if real_problems:
+                practice_links = [
+                    PracticeLink(
+                        concept_id=concept_id,
+                        problem_ids=real_problems,
+                        needs_resolution=False,
+                    )
+                ]
+            else:
+                # Use unresolved placeholder to indicate these need resolution
+                practice_links = [
+                    PracticeLink(
+                        concept_id=concept_id,
+                        problem_ids=[f"unresolved-{concept_id}"],
+                        needs_resolution=True,  # Mark as needing resolution
+                    )
+                ]
             
             # Get learning objectives from ontology (preferred over LLM generation)
             learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
@@ -1686,6 +1698,250 @@ class UnitGenerator:
                     "page": block.page_number,
                 })
         return examples
+
+    def _extract_definition_sentence(self, blocks: list[ContentBlock]) -> str | None:
+        """
+        Extract the best definitional sentence from evidence spans.
+        
+        Looks for sentences containing definitional patterns like:
+        - "X is ..."
+        - "X means ..."
+        - "X refers to ..."
+        - "X allows you to ..."
+        
+        Returns the best matching sentence or None if no good match found.
+        """
+        definitional_patterns = [
+            r'\bis\s+(?:a|an|the)\s+',
+            r'\bmeans\s+',
+            r'\brefers\s+to\s+',
+            r'\ballows?\s+(?:you\s+)?to\s+',
+            r'\bdefines?\s+(?:a|an|the)?\s*',
+            r'\bis\s+used\s+(?:for|to)\s+',
+            r'\bprovides\s+(?:a|an)\s+way\s+to\s+',
+            r'\benables?\s+',
+        ]
+        
+        candidates = []
+        
+        for block in blocks:
+            if not block.text_content:
+                continue
+                
+            # Prioritize explanatory prose and glossary blocks
+            is_explanatory = (
+                hasattr(block, 'block_type') and 
+                block.block_type in (BlockType.EXPLANATORY_PROSE, BlockType.GLOSSARY)
+            )
+            
+            text = block.text_content.strip()
+            # Split into sentences (simple heuristic)
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                # Skip sentences that are too short or too long
+                if len(sentence) < 30 or len(sentence) > 300:
+                    continue
+                    
+                # Check for definitional patterns
+                score = 0
+                sentence_lower = sentence.lower()
+                
+                for pattern in definitional_patterns:
+                    if re.search(pattern, sentence_lower):
+                        score += 2
+                
+                # Bonus for explanatory blocks
+                if is_explanatory:
+                    score += 1
+                    
+                # Bonus for sentences starting with uppercase (likely complete sentences)
+                if sentence[0].isupper():
+                    score += 0.5
+                    
+                # Penalty for sentences with too many SQL keywords (likely example code)
+                sql_keywords = ['select', 'from', 'where', 'join', 'group by']
+                sql_count = sum(1 for kw in sql_keywords if kw in sentence_lower)
+                if sql_count >= 2:
+                    score -= 3
+                    
+                if score > 0:
+                    candidates.append((sentence, score))
+        
+        if not candidates:
+            return None
+            
+        # Sort by score descending, then by length (prefer medium-length definitions)
+        candidates.sort(key=lambda x: (x[1], -abs(len(x[0]) - 150)), reverse=True)
+        return candidates[0][0]
+
+    def _extract_why_it_matters(self, blocks: list[ContentBlock]) -> str | None:
+        """
+        Extract 'why it matters' content from evidence spans.
+        
+        Looks for:
+        - Consequence sentences ("This enables...", "Without this...")
+        - Use-case mentions ("commonly used for...", "essential when...")
+        - Benefit statements ("allows you to...", "helps...")
+        
+        Returns the best matching content or None if no good match found.
+        """
+        why_patterns = [
+            (r'\bthis\s+(?:enables?|allows?|permits?|makes\s+possible)\s+', 3),
+            (r'\bwithout\s+this\s*[,;]?\s*\w+', 3),
+            (r'\bcommonly\s+(?:used|applied)\s+(?:for|when|in)\s+', 3),
+            (r'\bessential\s+(?:when|for|to)\s+', 3),
+            (r'\bimportant\s+(?:when|for|to)\s+', 2),
+            (r'\ballows?\s+(?:you\s+)?to\s+', 2),
+            (r'\bhelps?\s+(?:you\s+)?(?:to\s+)?\w+', 2),
+            (r'\buseful\s+(?:when|for)\s+', 2),
+            (r'\bnecessary\s+(?:when|for)\s+', 2),
+            (r'\brequired\s+(?:when|for|to)\s+', 2),
+            (r'\bvaluable\s+(?:when|for)\s+', 1),
+            (r'\bsignificant\s+(?:when|for)\s+', 1),
+        ]
+        
+        candidates = []
+        
+        for block in blocks:
+            if not block.text_content:
+                continue
+                
+            text = block.text_content.strip()
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                # Skip sentences that are too short or too long
+                if len(sentence) < 25 or len(sentence) > 250:
+                    continue
+                    
+                # Check for why-it-matters patterns
+                score = 0
+                sentence_lower = sentence.lower()
+                
+                for pattern, weight in why_patterns:
+                    if re.search(pattern, sentence_lower):
+                        score += weight
+                
+                # Bonus for sentences starting with uppercase
+                if sentence and sentence[0].isupper():
+                    score += 0.5
+                    
+                # Penalty for code-heavy sentences
+                sql_keywords = ['select', 'from', 'where', 'join']
+                sql_count = sum(1 for kw in sql_keywords if kw in sentence_lower)
+                if sql_count >= 2:
+                    score -= 2
+                    
+                if score > 0:
+                    candidates.append((sentence, score))
+        
+        if not candidates:
+            return None
+            
+        # Sort by score descending
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
+
+    def _extract_sql_from_code_blocks(self, blocks: list[ContentBlock]) -> list[dict]:
+        """
+        Aggressively extract SQL from code blocks in evidence.
+        
+        Returns a list of dicts with sql, explanation (nearby text), and page.
+        """
+        examples = []
+        
+        for i, block in enumerate(blocks):
+            if not block.text_content:
+                continue
+                
+            # Check if this is a code block
+            is_code_block = (
+                hasattr(block, 'block_type') and 
+                block.block_type == BlockType.SQL_CODE
+            )
+            
+            text = block.text_content
+            
+            # If it's explicitly a code block, extract all SQL statements
+            if is_code_block:
+                # Find all SQL statements (using finditer to get full match, not just group)
+                sql_pattern = r"(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\s+.+?;"
+                matches = re.finditer(sql_pattern, text, re.IGNORECASE | re.DOTALL)
+                
+                for match in matches:
+                    sql = match.group(0).strip()
+                    if len(sql) < 10:  # Too short to be valid SQL
+                        continue
+                        
+                    # Look for nearby explanatory text (previous block)
+                    explanation = ""
+                    if i > 0:
+                        prev_block = blocks[i - 1]
+                        if hasattr(prev_block, 'block_type') and prev_block.block_type == BlockType.EXPLANATORY_PROSE:
+                            explanation = prev_block.text_content[:200] if prev_block.text_content else ""
+                    
+                    examples.append({
+                        "sql": sql,
+                        "page": block.page_number,
+                        "explanation": explanation,
+                        "from_source": True,
+                    })
+            else:
+                # Even for non-code blocks, try to find SQL patterns
+                # Look for SQL within the text
+                sql_pattern = r"(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\s+.+?;"
+                matches = re.finditer(sql_pattern, text, re.IGNORECASE | re.DOTALL)
+                
+                for match in matches:
+                    sql = match.group(0).strip()
+                    if len(sql) < 10 or len(sql) > 500:  # Skip too short or too long
+                        continue
+                        
+                    # Only include if it looks like a complete example
+                    if sql.upper().startswith(('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE')):
+                        examples.append({
+                            "sql": sql,
+                            "page": block.page_number,
+                            "explanation": "",
+                            "from_source": True,
+                        })
+        
+        return examples
+
+    def _create_synthetic_sql_examples(self, concept_id: str, count: int = 2) -> list[dict]:
+        """
+        Create synthetic SQL examples for a concept.
+        
+        These are clearly marked as synthetic in the metadata.
+        """
+        examples = []
+        
+        # Get default SQL and create variations
+        base_sql = self._get_default_example_sql(concept_id)
+        
+        for i in range(min(count, 2)):
+            examples.append({
+                "sql": base_sql,
+                "page": 0,  # Indicates synthetic
+                "explanation": f"Synthetic example for {concept_id} (no source SQL available)",
+                "from_source": False,
+                "is_synthetic": True,
+            })
+        
+        return examples
+
+    def _lookup_real_problems(self, concept_id: str) -> list[str] | None:
+        """
+        Look up real problem IDs for a concept.
+        
+        Returns a list of problem IDs if found, or None if no mapping exists.
+        """
+        # This could be extended to query a problem database or mapping file
+        # For now, return None to indicate no real problems are mapped
+        return None
     
     def _get_page_references_str(self, blocks: list[ContentBlock]) -> str:
         """Get page references from blocks as a string."""
@@ -1813,27 +2069,32 @@ class UnitGenerator:
         blocks: list[ContentBlock],
     ) -> L3Content:
         """Build L3 explanation content grounded in evidence spans (no-LLM path)."""
-        # Get ontology info
+        # Get ontology info (for fallback use)
         ontology = self._get_ontology_info(concept_id)
         
-        # Build definition
-        if ontology.get("definition"):
-            definition = ontology["definition"]
-        else:
-            first_sentence = self._get_first_sentence_from_blocks(blocks)
-            definition = first_sentence if first_sentence else self._get_default_definition(concept_id)
+        # Build definition: Try to extract from text first, then ontology, then default
+        definition = self._extract_definition_sentence(blocks)
+        if not definition:
+            if ontology.get("definition"):
+                definition = ontology["definition"]
+            else:
+                first_sentence = self._get_first_sentence_from_blocks(blocks)
+                definition = first_sentence if first_sentence else self._get_default_definition(concept_id)
         
-        # Build why it matters
-        if ontology.get("use_when"):
-            why_it_matters = f"Use this when {ontology['use_when']}"
-        else:
-            why_it_matters = "Important for effective SQL querying."
+        # Build why it matters: Try to extract from text first, then ontology, then default
+        why_it_matters = self._extract_why_it_matters(blocks)
+        if not why_it_matters:
+            if ontology.get("use_when"):
+                why_it_matters = f"Use this when {ontology['use_when']}"
+            else:
+                why_it_matters = "Important for effective SQL querying."
         
         # Get learning objectives from ontology
         learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
         
-        # Build examples from extracted SQL or defaults
-        sql_examples = self._extract_sql_examples_from_blocks(blocks)
+        # Build examples: Aggressively extract real SQL from code blocks
+        # Only use synthetic examples if no source-linked SQL exists
+        sql_examples = self._extract_sql_from_code_blocks(blocks)
         examples: list[SQLExample] = []
         
         if sql_examples:
@@ -1842,15 +2103,27 @@ class UnitGenerator:
                     ex["sql"], ["Sailors", "Boats", "Reserves"]
                 )
                 examples.append(SQLExample(
-                    title=f"Example {i+1} (page {ex['page']})",
-                    scenario=f"From textbook page {ex['page']}",
+                    title=f"Example {i+1} (page {ex['page']})" if ex.get('page') else f"Example {i+1}",
+                    scenario=ex.get('explanation', f"From textbook page {ex['page']}") if ex.get('page') else "Source-based example",
                     sql=sql,
-                    explanation=f"Example extracted from page {ex['page']}.",
+                    explanation=ex.get('explanation', f"Example extracted from page {ex['page']}.") if ex.get('page') else "Example from source material.",
                     expected_output="Returns matching rows",
+                    schema_used="source",  # Mark as from source
                 ))
         
+        # If no real examples found, use synthetic examples marked explicitly
         if not examples:
-            examples = self._get_default_sql_examples(concept_id)
+            synthetic_examples = self._create_synthetic_sql_examples(concept_id, count=2)
+            for ex in synthetic_examples:
+                examples.append(SQLExample(
+                    title=f"Example (synthetic)",
+                    scenario=f"Practice example for {concept_id}",
+                    sql=ex["sql"],
+                    explanation=f"{ex['explanation']} [Note: This is a generated example. Verify with instructor.]",
+                    expected_output="Returns matching rows",
+                    schema_used="practice",
+                    is_synthetic=True,  # Mark as explicitly synthetic
+                ))
         
         # Build common mistakes from ontology or defaults
         mistakes: list[MisconceptionExample] = []
@@ -1869,13 +2142,25 @@ class UnitGenerator:
         if not mistakes:
             mistakes = self._get_default_misconceptions(concept_id)
         
-        # Practice links
-        practice_links = [
-            PracticeLink(
-                concept_id=concept_id,
-                problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
-            )
-        ]
+        # Practice links: Check for real problems, otherwise use unresolved placeholder
+        real_problems = self._lookup_real_problems(concept_id)
+        if real_problems:
+            practice_links = [
+                PracticeLink(
+                    concept_id=concept_id,
+                    problem_ids=real_problems,
+                    needs_resolution=False,
+                )
+            ]
+        else:
+            # Use unresolved placeholder with metadata flag so it can be filtered in production
+            practice_links = [
+                PracticeLink(
+                    concept_id=concept_id,
+                    problem_ids=[f"unresolved-{concept_id}"],
+                    needs_resolution=True,  # Explicitly mark as needing resolution
+                )
+            ]
         
         return L3Content(
             definition=definition[:1000],

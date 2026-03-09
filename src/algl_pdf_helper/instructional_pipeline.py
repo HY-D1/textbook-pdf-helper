@@ -495,6 +495,9 @@ class InstructionalPipeline:
         
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
+        
+        # Control whether to log detailed filter results (set to True when CLI handles output)
+        self._quiet_filter_logging = False
     
     def run(self) -> PipelineResult:
         """
@@ -1054,24 +1057,21 @@ class InstructionalPipeline:
         )
         return self._validation_results
     
-    def _run_quality_gates(self, units: list[InstructionalUnit] | None = None) -> dict:
+    def _gather_quality_report(self, units: list[InstructionalUnit]) -> dict:
         """
-        Stage 9: Run learning quality gates on all content.
+        Generate a quality report for the given units.
         
-        Validates content for learning utility, not just format compliance.
+        This helper method runs quality gates on any set of units and
+        returns a complete quality report dictionary.
         
         Args:
-            units: Optional list of units (uses generated units if None)
+            units: List of units to check
             
         Returns:
             Quality report dictionary
         """
-        self._logger.info("Stage 9: Running quality gates")
-        
-        if units is None:
-            units = self._instructional_units
-        
-        self._quality_gates = LearningQualityGates(ontology=self._ontology)
+        if self._quality_gates is None:
+            self._quality_gates = LearningQualityGates(ontology=self._ontology)
         
         checks_by_unit = {}
         total_score = 0.0
@@ -1114,7 +1114,7 @@ class InstructionalPipeline:
         overall_score = total_score / len(units) if units else 0.0
         passed = overall_score >= self.config.min_quality_score
         
-        self._quality_report = {
+        return {
             "summary": {
                 "total_units_checked": len(units),
                 "overall_score": overall_score,
@@ -1124,7 +1124,61 @@ class InstructionalPipeline:
             "checks_by_unit": checks_by_unit,
             "recommendations": self._generate_recommendations(checks_by_unit),
         }
+    
+    def _save_quality_report(self, report: dict, filename: str) -> Path:
+        """
+        Save a quality report to the output directory.
         
+        Args:
+            report: Quality report dictionary
+            filename: Name of the file to save (e.g., "quality_report_generated.json")
+            
+        Returns:
+            Path to the saved file
+        """
+        # Enhance report with timestamp and version
+        enhanced_report = {
+            "version": "1.0.0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            **report,
+        }
+        
+        filepath = self.config.output_dir / filename
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        
+        import json
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(enhanced_report, f, indent=2)
+        
+        self._logger.info(f"Saved quality report: {filepath}")
+        return filepath
+    
+    def _run_quality_gates(self, units: list[InstructionalUnit] | None = None) -> dict:
+        """
+        Stage 9: Run learning quality gates on all content.
+        
+        Validates content for learning utility, not just format compliance.
+        Generates a pre-filter quality report for all generated units.
+        
+        Args:
+            units: Optional list of units (uses generated units if None)
+            
+        Returns:
+            Quality report dictionary (for generated units)
+        """
+        self._logger.info("Stage 9: Running quality gates")
+        
+        if units is None:
+            units = self._instructional_units
+        
+        # Generate pre-filter quality report for all generated units
+        self._quality_report = self._gather_quality_report(units)
+        
+        # Save as pre-filter report
+        self._save_quality_report(self._quality_report, "quality_report_generated.json")
+        
+        overall_score = self._quality_report["summary"]["overall_score"]
+        passed = self._quality_report["summary"]["passed"]
         self._logger.info(f"Quality gates: overall score {overall_score:.2f}, passed: {passed}")
         return self._quality_report
     
@@ -1225,18 +1279,19 @@ class InstructionalPipeline:
                 error_msg += f"  ... and {len(rejected) - 5} more\n"
             raise RuntimeError(error_msg)
         
-        # Log filter results
-        if filter_result.filtered_units:
-            self._logger.warning(
-                f"Filtered {len(filter_result.filtered_units)} units "
-                f"({filter_result.pass_rate:.1%} pass rate)"
-            )
-            for unit_id in filter_result.filtered_units[:5]:
-                self._logger.warning(f"  Filtered: {unit_id}")
-            if len(filter_result.filtered_units) > 5:
-                self._logger.warning(f"  ... and {len(filter_result.filtered_units) - 5} more")
-        else:
-            self._logger.info("All units passed export filters")
+        # Log filter results (skip detailed logging if CLI handles output)
+        if not self._quiet_filter_logging:
+            if filter_result.filtered_units:
+                self._logger.warning(
+                    f"Filtered {len(filter_result.filtered_units)} units "
+                    f"({filter_result.pass_rate:.1%} pass rate)"
+                )
+                for unit_id in filter_result.filtered_units[:5]:
+                    self._logger.warning(f"  Filtered: {unit_id}")
+                if len(filter_result.filtered_units) > 5:
+                    self._logger.warning(f"  ... and {len(filter_result.filtered_units) - 5} more")
+            else:
+                self._logger.info("All units passed export filters")
         
         # Build concept graph from actually mapped concepts
         concept_graph = self._build_concept_graph(filtered_library)
@@ -1246,10 +1301,19 @@ class InstructionalPipeline:
         filtered_out_count = len(filter_result.filtered_units)
         exported_count = len(filtered_library.instructional_units)
         
+        # Generate post-filter quality report for exported units
+        self._logger.info("Generating post-filter quality report for exported units")
+        post_filter_report = self._gather_quality_report(filtered_library.instructional_units)
+        self._save_quality_report(post_filter_report, "quality_report_exported.json")
+        
+        # Store both quality reports for the exporter
+        self._post_filter_quality_report = post_filter_report
+        
         # Update the filtered library with remaining metadata
         filtered_library.concept_ontology = {"version": "1.0.0"}
         filtered_library.concept_graph = concept_graph
-        filtered_library.quality_report = self._quality_report
+        # Use post-filter report as the primary quality report (represents what's actually exported)
+        filtered_library.quality_report = post_filter_report
         if not filtered_library.export_manifest:
             filtered_library.export_manifest = {}
         filtered_library.export_manifest.update({
@@ -1267,6 +1331,12 @@ class InstructionalPipeline:
             "exported_units": exported_count,
             "fallback_units": len(getattr(self, '_fallback_unit_ids', [])),
             "filter_level": self.config.filter_level,
+        }
+        
+        # Store quality report paths for exporter
+        filtered_library.export_manifest["quality_reports"] = {
+            "generated": "quality_report_generated.json",
+            "exported": "quality_report_exported.json",
         }
         
         # Store filtered library and stats for _gather_statistics()

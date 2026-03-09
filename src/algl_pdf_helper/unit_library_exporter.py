@@ -839,12 +839,12 @@ class UnitLibraryExporter:
         # Get quality pass rate from report
         quality_report = library.quality_report
         summary = quality_report.get("summary", {})
-        pass_rate = summary.get("pass_rate", 0.0)
+        quality_pass_rate = summary.get("pass_rate", 0.0)
         
         # Build validation results
         validation_results = {
             "graph_integrity_errors": library.validate_graph_integrity(),
-            "quality_pass_rate": pass_rate,
+            "quality_pass_rate": quality_pass_rate,
             "total_units": len(library.instructional_units),
             "total_misconceptions": len(library.misconception_bank),
             "total_reinforcement": len(library.reinforcement_bank),
@@ -857,14 +857,14 @@ class UnitLibraryExporter:
         exported_units = stats.get("exported_units", len(library.instructional_units))
         fallback_units = stats.get("fallback_units", 0)
         filter_level = stats.get("filter_level", config.filter_level.value)
-        pass_rate = exported_units / max(generated_units, 1)
+        export_filter_pass_rate = exported_units / max(generated_units, 1)
         
         # Build filter results with real counts
         filter_results = {
             "filter_level": filter_level,
             "original_units": generated_units,
             "filtered_units": filtered_out,
-            "pass_rate": pass_rate,
+            "pass_rate": export_filter_pass_rate,
         }
         
         # Build provenance
@@ -879,6 +879,28 @@ class UnitLibraryExporter:
         if config.include_provenance:
             provenance["library_generated_at"] = library.generated_at
         
+        # Check for quality report paths from pipeline
+        quality_reports = library.export_manifest.get("quality_reports", {})
+        
+        # Build files section with both quality reports if available
+        files_section = {
+            "concept_ontology": self.ONTOLOGY_FILE,
+            "concept_graph": self.GRAPH_FILE,
+            "source_spans": self.SOURCE_SPANS_FILE,
+            "instructional_units": self.UNITS_FILE,
+            "misconception_bank": self.MISCONCEPTIONS_FILE,
+            "reinforcement_bank": self.REINFORCEMENT_FILE,
+            "example_bank": self.EXAMPLES_FILE,
+            "practice_links": self.PRACTICE_LINKS_FILE,
+            "quality_report": self.QUALITY_REPORT_FILE,
+            "manifest": self.MANIFEST_FILE,
+        }
+        
+        # Add both quality reports if available from pipeline
+        if quality_reports:
+            files_section["quality_report_generated"] = quality_reports.get("generated")
+            files_section["quality_report_exported"] = quality_reports.get("exported")
+        
         manifest = {
             "export_version": config.format_version,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -891,25 +913,19 @@ class UnitLibraryExporter:
                 "fallback_units": fallback_units,
                 "concepts_covered": len(units_per_concept),
                 "units_per_concept": dict(units_per_concept),
-                "quality_pass_rate": pass_rate,
+                "export_filter_pass_rate": export_filter_pass_rate,
+                "quality_gate_pass_rate": quality_pass_rate,
                 "total_misconceptions": len(library.misconception_bank),
                 "total_reinforcement": len(library.reinforcement_bank),
             },
             "provenance": provenance,
             "validation_results": validation_results,
             "filter_results": filter_results,
-            "files": {
-                "concept_ontology": self.ONTOLOGY_FILE,
-                "concept_graph": self.GRAPH_FILE,
-                "source_spans": self.SOURCE_SPANS_FILE,
-                "instructional_units": self.UNITS_FILE,
-                "misconception_bank": self.MISCONCEPTIONS_FILE,
-                "reinforcement_bank": self.REINFORCEMENT_FILE,
-                "example_bank": self.EXAMPLES_FILE,
-                "practice_links": self.PRACTICE_LINKS_FILE,
-                "quality_report": self.QUALITY_REPORT_FILE,
-                "manifest": self.MANIFEST_FILE,
+            "quality_reports": quality_reports if quality_reports else {
+                "generated": None,
+                "exported": self.QUALITY_REPORT_FILE,
             },
+            "files": files_section,
         }
         
         filepath = output_dir / self.MANIFEST_FILE
