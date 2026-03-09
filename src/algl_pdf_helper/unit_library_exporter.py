@@ -56,6 +56,13 @@ from .instructional_models import (
     SQLExample,
     UnitLibraryExport,
 )
+from .pedagogy_models import (
+    ChapterGraphEntry,
+    ExerciseBankEntry,
+    ExampleBankEntry,
+    NavigationIndex,
+    PedagogyManifest,
+)
 from .sql_ontology import ConceptOntology, SQL_CONCEPTS, PREREQUISITE_DAG
 
 
@@ -268,10 +275,39 @@ class UnitLibraryExporter:
     QUALITY_REPORT_FILE = "quality_report.json"
     MANIFEST_FILE = "export_manifest.json"
     
+    # Pedagogy export files (new)
+    CHAPTER_GRAPH_FILE = "chapter_graph.json"
+    EXERCISE_BANK_FILE = "exercise_bank.jsonl"
+    PEDAGOGY_MANIFEST_FILE = "pedagogy_manifest.json"
+    
     def __init__(self):
         """Initialize the exporter."""
         self._ontology = ConceptOntology()
         self._logger = logging.getLogger(__name__)
+        self._pedagogy_data: dict[str, Any] | None = None
+    
+    def set_pedagogy_data(
+        self,
+        chapters: list[Any] | None = None,
+        exercises: list[Any] | None = None,
+        examples: list[Any] | None = None,
+        navigation: NavigationIndex | None = None,
+    ) -> None:
+        """
+        Set pedagogy data for inclusion in export.
+        
+        Args:
+            chapters: List of ChapterInfo objects
+            exercises: List of ExerciseInfo objects
+            examples: List of ExampleInfo objects (textbook examples, not SQL examples)
+            navigation: NavigationIndex for cross-referencing
+        """
+        self._pedagogy_data = {
+            "chapters": chapters or [],
+            "exercises": exercises or [],
+            "examples": examples or [],
+            "navigation": navigation,
+        }
     
     def export(
         self,
@@ -352,6 +388,10 @@ class UnitLibraryExporter:
         self._write_export_manifest(
             filtered_library, config, config.output_dir
         )
+        
+        # Write pedagogy exports if data available
+        if self._pedagogy_data:
+            self._write_pedagogy_exports(config.output_dir)
         
         return config.output_dir
     
@@ -906,6 +946,12 @@ class UnitLibraryExporter:
             "manifest": self.MANIFEST_FILE,
         }
         
+        # Add pedagogy files if available
+        if self._pedagogy_data:
+            files_section["chapter_graph"] = self.CHAPTER_GRAPH_FILE
+            files_section["exercise_bank"] = self.EXERCISE_BANK_FILE
+            files_section["pedagogy_manifest"] = self.PEDAGOGY_MANIFEST_FILE
+        
         # Add both quality reports if available from pipeline
         if quality_reports:
             files_section["quality_report_generated"] = quality_reports.get("generated")
@@ -942,6 +988,193 @@ class UnitLibraryExporter:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
+
+    # -------------------------------------------------------------------------
+    # Pedagogy Export Methods (New)
+    # -------------------------------------------------------------------------
+    
+    def _write_pedagogy_exports(self, output_dir: Path) -> None:
+        """
+        Write all pedagogy export files.
+        
+        Creates:
+        - chapter_graph.json: Chapter structure and organization
+        - exercise_bank.jsonl: End-of-chapter exercises
+        - pedagogy_manifest.json: Complete pedagogy metadata
+        """
+        if not self._pedagogy_data:
+            return
+        
+        self._logger.info("Writing pedagogy exports...")
+        
+        # Write chapter graph
+        self._write_chapter_graph(output_dir)
+        
+        # Write exercise bank
+        self._write_exercise_bank(output_dir)
+        
+        # Write pedagogy manifest
+        self._write_pedagogy_manifest(output_dir)
+        
+        self._logger.info("Pedagogy exports complete")
+    
+    def _write_chapter_graph(self, output_dir: Path) -> None:
+        """Write chapter_graph.json with textbook structure."""
+        if not self._pedagogy_data or not self._pedagogy_data.get("chapters"):
+            return
+        
+        chapters = self._pedagogy_data["chapters"]
+        
+        # Convert to export format
+        entries = []
+        for chapter in chapters:
+            if hasattr(chapter, 'to_dict'):
+                chapter_dict = chapter.to_dict()
+            else:
+                chapter_dict = chapter
+            
+            # Extract topic data
+            topics = []
+            for topic in chapter_dict.get("topics", []):
+                if hasattr(topic, 'to_dict'):
+                    topic_dict = topic.to_dict()
+                else:
+                    topic_dict = topic
+                topics.append({
+                    "topic_id": topic_dict.get("topic_id", ""),
+                    "title": topic_dict.get("title", ""),
+                    "concepts": topic_dict.get("concept_ids", []),
+                    "subsection_ids": topic_dict.get("subsection_ids", []),
+                })
+            
+            entry = ChapterGraphEntry(
+                chapter_number=chapter_dict.get("chapter_number", 0),
+                title=chapter_dict.get("chapter_title", ""),
+                page_range=list(chapter_dict.get("page_range", [0, 0])),
+                topics=topics,
+                exercises=chapter_dict.get("exercises", []),
+                path_type=chapter_dict.get("path_type", "general"),
+                objectives=chapter_dict.get("objectives", []),
+            )
+            entries.append(entry.model_dump())
+        
+        output = {
+            "version": "1.0.0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "chapters": entries,
+            "metadata": {
+                "total_chapters": len(entries),
+                "path_types": list(set(
+                    e.get("path_type", "general") for e in entries
+                )),
+            },
+        }
+        
+        filepath = output_dir / self.CHAPTER_GRAPH_FILE
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2)
+        
+        self._logger.info(f"Wrote chapter graph: {len(entries)} chapters")
+    
+    def _write_exercise_bank(self, output_dir: Path) -> None:
+        """Write exercise_bank.jsonl with end-of-chapter exercises."""
+        if not self._pedagogy_data or not self._pedagogy_data.get("exercises"):
+            return
+        
+        exercises = self._pedagogy_data["exercises"]
+        
+        filepath = output_dir / self.EXERCISE_BANK_FILE
+        with open(filepath, "w", encoding="utf-8") as f:
+            for exercise in exercises:
+                if hasattr(exercise, 'to_dict'):
+                    ex_dict = exercise.to_dict()
+                else:
+                    ex_dict = exercise
+                
+                entry = ExerciseBankEntry(
+                    exercise_id=ex_dict.get("exercise_id", ""),
+                    chapter=ex_dict.get("chapter", 0),
+                    exercise_number=ex_dict.get("exercise_number", 0),
+                    problem=ex_dict.get("problem", ""),
+                    solution=ex_dict.get("solution"),
+                    concepts=ex_dict.get("concepts", []),
+                    difficulty=ex_dict.get("difficulty", "beginner"),
+                    exercise_type=ex_dict.get("exercise_type", "coding"),
+                    page=ex_dict.get("page"),
+                )
+                f.write(json.dumps(entry.model_dump(), ensure_ascii=False) + "\n")
+        
+        self._logger.info(f"Wrote exercise bank: {len(exercises)} exercises")
+    
+    def _write_pedagogy_manifest(self, output_dir: Path) -> None:
+        """Write pedagogy_manifest.json with complete structure metadata."""
+        if not self._pedagogy_data:
+            return
+        
+        chapters = self._pedagogy_data.get("chapters", [])
+        exercises = self._pedagogy_data.get("exercises", [])
+        examples = self._pedagogy_data.get("examples", [])
+        navigation = self._pedagogy_data.get("navigation")
+        
+        # Count path types
+        dev_concepts = set()
+        admin_concepts = set()
+        design_concepts = set()
+        
+        for chapter in chapters:
+            if hasattr(chapter, 'to_dict'):
+                chapter_dict = chapter.to_dict()
+            else:
+                chapter_dict = chapter
+            
+            path_type = chapter_dict.get("path_type", "general")
+            chapter_concepts = set()
+            
+            for topic in chapter_dict.get("topics", []):
+                if hasattr(topic, 'to_dict'):
+                    topic_dict = topic.to_dict()
+                else:
+                    topic_dict = topic
+                chapter_concepts.update(topic_dict.get("concept_ids", []))
+            
+            if path_type == "developer":
+                dev_concepts.update(chapter_concepts)
+            elif path_type == "admin":
+                admin_concepts.update(chapter_concepts)
+            elif path_type == "design":
+                design_concepts.update(chapter_concepts)
+        
+        # Detect paired-page format
+        paired_count = sum(
+            1 for e in examples
+            if hasattr(e, 'is_paired_format') and e.is_paired_format
+        )
+        paired_detected = paired_count > 0
+        
+        manifest = PedagogyManifest(
+            source_doc_id=self._pedagogy_data.get("doc_id", "unknown"),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            total_chapters=len(chapters),
+            total_exercises=len(exercises),
+            total_examples=len(examples),
+            developer_path_concepts=list(dev_concepts),
+            admin_path_concepts=list(admin_concepts),
+            design_path_concepts=list(design_concepts),
+            paired_page_format_detected=paired_detected,
+            paired_examples_count=paired_count,
+            navigation=navigation or NavigationIndex(),
+        )
+        
+        filepath = output_dir / self.PEDAGOGY_MANIFEST_FILE
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(manifest.model_dump(), f, indent=2)
+        
+        self._logger.info(
+            f"Wrote pedagogy manifest: "
+            f"{len(chapters)} chapters, "
+            f"{len(exercises)} exercises, "
+            f"{len(examples)} examples"
+        )
 
 # =============================================================================
 # Import/Load Utilities
@@ -1374,6 +1607,9 @@ def validate_export_directory(output_dir: Path) -> dict[str, Any]:
         exporter.EXAMPLES_FILE,
         exporter.PRACTICE_LINKS_FILE,
         exporter.QUALITY_REPORT_FILE,
+        exporter.CHAPTER_GRAPH_FILE,
+        exporter.EXERCISE_BANK_FILE,
+        exporter.PEDAGOGY_MANIFEST_FILE,
     ]
     
     results = {
