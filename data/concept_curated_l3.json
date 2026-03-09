@@ -1,297 +1,842 @@
 {
-  "correlated-subquery": {
-    "definition": "A correlated subquery is a subquery that references columns from the outer query, executing once for each row in the outer query to enable row-by-row comparisons.",
-    "why_it_matters": "Correlated subqueries solve problems that are difficult or impossible with joins alone, like finding rows that exceed their group's average or comparing rows to aggregate values within the same context. They're essential for per-group filtering and complex analytical queries.",
-    "examples": [
-      {
-        "sql": "SELECT e.name, e.salary FROM employees e WHERE e.salary > (SELECT AVG(salary) FROM employees WHERE department = e.department);",
-        "explanation": "Find employees earning above their department average",
-        "scenario": "Identifying top performers within each team"
-      },
-      {
-        "sql": "SELECT c.name FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.total > 1000);",
-        "explanation": "Find customers who have placed at least one high-value order",
-        "scenario": "Targeting high-value customer segments"
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Confusing correlated vs non-correlated subqueries",
-        "error_sql": "SELECT * FROM products WHERE price > (SELECT AVG(price) FROM products);",
-        "fix_sql": "SELECT * FROM products p WHERE price > (SELECT AVG(price) FROM products WHERE category = p.category);",
-        "key_takeaway": "Correlated subqueries reference outer table columns; they execute once per outer row"
-      },
-      {
-        "title": "Using IN instead of EXISTS for existence checks",
-        "error_sql": "SELECT * FROM employees e WHERE e.id IN (SELECT manager_id FROM employees WHERE manager_id = e.id);",
-        "fix_sql": "SELECT * FROM employees e WHERE EXISTS (SELECT 1 FROM employees WHERE manager_id = e.id);",
-        "key_takeaway": "EXISTS is more efficient than IN for correlated existence checks and better conveys intent"
-      }
-    ],
-    "reflection_prompts": [
-      "When is a correlated subquery better than a JOIN?",
-      "Why are correlated subqueries typically slower than joins, and when might this trade-off be acceptable?",
-      "How does EXISTS differ from IN when used with correlated subqueries?"
-    ],
-    "transfer_questions": [
-      "Find products priced above their category average",
-      "List departments that have at least one employee earning more than $100,000",
-      "Find customers who have not placed any orders in the last 6 months"
-    ]
-  },
-  "create-table": {
-    "definition": "CREATE TABLE is a Data Definition Language (DDL) statement that defines a new table structure, including column names, data types, constraints, and relationships to other tables.",
-    "why_it_matters": "Creating well-designed tables is the foundation of database architecture. Proper table design ensures data integrity, optimizes query performance, and establishes the relationships that make relational databases powerful. Poor design leads to data anomalies and maintenance headaches.",
-    "examples": [
-      {
-        "sql": "CREATE TABLE employees (\n  id INT PRIMARY KEY AUTO_INCREMENT,\n  name VARCHAR(100) NOT NULL,\n  email VARCHAR(100) UNIQUE,\n  department_id INT,\n  salary DECIMAL(10,2) CHECK (salary > 0),\n  hire_date DATE DEFAULT CURRENT_DATE,\n  FOREIGN KEY (department_id) REFERENCES departments(id)\n);",
-        "explanation": "Create an employees table with primary key, constraints, default values, and foreign key relationship",
-        "scenario": "Setting up a new HR database with data integrity rules"
-      },
-      {
-        "sql": "CREATE TABLE orders (\n  order_id INT PRIMARY KEY,\n  customer_id INT NOT NULL,\n  order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  status VARCHAR(20) CHECK (status IN ('pending', 'shipped', 'delivered')),\n  total DECIMAL(10,2),\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
-        "explanation": "Create an orders table with check constraints and automatic timestamping",
-        "scenario": "E-commerce order tracking system"
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Forgetting to add NOT NULL on required fields",
-        "error_sql": "CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(50), password VARCHAR(100));",
-        "fix_sql": "CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(50) NOT NULL UNIQUE, password VARCHAR(100) NOT NULL);",
-        "key_takeaway": "Always specify NOT NULL for columns that must have values"
-      },
-      {
-        "title": "Choosing inappropriate data types",
-        "error_sql": "CREATE TABLE products (id INT, price FLOAT, description VARCHAR(255));",
-        "fix_sql": "CREATE TABLE products (id INT PRIMARY KEY, price DECIMAL(10,2), description TEXT);",
-        "key_takeaway": "Use DECIMAL for money (not FLOAT), and TEXT/VARCHAR appropriately for string lengths"
-      }
-    ],
-    "reflection_prompts": [
-      "How do you decide between VARCHAR and TEXT for string columns?",
-      "What are the trade-offs between using synthetic keys (AUTO_INCREMENT) versus natural keys?",
-      "When should you add indexes at table creation time versus later?"
-    ],
-    "transfer_questions": [
-      "Design a table for a blog system with posts, authors, and categories",
-      "Create a many-to-many relationship table for students and courses",
-      "Design an audit log table that tracks changes to another table"
-    ]
-  },
-  "having-clause": {
-    "definition": "The HAVING clause filters grouped rows based on aggregate conditions, applying after GROUP BY aggregation, whereas WHERE filters individual rows before grouping.",
-    "why_it_matters": "HAVING is essential when you need to filter based on aggregated values like counts, sums, or averages. Without it, you'd have to retrieve all groups and filter them in application code, wasting database resources and network bandwidth.",
-    "examples": [
-      {
-        "sql": "SELECT department, COUNT(*) as emp_count, AVG(salary) as avg_salary\nFROM employees\nGROUP BY department\nHAVING COUNT(*) > 5 AND AVG(salary) > 50000;",
-        "explanation": "Find departments with more than 5 employees and average salary above $50,000",
-        "scenario": "Identifying well-staffed, high-compensation departments"
-      },
-      {
-        "sql": "SELECT customer_id, SUM(total) as total_spent\nFROM orders\nWHERE order_date >= '2024-01-01'\nGROUP BY customer_id\nHAVING SUM(total) > 1000\nORDER BY total_spent DESC;",
-        "explanation": "Find customers who spent over $1000 this year, ordered by spending",
-        "scenario": "Identifying high-value customers for loyalty programs"
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using WHERE instead of HAVING for aggregate conditions",
-        "error_sql": "SELECT department, COUNT(*) FROM employees WHERE COUNT(*) > 5 GROUP BY department;",
-        "fix_sql": "SELECT department, COUNT(*) FROM employees GROUP BY department HAVING COUNT(*) > 5;",
-        "key_takeaway": "WHERE filters rows before aggregation; HAVING filters groups after aggregation"
-      },
-      {
-        "title": "Using column aliases in HAVING (in some databases)",
-        "error_sql": "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department HAVING avg_sal > 50000;",
-        "fix_sql": "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department HAVING AVG(salary) > 50000;",
-        "key_takeaway": "Some databases don't allow aliases in HAVING; use the full aggregate expression for portability"
-      }
-    ],
-    "reflection_prompts": [
-      "Why can't you use aggregate functions in the WHERE clause?",
-      "When would you use both WHERE and HAVING in the same query?",
-      "How does the execution order of SQL clauses affect HAVING's behavior?"
-    ],
-    "transfer_questions": [
-      "Find product categories with more than 10 products and average price above $50",
-      "List months where total sales exceeded $100,000",
-      "Identify customers who have placed exactly 3 orders in the last month"
-    ]
-  },
-  "isolation-levels": {
-    "definition": "Transaction isolation levels define how much one transaction is protected from the effects of concurrently executing transactions, balancing consistency against concurrency performance.",
-    "why_it_matters": "Isolation levels let you tune the trade-off between data consistency and system throughput. Banking systems need strict consistency (SERIALIZABLE), while analytics dashboards might accept some inconsistency (READ COMMITTED) for better performance. Understanding isolation prevents bugs like lost updates and phantom reads.",
-    "examples": [
-      {
-        "sql": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;\nBEGIN TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;",
-        "explanation": "Ensure transfers don't read uncommitted changes from other transactions",
-        "scenario": "Banking transfers requiring protection from dirty reads"
-      },
-      {
-        "sql": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nBEGIN TRANSACTION;\nSELECT * FROM inventory WHERE product_id = 123;\nUPDATE inventory SET quantity = quantity - 1 WHERE product_id = 123;\nCOMMIT;",
-        "explanation": "Prevent phantom reads and ensure inventory accuracy under high concurrency",
-        "scenario": "E-commerce inventory management during flash sales"
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using too high isolation level unnecessarily",
-        "error_sql": "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; SELECT * FROM page_views;",
-        "fix_sql": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SELECT * FROM page_views;",
-        "key_takeaway": "SERIALIZABLE provides maximum consistency but severely limits concurrency; use the lowest level that meets your consistency needs"
-      },
-      {
-        "title": "Not handling non-repeatable reads",
-        "error_sql": "BEGIN; SELECT balance FROM accounts WHERE id = 1; -- other transaction updates -- SELECT balance FROM accounts WHERE id = 1; COMMIT;",
-        "fix_sql": "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; BEGIN; SELECT balance FROM accounts WHERE id = 1; -- balance remains consistent -- COMMIT;",
-        "key_takeaway": "At READ COMMITTED, the same query can return different results within a transaction"
-      }
-    ],
-    "reflection_prompts": [
-      "What anomalies can occur at each isolation level (dirty read, non-repeatable read, phantom read)?",
-      "Why don't all transactions just use SERIALIZABLE for maximum safety?",
-      "How do isolation levels interact with locking strategies?"
-    ],
-    "transfer_questions": [
-      "Design a booking system that prevents double-booking while maximizing concurrency",
-      "Choose appropriate isolation levels for a financial reporting system",
-      "Implement a counter that increments safely under high concurrent load"
-    ]
-  },
   "outer-join": {
-    "definition": "An outer join returns all rows from one table (the preserved table) and matching rows from another table, using NULL where there's no match.",
-    "why_it_matters": "Outer joins are essential when you need ALL records from one side regardless of whether they have matches, like finding customers with no orders, products never purchased, or employees without assigned departments. They're crucial for data completeness in reporting.",
+    "definition": "An OUTER JOIN returns all rows from one table (the preserved table), plus matching rows from the other table. If there's no match, NULL values are returned for the other table's columns. Unlike INNER JOIN, you won't lose unmatched records.",
+    "why_it_matters": "OUTER JOINs are essential when you need to find records that don't have matches in another table, like customers who haven't placed orders, or products that haven't been sold. Without OUTER JOINs, you'd miss these important business insights. Real-world example: A marketing team needs to identify inactive customers for a re-engagement campaign.",
     "examples": [
       {
-        "sql": "SELECT c.name, o.order_id, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id;",
-        "explanation": "Show all customers and their orders, including customers who have never ordered (NULL values for order columns)",
-        "scenario": "Complete customer report showing purchase history or lack thereof"
+        "title": "LEFT JOIN: Find all customers and their orders (including customers with no orders)",
+        "sql": "SELECT c.customer_name, o.order_id, o.total\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id;",
+        "explanation": "This returns ALL customers. If a customer has orders, you see them. If not, order_id and total are NULL. This is the most common use case for outer joins.",
+        "scenario": "Marketing wants to send a 'come back' promotion to customers who haven't ordered in 6 months."
       },
       {
-        "sql": "SELECT c.name\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nWHERE o.customer_id IS NULL;",
-        "explanation": "Find customers who have never placed an order",
-        "scenario": "Identifying inactive customers for re-engagement campaigns"
+        "title": "Finding customers with NO orders using LEFT JOIN",
+        "sql": "SELECT c.customer_name, c.email\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\nWHERE o.order_id IS NULL;",
+        "explanation": "By filtering WHERE o.order_id IS NULL, we get only customers who have never placed an order. The NULL indicates no match was found.",
+        "scenario": "Sales team needs to identify leads who signed up but never purchased."
       },
       {
-        "sql": "SELECT e.name as employee, m.name as manager\nFROM employees e\nLEFT JOIN employees m ON e.manager_id = m.id;",
-        "explanation": "Show all employees with their managers, including the CEO who has no manager",
-        "scenario": "Organizational hierarchy reporting"
+        "title": "FULL OUTER JOIN: All records from both tables (MySQL simulated)",
+        "sql": "SELECT c.customer_name, o.order_id\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\nUNION\nSELECT c.customer_name, o.order_id\nFROM customers c\nRIGHT JOIN orders o ON c.customer_id = o.customer_id;",
+        "explanation": "MySQL doesn't support FULL OUTER JOIN directly. This UNION pattern combines LEFT and RIGHT joins to get all records from both tables.",
+        "scenario": "Data reconciliation: finding all customers and all orders, including orphans from both sides."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Using wrong join direction",
-        "error_sql": "SELECT c.name FROM orders o LEFT JOIN customers c ON o.customer_id = c.id WHERE o.customer_id IS NULL;",
-        "fix_sql": "SELECT c.name FROM customers c LEFT JOIN orders o ON c.id = o.customer_id WHERE o.customer_id IS NULL;",
-        "key_takeaway": "Put the table you want ALL rows from on the LEFT side of LEFT JOIN"
+        "title": "Using WHERE to filter the joined table instead of ON",
+        "error_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nWHERE o.total > 100;",
+        "error_message": "No error, but silently removes customers with no orders or orders <= 100",
+        "why_it_happens": "The WHERE clause filters AFTER the join is complete, turning your LEFT JOIN into an INNER JOIN for the filtered results. Customers without matching orders are excluded because o.total IS NULL, which fails the > 100 check.",
+        "fix_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id AND o.total > 100;",
+        "key_takeaway": "Filter the joined table in the ON clause, not the WHERE clause, when using OUTER JOINs to preserve unmatched rows."
       },
       {
-        "title": "Filtering in WHERE instead of ON clause",
-        "error_sql": "SELECT c.name, o.total FROM customers c LEFT JOIN orders o ON c.id = o.customer_id WHERE o.total > 100;",
-        "fix_sql": "SELECT c.name, o.total FROM customers c LEFT JOIN orders o ON c.id = o.customer_id AND o.total > 100;",
-        "key_takeaway": "Filtering in WHERE turns outer joins into inner joins; put conditions in ON to preserve unmatched rows"
+        "title": "Expecting INNER JOIN behavior from OUTER JOIN",
+        "error_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nWHERE o.order_date > '2024-01-01';",
+        "error_message": "Results show only customers with recent orders - missing customers with no orders or old orders",
+        "why_it_happens": "Developers often write LEFT JOIN out of habit but then filter in WHERE, not realizing they're defeating the purpose of the outer join.",
+        "fix_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id AND o.order_date > '2024-01-01';",
+        "key_takeaway": "Ask yourself: Do I want all rows from the first table? If yes, don't filter the second table in WHERE."
       }
     ],
     "reflection_prompts": [
-      "What's the difference between LEFT JOIN with WHERE IS NULL versus NOT EXISTS?",
-      "When would you use RIGHT JOIN instead of LEFT JOIN?",
-      "How does FULL OUTER JOIN differ from LEFT or RIGHT JOIN?"
+      "Why would a business prefer to see NULL values instead of just excluding unmatched records?",
+      "How would you explain the difference between INNER JOIN and LEFT JOIN to a non-technical manager?",
+      "When might a RIGHT JOIN be more natural than a LEFT JOIN? (Think about table order)",
+      "Can you think of a business scenario where knowing what ISN'T there is more valuable than knowing what is?"
     ],
-    "transfer_questions": [
-      "Find all employees who have never been assigned to a project",
-      "List all products with their total sales (show 0 for products never sold)",
-      "Find departments that have no employees assigned"
-    ]
+    "practice_suggestions": [
+      "Write a query to find all products that have never been ordered",
+      "List all employees and their department names, including employees without assigned departments",
+      "Create a report showing monthly sales with months that had zero sales included",
+      "Find suppliers who haven't provided any products in the last year"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 15
   },
   "self-join": {
-    "definition": "A self-join is a regular join where a table is joined to itself, typically using table aliases to distinguish between the two instances of the same table.",
-    "why_it_matters": "Self-joins solve hierarchical and comparative queries within a single table, like employee-manager relationships, finding similar records, or comparing rows to each other. They're essential for recursive or reflexive relationships without separate tables.",
+    "definition": "A SELF JOIN is when a table is joined to itself. You create two aliases (like employee e1 and employee e2) to treat the same table as if it were two separate tables, allowing you to compare rows within the same table.",
+    "why_it_matters": "SELF JOINs solve hierarchical and comparative problems that exist within a single table. They're essential for organizational charts (employees and managers), finding pairs of related items, and comparing records to each other. Without self-joins, you'd need complex application code to process these relationships.",
     "examples": [
       {
-        "sql": "SELECT e.name AS employee, m.name AS manager\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
-        "explanation": "Display each employee alongside their manager's name",
-        "scenario": "Reporting organizational reporting structure"
+        "title": "Employee-Manager hierarchy: Show each employee with their manager's name",
+        "sql": "SELECT e.name AS employee_name,\n       m.name AS manager_name\nFROM employees e\nLEFT JOIN employees m ON e.manager_id = m.id;",
+        "explanation": "We join the employees table to itself. 'e' represents employees, 'm' represents managers (who are also employees). The LEFT JOIN includes the CEO who has no manager.",
+        "scenario": "HR needs an organizational chart showing reporting relationships."
       },
       {
-        "sql": "SELECT a.name AS employee1, b.name AS employee2, a.salary\nFROM employees a\nJOIN employees b ON a.manager_id = b.manager_id AND a.id < b.id\nWHERE a.salary > b.salary;",
-        "explanation": "Find employees earning more than their peers with the same manager",
-        "scenario": "Identifying salary inequities within teams"
+        "title": "Finding employees who earn more than their managers",
+        "sql": "SELECT e.name AS employee,\n       e.salary AS emp_salary,\n       m.name AS manager,\n       m.salary AS mgr_salary\nFROM employees e\nJOIN employees m ON e.manager_id = m.id\nWHERE e.salary > m.salary;",
+        "explanation": "This compares salary values between related rows in the same table. Great for finding policy violations or promotion candidates.",
+        "scenario": "HR audit to identify employees who may have been over-promoted or managers who need raises."
       },
       {
-        "sql": "SELECT p1.name AS product1, p2.name AS product2, p1.category\nFROM products p1\nJOIN products p2 ON p1.category = p2.category AND p1.id < p2.id;",
-        "explanation": "List all pairs of products in the same category",
-        "scenario": "Product bundling or recommendation analysis"
+        "title": "Finding pairs of products in the same category",
+        "sql": "SELECT p1.name AS product1,\n       p2.name AS product2,\n       p1.category\nFROM products p1\nJOIN products p2 ON p1.category = p2.category AND p1.id < p2.id;",
+        "explanation": "We join products to themselves where they share a category. The p1.id < p2.id prevents duplicate pairs and self-pairing.",
+        "scenario": "Product team wants to identify similar products for cross-selling recommendations."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Forgetting table aliases",
+        "title": "Forgetting to use table aliases",
         "error_sql": "SELECT name FROM employees JOIN employees ON manager_id = id;",
-        "fix_sql": "SELECT e.name, m.name FROM employees e JOIN employees m ON e.manager_id = m.id;",
-        "key_takeaway": "Always use aliases when self-joining to distinguish between the table instances"
+        "error_message": "Column 'name' in field list is ambiguous",
+        "why_it_happens": "Without aliases (e1, e2), MySQL can't distinguish which table's 'name' column you want. Both tables in the join have the same columns.",
+        "fix_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
+        "key_takeaway": "Always use meaningful aliases (e for employee, m for manager) when self-joining."
       },
       {
-        "title": "Missing condition to prevent self-matching",
-        "error_sql": "SELECT a.name, b.name FROM employees a JOIN employees b ON a.manager_id = b.manager_id;",
-        "fix_sql": "SELECT a.name, b.name FROM employees a JOIN employees b ON a.manager_id = b.manager_id AND a.id != b.id;",
-        "key_takeaway": "Add a.id != b.id (or a.id < b.id for unique pairs) to prevent rows matching themselves"
+        "title": "Creating a Cartesian product with missing join condition",
+        "error_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m;",
+        "error_message": "Query runs but returns every employee paired with every other employee (n² rows)",
+        "why_it_happens": "Without the ON clause linking the relationship (like manager_id = id), SQL performs a cross join.",
+        "fix_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
+        "key_takeaway": "Self-joins MUST have a join condition that defines the relationship between the two 'copies' of the table."
       }
     ],
     "reflection_prompts": [
-      "How do self-joins relate to recursive queries and CTEs?",
-      "When should you use a self-join versus restructuring your data model?",
-      "How can you find all employees in an organizational hierarchy using multiple self-joins?"
+      "Why do we need to use aliases for a self-join but not for joining two different tables?",
+      "What would happen if you used = instead of < in the product pairing query?",
+      "How would you modify the employee-manager query to show the full chain from CEO to intern?",
+      "Can you think of other real-world scenarios where data references other data in the same collection?"
     ],
-    "transfer_questions": [
-      "Find employees who earn more than their managers",
-      "List all products that have the same price as another product",
-      "Find students who are enrolled in the same courses as a specific student"
-    ]
+    "practice_suggestions": [
+      "Find all customers who live in the same city as another customer",
+      "List employees who were hired on the same day",
+      "Create a query to find products that have the same price",
+      "Build a recursive-style report showing 3 levels of management (employee → manager → director)"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 20
+  },
+  "having-clause": {
+    "definition": "The HAVING clause filters groups of rows AFTER aggregation has occurred. While WHERE filters individual rows before grouping, HAVING filters the results of GROUP BY based on aggregate values like COUNT, SUM, or AVG.",
+    "why_it_matters": "HAVING is essential for answering questions about groups that meet certain criteria. Without it, you'd have to fetch all aggregated data into your application and filter there, which is inefficient. Use cases include finding customers with multiple orders, departments with high average salaries, or products with low sales volumes.",
+    "examples": [
+      {
+        "title": "Find customers with 5 or more orders",
+        "sql": "SELECT customer_id, COUNT(*) AS order_count\nFROM orders\nGROUP BY customer_id\nHAVING COUNT(*) >= 5;",
+        "explanation": "WHERE can't filter on COUNT(*) because aggregation hasn't happened yet. HAVING filters after groups are formed and counted.",
+        "scenario": "Identify VIP customers for a loyalty program."
+      },
+      {
+        "title": "Departments with above-average salary",
+        "sql": "SELECT department, AVG(salary) AS avg_salary\nFROM employees\nGROUP BY department\nHAVING AVG(salary) > (SELECT AVG(salary) FROM employees);",
+        "explanation": "HAVING can use subqueries and compare aggregate values. This finds departments paying better than the company average.",
+        "scenario": "Compensation analysis for departmental budget adjustments."
+      },
+      {
+        "title": "Combining WHERE and HAVING",
+        "sql": "SELECT category, AVG(price) AS avg_price\nFROM products\nWHERE status = 'active'\nGROUP BY category\nHAVING AVG(price) > 50;",
+        "explanation": "WHERE first filters to active products only, then GROUP BY creates categories, then HAVING filters categories with high average prices.",
+        "scenario": "Pricing analysis: which active product categories are premium-priced?"
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using WHERE with aggregate functions",
+        "error_sql": "SELECT department, COUNT(*)\nFROM employees\nWHERE COUNT(*) > 5\nGROUP BY department;",
+        "error_message": "Invalid use of group function",
+        "why_it_happens": "WHERE executes before GROUP BY, so aggregate values don't exist yet. You can't count groups before groups exist.",
+        "fix_sql": "SELECT department, COUNT(*)\nFROM employees\nGROUP BY department\nHAVING COUNT(*) > 5;",
+        "key_takeaway": "WHERE filters rows; HAVING filters groups. Use HAVING for conditions on COUNT, SUM, AVG, etc."
+      },
+      {
+        "title": "Putting non-aggregated column filters in HAVING",
+        "error_sql": "SELECT category, AVG(price)\nFROM products\nGROUP BY category\nHAVING status = 'active';",
+        "error_message": "Unknown column 'status' in 'having clause'",
+        "why_it_happens": "Individual row conditions (like status='active') should be in WHERE. HAVING is only for aggregate conditions.",
+        "fix_sql": "SELECT category, AVG(price)\nFROM products\nWHERE status = 'active'\nGROUP BY category;",
+        "key_takeaway": "Filter individual row values in WHERE (more efficient), aggregate values in HAVING."
+      }
+    ],
+    "reflection_prompts": [
+      "Why does SQL have both WHERE and HAVING instead of just one filtering mechanism?",
+      "What would happen if you put a column filter in HAVING that isn't in the GROUP BY?",
+      "Can you use HAVING without GROUP BY? What would it do?",
+      "How would you find the second-highest order total by customer?"
+    ],
+    "practice_suggestions": [
+      "Find products that have been ordered more than 100 times",
+      "List months with total sales exceeding $10,000",
+      "Identify customers who haven't ordered in 6+ months (use HAVING with date functions)",
+      "Find categories where the most expensive product costs more than 10x the cheapest"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 15
+  },
+  "correlated-subquery": {
+    "definition": "A correlated subquery is a subquery that references columns from the outer query. Unlike regular subqueries that run once, correlated subqueries execute once for EACH row in the outer query, making them slower but more powerful for row-by-row comparisons.",
+    "why_it_matters": "Correlated subqueries solve problems where each row needs to be evaluated against a dynamic set of data that depends on that row's values. Classic examples: finding the most recent order per customer, employees with above-department-average salary, or products with above-category-average pricing. They're often the clearest way to express 'for each X, find the Y that...' logic.",
+    "examples": [
+      {
+        "title": "Find employees earning above their department average",
+        "sql": "SELECT name, department, salary\nFROM employees e1\nWHERE salary > (\n    SELECT AVG(salary)\n    FROM employees e2\n    WHERE e2.department = e1.department\n);",
+        "explanation": "For each employee (e1), the subquery calculates the average salary of their specific department (e2). The correlation is e2.department = e1.department.",
+        "scenario": "Performance review to identify top performers relative to peers."
+      },
+      {
+        "title": "Most recent order for each customer",
+        "sql": "SELECT c.customer_name, o.order_id, o.order_date\nFROM customers c\nJOIN orders o ON c.customer_id = o.customer_id\nWHERE o.order_date = (\n    SELECT MAX(order_date)\n    FROM orders o2\n    WHERE o2.customer_id = c.customer_id\n);",
+        "explanation": "The correlated subquery finds the latest order date for each specific customer, then we join to get the full order details.",
+        "scenario": "Customer service dashboard showing each customer's last interaction."
+      },
+      {
+        "title": "Products priced above category average",
+        "sql": "SELECT name, category, price\nFROM products p1\nWHERE price > (\n    SELECT AVG(price)\n    FROM products p2\n    WHERE p2.category = p1.category\n);",
+        "explanation": "Each product is compared against the average of its own category. This identifies premium products within each category.",
+        "scenario": "Product marketing: identifying premium items for targeted promotions."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using uncorrelated subquery when correlation is needed",
+        "error_sql": "SELECT name, salary\nFROM employees\nWHERE salary > (SELECT AVG(salary) FROM employees);",
+        "error_message": "No error, but returns employees above COMPANY average, not department average",
+        "why_it_happens": "The subquery runs once and returns the overall average. To get department-specific averages, you need correlation.",
+        "fix_sql": "SELECT name, department, salary\nFROM employees e1\nWHERE salary > (\n    SELECT AVG(salary)\n    FROM employees e2\n    WHERE e2.department = e1.department\n);",
+        "key_takeaway": "Add the table alias correlation (e2.dept = e1.dept) when you need per-group calculations."
+      },
+      {
+        "title": "Performance issues with large datasets",
+        "error_sql": "SELECT * FROM large_table l1\nWHERE col > (SELECT AVG(col) FROM large_table l2 WHERE l2.group_id = l1.group_id);",
+        "error_message": "Query times out or runs very slowly on millions of rows",
+        "why_it_happens": "Correlated subqueries execute once per row (O(n²)). On large tables, this is prohibitively slow.",
+        "fix_sql": "WITH avg_by_group AS (\n    SELECT group_id, AVG(col) AS avg_col\n    FROM large_table\n    GROUP BY group_id\n)\nSELECT l.* FROM large_table l\nJOIN avg_by_group a ON l.group_id = a.group_id\nWHERE l.col > a.avg_col;",
+        "key_takeaway": "For large tables, use JOINs or CTEs instead of correlated subqueries for better performance."
+      }
+    ],
+    "reflection_prompts": [
+      "How many times does a correlated subquery execute compared to a non-correlated one?",
+      "Can you rewrite the 'above department average' query using a JOIN instead? Which is clearer?",
+      "What happens if the correlated subquery returns no rows for a given outer row?",
+      "When would you choose clarity (correlated subquery) over performance (JOIN)?"
+    ],
+    "practice_suggestions": [
+      "Find customers whose last order total was above their average order total",
+      "List employees who were hired first in their department",
+      "Identify products with inventory below the average for their category",
+      "Find students who scored above average in each subject they took"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 25
+  },
+  "create-table": {
+    "definition": "CREATE TABLE defines a new table structure including column names, data types, constraints, and indexes. It's the foundation of database design - you specify not just what data to store, but how it should behave through constraints like PRIMARY KEY, NOT NULL, and FOREIGN KEY.",
+    "why_it_matters": "Proper table design determines data integrity, query performance, and application reliability for years. A well-designed table with appropriate constraints prevents bad data at the source, while a poorly designed one leads to data quality issues that are expensive to fix later. CREATE TABLE is where you enforce business rules directly in the database.",
+    "examples": [
+      {
+        "title": "Basic table with constraints",
+        "sql": "CREATE TABLE customers (\n    customer_id INT PRIMARY KEY AUTO_INCREMENT,\n    email VARCHAR(255) NOT NULL UNIQUE,\n    name VARCHAR(100) NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    status ENUM('active', 'inactive') DEFAULT 'active'\n);",
+        "explanation": "Shows PRIMARY KEY (unique identifier), AUTO_INCREMENT (auto-numbering), NOT NULL (required), UNIQUE (no duplicates), DEFAULT values, and ENUM (restricted values).",
+        "scenario": "Creating a customer table that enforces data quality from day one."
+      },
+      {
+        "title": "Table with foreign key relationships",
+        "sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY AUTO_INCREMENT,\n    customer_id INT NOT NULL,\n    order_date DATE NOT NULL,\n    total DECIMAL(10,2) CHECK (total >= 0),\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n        ON DELETE RESTRICT\n        ON UPDATE CASCADE\n);",
+        "explanation": "Foreign keys ensure referential integrity. ON DELETE RESTRICT prevents deleting customers with orders. CHECK constraint ensures non-negative totals.",
+        "scenario": "Order table that maintains data consistency with customers."
+      },
+      {
+        "title": "Table with indexes for performance",
+        "sql": "CREATE TABLE products (\n    product_id INT PRIMARY KEY AUTO_INCREMENT,\n    sku VARCHAR(50) NOT NULL UNIQUE,\n    name VARCHAR(200) NOT NULL,\n    category_id INT,\n    price DECIMAL(10,2),\n    INDEX idx_category (category_id),\n    INDEX idx_price (price),\n    FULLTEXT INDEX idx_name (name)\n);",
+        "explanation": "Multiple index types: regular INDEX for filtering/sorting, FULLTEXT for text search. Indexes speed up queries but slow down writes.",
+        "scenario": "Product catalog optimized for search and filtering performance."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Missing PRIMARY KEY",
+        "error_sql": "CREATE TABLE logs (message TEXT, created_at TIMESTAMP);",
+        "error_message": "No error, but table has no unique identifier",
+        "why_it_happens": "Beginners often skip PRIMARY KEY thinking it's optional. Every table should have a way to uniquely identify rows.",
+        "fix_sql": "CREATE TABLE logs (\n    log_id INT PRIMARY KEY AUTO_INCREMENT,\n    message TEXT,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
+        "key_takeaway": "Always include a PRIMARY KEY, usually an auto-incrementing integer named id or table_id."
+      },
+      {
+        "title": "Wrong data type for values",
+        "error_sql": "CREATE TABLE products (price VARCHAR(10), quantity FLOAT);",
+        "error_message": "No immediate error, but calculations fail and precision is lost",
+        "why_it_happens": "Using VARCHAR for money prevents math operations. FLOAT causes rounding errors in financial calculations.",
+        "fix_sql": "CREATE TABLE products (\n    price DECIMAL(10,2),\n    quantity INT\n);",
+        "key_takeaway": "Use DECIMAL for money (exact precision), INT for whole numbers, appropriate types for your data."
+      }
+    ],
+    "reflection_prompts": [
+      "Why is it better to enforce data rules in the database rather than just in the application?",
+      "What are the trade-offs of adding many indexes to a table?",
+      "When would you use UUID instead of AUTO_INCREMENT for a primary key?",
+      "How would you design a table to support soft deletes instead of hard deletes?"
+    ],
+    "practice_suggestions": [
+      "Design a blog system with users, posts, comments, and categories",
+      "Create an e-commerce schema with products, inventory, carts, and orders",
+      "Build a library management system with books, members, loans, and fines",
+      "Design a social media schema with users, posts, likes, and follows"
+    ],
+    "difficulty": "beginner",
+    "estimated_minutes": 20
   },
   "transactions": {
-    "definition": "A transaction is a logical unit of work that groups multiple database operations into an atomic, consistent, isolated, and durable (ACID) sequence that either completes entirely or not at all.",
-    "why_it_matters": "Transactions ensure data integrity when multiple related operations must succeed or fail together—like bank transfers, order processing, or inventory updates. Without transactions, system failures could leave data in inconsistent states, causing lost money, inventory errors, or corrupted records.",
+    "definition": "A transaction is a group of SQL operations that succeed or fail together as a single unit. Using START TRANSACTION (or BEGIN), COMMIT, and ROLLBACK, you ensure database consistency even if errors occur midway through a multi-step operation.",
+    "why_it_matters": "Transactions are essential for maintaining data integrity in real-world applications. Bank transfers, inventory updates, and order processing all require multiple related changes. Without transactions, a system crash midway could leave data in an inconsistent state - money deducted but not transferred, inventory reduced but order not created. ACID properties (Atomicity, Consistency, Isolation, Durability) guarantee reliable processing.",
     "examples": [
       {
-        "sql": "BEGIN TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;",
-        "explanation": "Transfer $100 between accounts atomically—both updates succeed or both fail",
-        "scenario": "Banking transfer ensuring money is neither lost nor created"
+        "title": "Basic bank transfer transaction",
+        "sql": "START TRANSACTION;\n\nUPDATE accounts\nSET balance = balance - 100\nWHERE account_id = 1;\n\nUPDATE accounts\nSET balance = balance + 100\nWHERE account_id = 2;\n\nCOMMIT;",
+        "explanation": "Both updates succeed or both fail. If account 2 doesn't exist, ROLLBACK would restore account 1's balance.",
+        "scenario": "ATM transfer: ensuring money isn't lost in transit."
       },
       {
-        "sql": "BEGIN TRANSACTION;\nINSERT INTO orders (customer_id, total) VALUES (1, 150.00);\nSET @order_id = LAST_INSERT_ID();\nINSERT INTO order_items (order_id, product_id, quantity) VALUES (@order_id, 101, 2);\nINSERT INTO order_items (order_id, product_id, quantity) VALUES (@order_id, 102, 1);\nUPDATE inventory SET quantity = quantity - 2 WHERE product_id = 101;\nUPDATE inventory SET quantity = quantity - 1 WHERE product_id = 102;\nCOMMIT;",
-        "explanation": "Create a complete order with items and update inventory as a single atomic operation",
-        "scenario": "E-commerce order processing with inventory management"
+        "title": "Transaction with error handling",
+        "sql": "START TRANSACTION;\n\nUPDATE inventory\nSET quantity = quantity - 5\nWHERE product_id = 101;\n\nINSERT INTO orders (customer_id, total) VALUES (5, 250);\nSET @order_id = LAST_INSERT_ID();\n\nINSERT INTO order_items (order_id, product_id, qty)\nVALUES (@order_id, 101, 5);\n\n-- Check for errors\nIF ROW_COUNT() = 0 THEN\n    ROLLBACK;\nELSE\n    COMMIT;\nEND IF;",
+        "explanation": "Multi-step order creation. If inventory update fails or order insert fails, everything is rolled back.",
+        "scenario": "E-commerce checkout: inventory, order, and items must all succeed."
       },
       {
-        "sql": "BEGIN TRANSACTION;\nSAVEPOINT before_discount;\nUPDATE orders SET total = total * 0.9 WHERE id = 1001;\n-- Logic to verify discount is valid --\nROLLBACK TO SAVEPOINT before_discount;\nCOMMIT;",
-        "explanation": "Apply a discount with the ability to undo it if validation fails",
-        "scenario": "Complex business logic with partial rollback capability"
+        "title": "Savepoints for partial rollback",
+        "sql": "START TRANSACTION;\n\nINSERT INTO orders (customer_id) VALUES (1);\nSAVEPOINT after_order;\n\nINSERT INTO order_items (order_id, product_id) VALUES (LAST_INSERT_ID(), 5);\n\n-- Oops, wrong product\nROLLBACK TO SAVEPOINT after_order;\n\nINSERT INTO order_items (order_id, product_id) VALUES (LAST_INSERT_ID(), 6);\nCOMMIT;",
+        "explanation": "SAVEPOINT creates a marker within a transaction. You can roll back to it without aborting the entire transaction.",
+        "scenario": "Complex workflows where some operations can be retried without starting over."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Forgetting to COMMIT or ROLLBACK",
-        "error_sql": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- no COMMIT --",
-        "fix_sql": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; COMMIT;",
-        "key_takeaway": "Always explicitly commit or rollback; uncommitted transactions may hold locks indefinitely"
+        "title": "Forgetting COMMIT",
+        "error_sql": "START TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\n-- Forgot COMMIT",
+        "error_message": "Changes appear in your session but disappear when you disconnect; other users don't see changes",
+        "why_it_happens": "Transactions are auto-committed when session ends in some modes, but in strict mode, uncommitted changes are lost.",
+        "fix_sql": "START TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nCOMMIT;",
+        "key_takeaway": "Every START TRANSACTION needs a matching COMMIT or ROLLBACK."
       },
       {
-        "title": "Catching errors without rolling back",
-        "error_sql": "BEGIN; INSERT INTO orders VALUES (...); -- error occurs -- INSERT INTO order_items VALUES (...); COMMIT;",
-        "fix_sql": "BEGIN; INSERT INTO orders VALUES (...); IF ERROR THEN ROLLBACK; ELSE COMMIT; END IF;",
-        "key_takeaway": "Use error handling to rollback on failure, don't continue after errors"
+        "title": "Holding transactions open too long",
+        "error_sql": "START TRANSACTION;\nSELECT * FROM large_table;\n-- Application does work for 30 seconds\nUPDATE large_table SET ...;\nCOMMIT;",
+        "error_message": "Performance degradation, deadlocks, lock wait timeouts for other users",
+        "why_it_happens": "Locks are held for the entire transaction duration. Long transactions block other operations.",
+        "fix_sql": "-- Keep transactions short and focused\nSTART TRANSACTION;\nUPDATE large_table SET ... WHERE id = specific_id;\nCOMMIT;\n\n-- Do application work between transactions, not during",
+        "key_takeaway": "Transactions should be as short as possible. Get in, do work, commit immediately."
       }
     ],
     "reflection_prompts": [
-      "What are the ACID properties and why does each matter?",
-      "When should you use SAVEPOINTs versus separate transactions?",
-      "How do transactions interact with database locks and concurrency?"
+      "What would happen to a bank account balance if a transfer crashed midway without transactions?",
+      "When would you use ROLLBACK TO SAVEPOINT instead of full ROLLBACK?",
+      "Why can't you roll back a committed transaction? What should you do instead?",
+      "How do transactions interact with other concurrent transactions?"
     ],
-    "transfer_questions": [
-      "Implement a funds transfer with proper error handling and rollback",
-      "Design a reservation system that prevents overbooking using transactions",
-      "Create an audit trail that logs all changes within a transaction"
-    ]
+    "practice_suggestions": [
+      "Implement a funds transfer between two accounts with proper error handling",
+      "Create a stored procedure for order placement that handles inventory, orders, and items atomically",
+      "Design a reservation system where seats are held temporarily then released or confirmed",
+      "Build a batch processing system that can resume from failures"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 25
+  },
+  "isolation-levels": {
+    "definition": "Transaction isolation levels control how much transactions can see each other's uncommitted changes. They balance between data consistency (seeing accurate data) and concurrency (allowing multiple transactions to run simultaneously). MySQL supports READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ (default), and SERIALIZABLE.",
+    "why_it_matters": "Different applications need different consistency guarantees. A financial system needs strict consistency (SERIALIZABLE), while a reporting dashboard might prioritize performance (READ COMMITTED). Understanding isolation levels helps you choose the right trade-off between accuracy and speed, and debug mysterious data anomalies like phantom reads or non-repeatable reads.",
+    "examples": [
+      {
+        "title": "REPEATABLE READ - Default MySQL behavior",
+        "sql": "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;\n\nSTART TRANSACTION;\nSELECT balance FROM accounts WHERE id = 1;  -- Returns: 1000\n-- Another transaction updates balance to 900 and commits\nSELECT balance FROM accounts WHERE id = 1;  -- Still returns: 1000 (snapshot)\nCOMMIT;",
+        "explanation": "Within a transaction, you see a consistent snapshot as of the transaction start. Prevents non-repeatable reads.",
+        "scenario": "Report generation: ensuring all numbers in a complex report come from the same point in time."
+      },
+      {
+        "title": "READ COMMITTED - See committed changes immediately",
+        "sql": "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;\n\nSTART TRANSACTION;\nSELECT COUNT(*) FROM orders;  -- Returns: 100\n-- Another session inserts and commits a new order\nSELECT COUNT(*) FROM orders;  -- Returns: 101 (sees committed changes)\nCOMMIT;",
+        "explanation": "Each statement sees the latest committed data. Good balance of consistency and concurrency.",
+        "scenario": "Web application: users should see their own changes immediately after commit, but don't need strict snapshot consistency."
+      },
+      {
+        "title": "SERIALIZABLE - Strictest isolation",
+        "sql": "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;\n\nSTART TRANSACTION;\nSELECT * FROM accounts WHERE balance > 1000;\n-- Returns 5 rows\n-- Other transactions BLOCKED from inserting matching rows\nSELECT * FROM accounts WHERE balance > 1000;\n-- Still exactly 5 rows (phantom reads prevented)\nCOMMIT;",
+        "explanation": "Transactions are completely isolated as if they ran sequentially. Locks the range of data being queried.",
+        "scenario": "Financial audit: ensuring no new transactions appear mid-audit that would affect totals."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Phantom reads with the wrong isolation level",
+        "error_sql": "-- Using REPEATABLE READ\nSTART TRANSACTION;\nSELECT * FROM products WHERE category = 'electronics';\n-- Returns 10 rows\n-- Another transaction INSERTs new electronics product and commits\nSELECT * FROM products WHERE category = 'electronics';\n-- Still 10 rows, but application expects to see new row",
+        "error_message": "Application shows stale data; new records don't appear until transaction ends",
+        "why_it_happens": "REPEATABLE READ prevents seeing changes made by other transactions within your transaction.",
+        "fix_sql": "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;\nSTART TRANSACTION;\n-- Or commit/restart transaction to get fresh snapshot",
+        "key_takeaway": "Choose READ COMMITTED if you need to see other transactions' committed changes during your transaction."
+      },
+      {
+        "title": "Deadlocks at SERIALIZABLE level",
+        "error_sql": "-- Transaction A\nSET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nSTART TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\n-- Meanwhile Transaction B does the reverse...\n-- DEADLOCK!",
+        "error_message": "Deadlock found when trying to get lock; try restarting transaction",
+        "why_it_happens": "SERIALIZABLE holds locks more aggressively. Two transactions waiting for each other's locks cause deadlock.",
+        "fix_sql": "-- Use lower isolation level if full serializability isn't required\nSET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;\n\n-- Or ensure consistent lock ordering (always lock id 1 before id 2)",
+        "key_takeaway": "Higher isolation = more locking = more deadlock risk. Only use SERIALIZABLE when truly necessary."
+      }
+    ],
+    "reflection_prompts": [
+      "Why might a banking system prefer SERIALIZABLE while a social media feed might use READ COMMITTED?",
+      "What's the difference between a dirty read and a non-repeatable read?",
+      "Can you have data integrity issues even with the highest isolation level?",
+      "How does MySQL's default REPEATABLE READ differ from PostgreSQL's default READ COMMITTED?"
+    ],
+    "practice_suggestions": [
+      "Set up two concurrent transactions and observe behavior at different isolation levels",
+      "Design an inventory system that prevents overselling using appropriate isolation",
+      "Create a reporting system that generates consistent snapshots of related tables",
+      "Implement optimistic locking using version numbers as an alternative to high isolation levels"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 30
+  },
+  "views": {
+    "definition": "A VIEW is a virtual table defined by a stored query. It doesn't store data itself but presents data from underlying tables in a customized way. Views can simplify complex queries, restrict data access, and provide backward compatibility when table structures change.",
+    "why_it_matters": "Views are powerful abstractions that make databases more maintainable and secure. They let you encapsulate complex joins and calculations, expose only necessary columns to users, and create stable interfaces even when underlying tables evolve. Use views to create 'report-ready' datasets, implement row-level security, and hide schema complexity from applications.",
+    "examples": [
+      {
+        "title": "Simple view for active customers",
+        "sql": "CREATE VIEW active_customers AS\nSELECT customer_id, name, email, created_at\nFROM customers\nWHERE status = 'active'\n    AND deleted_at IS NULL;",
+        "explanation": "Applications can query active_customers without knowing the status/deleted_at filter logic. If the business rules change, only the view needs updating.",
+        "scenario": "Application always works with active customers; logic is centralized in the view."
+      },
+      {
+        "title": "Complex view with joins and calculations",
+        "sql": "CREATE VIEW customer_order_summary AS\nSELECT \n    c.customer_id,\n    c.name,\n    COUNT(DISTINCT o.order_id) AS total_orders,\n    COALESCE(SUM(o.total), 0) AS total_spent,\n    MAX(o.order_date) AS last_order_date,\n    AVG(o.total) AS avg_order_value\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\nGROUP BY c.customer_id, c.name;",
+        "explanation": "Encapsulates complex aggregation logic. Reports can SELECT * FROM customer_order_summary without writing the join and GROUP BY every time.",
+        "scenario": "Dashboard showing customer lifetime value and engagement metrics."
+      },
+      {
+        "title": "Updatable view with WITH CHECK OPTION",
+        "sql": "CREATE VIEW us_customers AS\nSELECT * FROM customers\nWHERE country = 'US'\nWITH CHECK OPTION;\n\n-- This INSERT is allowed:\nINSERT INTO us_customers (name, country) VALUES ('John', 'US');\n\n-- This INSERT fails:\nINSERT INTO us_customers (name, country) VALUES ('Pierre', 'FR');",
+        "explanation": "WITH CHECK OPTION ensures inserted/updated rows satisfy the view's WHERE clause. Prevents 'disappearing' rows that don't match the view filter.",
+        "scenario": "Regional applications that should only work with their region's data."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Trying to update a non-updatable view",
+        "error_sql": "CREATE VIEW customer_totals AS\nSELECT customer_id, SUM(order_total) AS total\nFROM orders\nGROUP BY customer_id;\n\nUPDATE customer_totals SET total = 1000 WHERE customer_id = 5;",
+        "error_message": "The target table customer_totals of the UPDATE is not updatable",
+        "why_it_happens": "Views with GROUP BY, DISTINCT, aggregate functions, or certain joins can't be updated - MySQL doesn't know which underlying rows to modify.",
+        "fix_sql": "-- Update the base table instead\nUPDATE orders SET order_total = ... WHERE customer_id = 5;\n\n-- Or use an INSTEAD OF trigger (where supported)",
+        "key_takeaway": "Only simple views (single table, no aggregates, no DISTINCT) are updatable."
+      },
+      {
+        "title": "Performance issues with complex views",
+        "error_sql": "CREATE VIEW all_customer_data AS\nSELECT c.*, o.*, p.*, a.*\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nLEFT JOIN payments p ON o.id = p.order_id\nLEFT JOIN addresses a ON c.id = a.customer_id;\n\nSELECT name FROM all_customer_data WHERE id = 5;",
+        "error_message": "Slow query - all joins execute even though only customer data is needed",
+        "why_it_happens": "The view's full query runs first, then filters. MySQL may not optimize out unnecessary joins.",
+        "fix_sql": "-- Query base table directly when you don't need joined data\nSELECT name FROM customers WHERE id = 5;\n\n-- Or create focused views for specific use cases",
+        "key_takeaway": "Views don't cache results. Complex views can cause performance issues if used carelessly."
+      }
+    ],
+    "reflection_prompts": [
+      "When would you choose a VIEW over a regular table for reporting?",
+      "How do views help with database security and access control?",
+      "What happens to a view if you rename or drop an underlying table column?",
+      "Can views help with database refactoring without breaking applications?"
+    ],
+    "practice_suggestions": [
+      "Create views for common reporting needs in an e-commerce database",
+      "Design a view that implements row-level security (users only see their data)",
+      "Build views that present the same data in different ways for different departments",
+      "Create a view that formats data for API consumption (JSON-like structure)"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 20
+  },
+  "stored-procedures": {
+    "definition": "A stored procedure is a pre-compiled SQL program stored in the database. It can accept parameters, contain control flow (IF, LOOP), execute multiple statements, and return results. Procedures encapsulate business logic directly in the database.",
+    "why_it_matters": "Stored procedures reduce network traffic, centralize business logic, and improve security by limiting direct table access. They're essential for complex operations that must be atomic, like order processing with inventory checks. They also enable database APIs that applications call rather than writing raw SQL.",
+    "examples": [
+      {
+        "title": "Simple procedure with parameters",
+        "sql": "DELIMITER //\nCREATE PROCEDURE GetCustomerOrders(IN cust_id INT)\nBEGIN\n    SELECT o.order_id, o.order_date, o.total\n    FROM orders o\n    WHERE o.customer_id = cust_id\n    ORDER BY o.order_date DESC;\nEND //\nDELIMITER ;\n\n-- Call it:\nCALL GetCustomerOrders(123);",
+        "explanation": "IN parameter receives a value. The procedure encapsulates the query logic. Applications call the procedure instead of writing the SQL.",
+        "scenario": "Standardized way to fetch customer order history across all applications."
+      },
+      {
+        "title": "Procedure with output parameter and logic",
+        "sql": "DELIMITER //\nCREATE PROCEDURE CalculateOrderTotal(\n    IN order_id INT,\n    OUT total_amount DECIMAL(10,2)\n)\nBEGIN\n    SELECT SUM(quantity * unit_price)\n    INTO total_amount\n    FROM order_items\n    WHERE order_id = order_id;\n    \n    IF total_amount IS NULL THEN\n        SET total_amount = 0;\n    END IF;\nEND //\nDELIMITER ;",
+        "explanation": "OUT parameter returns a value. Shows variable assignment, INTO clause, and conditional logic.",
+        "scenario": "Centralized business logic for order total calculation with tax, discounts, etc."
+      },
+      {
+        "title": "Complex procedure with transaction handling",
+        "sql": "DELIMITER //\nCREATE PROCEDURE PlaceOrder(\n    IN p_customer_id INT,\n    IN p_product_id INT,\n    IN p_quantity INT,\n    OUT p_order_id INT\n)\nBEGIN\n    DECLARE v_price DECIMAL(10,2);\n    DECLARE v_stock INT;\n    \n    START TRANSACTION;\n    \n    -- Check stock\n    SELECT price, stock INTO v_price, v_stock\n    FROM products WHERE product_id = p_product_id;\n    \n    IF v_stock < p_quantity THEN\n        ROLLBACK;\n        SIGNAL SQLSTATE '45000'\n            SET MESSAGE_TEXT = 'Insufficient stock';\n    ELSE\n        -- Create order\n        INSERT INTO orders (customer_id, total)\n        VALUES (p_customer_id, v_price * p_quantity);\n        SET p_order_id = LAST_INSERT_ID();\n        \n        -- Add order item\n        INSERT INTO order_items VALUES\n        (p_order_id, p_product_id, p_quantity, v_price);\n        \n        -- Update stock\n        UPDATE products\n        SET stock = stock - p_quantity\n        WHERE product_id = p_product_id;\n        \n        COMMIT;\n    END IF;\nEND //\nDELIMITER ;",
+        "explanation": "Shows variables, transaction control, error handling with SIGNAL, and multi-step business logic.",
+        "scenario": "E-commerce checkout: inventory check, order creation, and stock update as atomic operation."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Forgetting DELIMITER change",
+        "error_sql": "CREATE PROCEDURE test()\nBEGIN\n    SELECT 1;\nEND;",
+        "error_message": "ERROR 1064: You have an error in your SQL syntax near ''",
+        "why_it_happens": "The semicolon inside the procedure body terminates the CREATE PROCEDURE statement prematurely.",
+        "fix_sql": "DELIMITER //\nCREATE PROCEDURE test()\nBEGIN\n    SELECT 1;\nEND //\nDELIMITER ;",
+        "key_takeaway": "Always change DELIMITER before creating procedures with multiple statements."
+      },
+      {
+        "title": "Variable name conflicts with column names",
+        "error_sql": "CREATE PROCEDURE GetUser(IN user_id INT)\nBEGIN\n    SELECT * FROM users WHERE id = user_id;\nEND;",
+        "error_message": "No error, but may return unexpected results or all rows (column user_id = column user_id is always true)",
+        "why_it_happens": "MySQL can't distinguish between the parameter 'user_id' and the column 'user_id'.",
+        "fix_sql": "CREATE PROCEDURE GetUser(IN p_user_id INT)\nBEGIN\n    SELECT * FROM users WHERE id = p_user_id;\nEND;",
+        "key_takeaway": "Use naming conventions like p_ prefix for parameters to avoid conflicts."
+      }
+    ],
+    "reflection_prompts": [
+      "When is a stored procedure better than application code? When is it worse?",
+      "How do stored procedures help with database security?",
+      "What are the challenges of version controlling stored procedures?",
+      "How would you debug a stored procedure that's not working correctly?"
+    ],
+    "practice_suggestions": [
+      "Create a procedure to transfer funds between accounts with validation",
+      "Build a reporting procedure that accepts date range parameters",
+      "Write a procedure to archive old data to a history table",
+      "Design a user registration procedure with email uniqueness checking"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 35
+  },
+  "triggers": {
+    "definition": "A trigger is a stored program that automatically executes (fires) when a specific event occurs on a table - BEFORE or AFTER an INSERT, UPDATE, or DELETE. Triggers enforce rules automatically without application involvement.",
+    "why_it_matters": "Triggers ensure data integrity rules are followed regardless of which application modifies the data. They're perfect for audit logging (tracking who changed what), maintaining derived values, enforcing complex constraints, and cascading operations. However, they can make debugging harder and add hidden complexity.",
+    "examples": [
+      {
+        "title": "Auto-update timestamp on row modification",
+        "sql": "CREATE TRIGGER update_customer_timestamp\nBEFORE UPDATE ON customers\nFOR EACH ROW\nBEGIN\n    SET NEW.updated_at = NOW();\nEND;",
+        "explanation": "NEW refers to the row being modified. BEFORE UPDATE runs before the change is saved. Every UPDATE on customers automatically updates the timestamp.",
+        "scenario": "Audit trail: tracking when records were last modified without application code."
+      },
+      {
+        "title": "Audit log trigger",
+        "sql": "CREATE TRIGGER log_customer_changes\nAFTER UPDATE ON customers\nFOR EACH ROW\nBEGIN\n    INSERT INTO customer_audit_log (\n        customer_id,\n        changed_at,\n        old_email,\n        new_email,\n        old_status,\n        new_status\n    ) VALUES (\n        OLD.customer_id,\n        NOW(),\n        OLD.email,\n        NEW.email,\n        OLD.status,\n        NEW.status\n    );\nEND;",
+        "explanation": "AFTER UPDATE runs after the change. OLD contains pre-change values, NEW contains post-change values. Creates a complete change history.",
+        "scenario": "Compliance requirements: maintaining complete audit trail of customer data changes."
+      },
+      {
+        "title": "Enforce business rule before insert",
+        "sql": "CREATE TRIGGER validate_order_total\nBEFORE INSERT ON orders\nFOR EACH ROW\nBEGIN\n    IF NEW.total <= 0 THEN\n        SIGNAL SQLSTATE '45000'\n            SET MESSAGE_TEXT = 'Order total must be positive';\n    END IF;\n    \n    IF NEW.total > 10000 THEN\n        SET NEW.requires_approval = 1;\n    END IF;\nEND;",
+        "explanation": "BEFORE INSERT can validate data and raise errors. It can also modify values (NEW.requires_approval) before they're saved.",
+        "scenario": "Business rule enforcement: large orders require approval flag automatically set."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Recursive trigger causing infinite loop",
+        "error_sql": "CREATE TRIGGER update_total\nAFTER UPDATE ON orders\nFOR EACH ROW\nBEGIN\n    UPDATE orders SET total = total + 1 WHERE order_id = NEW.order_id;\nEND;",
+        "error_message": "ERROR 1442: Can't update table 'orders' in stored function/trigger because it is already used by statement",
+        "why_it_happens": "The trigger updates the same table it's watching, which would fire itself again infinitely.",
+        "fix_sql": "-- Use BEFORE UPDATE to modify values instead\nCREATE TRIGGER update_total\nBEFORE UPDATE ON orders\nFOR EACH ROW\nBEGIN\n    SET NEW.total = NEW.total + 1;\nEND;",
+        "key_takeaway": "Can't modify the same table in an AFTER trigger. Use BEFORE triggers to change NEW values."
+      },
+      {
+        "title": "Mutating table error in complex triggers",
+        "error_sql": "CREATE TRIGGER check_customer_limit\nBEFORE INSERT ON orders\nFOR EACH ROW\nBEGIN\n    DECLARE v_count INT;\n    SELECT COUNT(*) INTO v_count FROM orders\n    WHERE customer_id = NEW.customer_id;\n    IF v_count > 100 THEN\n        SIGNAL SQLSTATE '45000';\n    END IF;\nEND;",
+        "error_message": "Error reading from orders table while inserting (in some MySQL versions)",
+        "why_it_happens": "Reading from the same table you're modifying can cause consistency issues.",
+        "fix_sql": "-- Query a different table or use a stored procedure instead of trigger\n-- Or track count in a separate summary table updated by trigger",
+        "key_takeaway": "Avoid querying the trigger's own table. Use summary tables or application logic instead."
+      }
+    ],
+    "reflection_prompts": [
+      "What are the pros and cons of using triggers versus application-level validation?",
+      "How can triggers make debugging difficult?",
+      "When would you use BEFORE vs AFTER triggers?",
+      "What happens if a trigger fails? How does it affect the original operation?"
+    ],
+    "practice_suggestions": [
+      "Create an audit log system that tracks all changes to sensitive tables",
+      "Build a trigger that maintains a denormalized count in a parent table",
+      "Write a trigger that validates data across multiple tables",
+      "Design a soft-delete system using triggers (set deleted_at instead of DELETE)"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 30
+  },
+  "window-functions": {
+    "definition": "Window functions perform calculations across a set of table rows that are related to the current row - called the 'window' or 'partition'. Unlike aggregate functions with GROUP BY, window functions don't collapse rows; each row keeps its identity while gaining new calculated columns like row numbers, running totals, or rankings.",
+    "why_it_matters": "Window functions solve complex analytical queries that were previously difficult or impossible in SQL. Running totals, moving averages, rankings, and year-over-year comparisons become straightforward. They're essential for reporting, analytics, and business intelligence without needing to export data to Excel or Python.",
+    "examples": [
+      {
+        "title": "ROW_NUMBER for top-N per group",
+        "sql": "SELECT \n    department,\n    name,\n    salary,\n    ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS dept_rank\nFROM employees;",
+        "explanation": "PARTITION BY divides data into groups (departments). ORDER BY sorts within each group. ROW_NUMBER assigns 1, 2, 3... within each partition.",
+        "scenario": "Find top 3 highest-paid employees in each department."
+      },
+      {
+        "title": "Running total with cumulative SUM",
+        "sql": "SELECT \n    order_date,\n    daily_total,\n    SUM(daily_total) OVER (\n        ORDER BY order_date\n        ROWS UNBOUNDED PRECEDING\n    ) AS running_total\nFROM daily_sales;",
+        "explanation": "ROWS UNBOUNDED PRECEDING means 'sum all rows from the start up to current row'. Creates a running total without self-joins.",
+        "scenario": "Cumulative revenue report showing growth over time."
+      },
+      {
+        "title": "LAG and LEAD for period comparison",
+        "sql": "SELECT \n    month,\n    revenue,\n    LAG(revenue) OVER (ORDER BY month) AS prev_month,\n    revenue - LAG(revenue) OVER (ORDER BY month) AS month_change,\n    ROUND(\n        (revenue - LAG(revenue) OVER (ORDER BY month)) / LAG(revenue) OVER (ORDER BY month) * 100,\n        2\n    ) AS pct_change\nFROM monthly_revenue;",
+        "explanation": "LAG gets the value from the previous row. LEAD gets the next row's value. Essential for period-over-period analysis.",
+        "scenario": "Monthly business report showing growth rate and trends."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Using window functions in WHERE clause",
+        "error_sql": "SELECT name, salary,\n    RANK() OVER (ORDER BY salary DESC) AS salary_rank\nFROM employees\nWHERE salary_rank <= 10;",
+        "error_message": "Unknown column 'salary_rank' in 'where clause'",
+        "why_it_happens": "Window functions execute after WHERE filtering. The alias isn't available when WHERE runs.",
+        "fix_sql": "SELECT * FROM (\n    SELECT name, salary,\n        RANK() OVER (ORDER BY salary DESC) AS salary_rank\n    FROM employees\n) ranked\nWHERE salary_rank <= 10;",
+        "key_takeaway": "Use a subquery or CTE to filter on window function results."
+      },
+      {
+        "title": "Confusing RANK, DENSE_RANK, and ROW_NUMBER",
+        "error_sql": "-- Expecting top 3 but ties cause issues\nSELECT * FROM (\n    SELECT name, score,\n        RANK() OVER (ORDER BY score DESC) AS r\n    FROM students\n) t WHERE r <= 3;",
+        "error_message": "May return 4+ rows if there are ties for 3rd place",
+        "why_it_happens": "RANK gives same rank to ties and skips numbers (1, 2, 2, 4). ROW_NUMBER is sequential (1, 2, 3, 4). DENSE_RANK doesn't skip (1, 2, 2, 3).",
+        "fix_sql": "-- Use ROW_NUMBER for exactly N rows\n-- Use RANK for all tied with 3rd place\n-- Use DENSE_RANK for top 3 distinct scores",
+        "key_takeaway": "Choose the right ranking function: ROW_NUMBER (exact count), RANK (allow ties, skip numbers), DENSE_RANK (allow ties, no skips)."
+      }
+    ],
+    "reflection_prompts": [
+      "How would you calculate a 7-day moving average using window functions?",
+      "What's the difference between PARTITION BY and GROUP BY?",
+      "When would you use window functions instead of self-joins?",
+      "How do you handle ties when selecting 'top N' with window functions?"
+    ],
+    "practice_suggestions": [
+      "Calculate percentiles (median, 90th percentile) for employee salaries",
+      "Build a query showing each employee's salary relative to their department average",
+      "Create a running balance report for an account transaction history",
+      "Find consecutive days with above-average sales (streak detection)"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 35
+  },
+  "cte": {
+    "definition": "Common Table Expressions (CTEs) are named temporary result sets defined with the WITH clause. They make complex queries more readable by breaking them into named, logical steps. CTEs can be referenced multiple times in the main query and can even be recursive for hierarchical data.",
+    "why_it_matters": "CTEs transform unreadable nested subqueries into clear, step-by-step logic. They improve code maintainability, enable recursive queries (for org charts, bill of materials), and often optimize better than equivalent subqueries. They're essential for modern SQL development.",
+    "examples": [
+      {
+        "title": "Simple CTE for query organization",
+        "sql": "WITH high_value_orders AS (\n    SELECT order_id, customer_id, total\n    FROM orders\n    WHERE total > 1000\n),\ncustomer_totals AS (\n    SELECT \n        customer_id,\n        COUNT(*) AS order_count,\n        SUM(total) AS spent\n    FROM high_value_orders\n    GROUP BY customer_id\n)\nSELECT c.name, ct.order_count, ct.spent\nFROM customers c\nJOIN customer_totals ct ON c.customer_id = ct.customer_id\nWHERE ct.order_count >= 3;",
+        "explanation": "Each CTE builds on previous ones logically. Much clearer than nested subqueries. high_value_orders filters first, then customer_totals aggregates.",
+        "scenario": "Find VIP customers with 3+ high-value orders for premium support."
+      },
+      {
+        "title": "Recursive CTE for hierarchical data",
+        "sql": "WITH RECURSIVE employee_hierarchy AS (\n    -- Anchor member: top-level employees\n    SELECT id, name, manager_id, 0 AS level\n    FROM employees\n    WHERE manager_id IS NULL\n    \n    UNION ALL\n    \n    -- Recursive member: employees with managers\n    SELECT e.id, e.name, e.manager_id, eh.level + 1\n    FROM employees e\n    JOIN employee_hierarchy eh ON e.manager_id = eh.id\n)\nSELECT \n    REPEAT('  ', level) || name AS org_chart,\n    level\nFROM employee_hierarchy\nORDER BY level, name;",
+        "explanation": "Anchor finds starting points (CEO). Recursive part keeps joining until no more matches. Builds complete hierarchy tree.",
+        "scenario": "Generate organizational chart showing reporting structure with indentation."
+      },
+      {
+        "title": "CTE with multiple references",
+        "sql": "WITH monthly_stats AS (\n    SELECT \n        DATE_FORMAT(order_date, '%Y-%m') AS month,\n        COUNT(*) AS order_count,\n        AVG(total) AS avg_order,\n        SUM(total) AS revenue\n    FROM orders\n    GROUP BY DATE_FORMAT(order_date, '%Y-%m')\n)\nSELECT \n    m1.month,\n    m1.revenue,\n    m2.revenue AS prev_month_revenue,\n    ROUND((m1.revenue - m2.revenue) / m2.revenue * 100, 2) AS growth_pct\nFROM monthly_stats m1\nLEFT JOIN monthly_stats m2\n    ON m2.month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(m1.month, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')\nORDER BY m1.month;",
+        "explanation": "CTE is defined once but can be referenced multiple times (m1, m2). Self-joining the CTE for month-over-month comparison.",
+        "scenario": "Monthly growth report comparing revenue to previous month."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Forgetting RECURSIVE keyword",
+        "error_sql": "WITH employee_hierarchy AS (\n    SELECT id, name, manager_id, 0 AS level\n    FROM employees WHERE manager_id IS NULL\n    UNION ALL\n    SELECT e.id, e.name, e.manager_id, eh.level + 1\n    FROM employees e\n    JOIN employee_hierarchy eh ON e.manager_id = eh.id\n) SELECT * FROM employee_hierarchy;",
+        "error_message": "Recursive Common Table Expression 'employee_hierarchy' should contain exactly one UNION/UNION ALL",
+        "why_it_happens": "Without RECURSIVE, MySQL doesn't allow self-referencing CTEs that would cause infinite loops.",
+        "fix_sql": "WITH RECURSIVE employee_hierarchy AS (\n    SELECT id, name, manager_id, 0 AS level\n    FROM employees WHERE manager_id IS NULL\n    UNION ALL\n    SELECT e.id, e.name, e.manager_id, eh.level + 1\n    FROM employees e\n    JOIN employee_hierarchy eh ON e.manager_id = eh.id\n) SELECT * FROM employee_hierarchy;",
+        "key_takeaway": "Always use WITH RECURSIVE when the CTE references itself."
+      },
+      {
+        "title": "Infinite recursion without termination",
+        "error_sql": "WITH RECURSIVE numbers AS (\n    SELECT 1 AS n\n    UNION ALL\n    SELECT n + 1 FROM numbers\n) SELECT * FROM numbers;",
+        "error_message": "Recursive query aborted after 1000 iterations. Try increasing @@cte_max_recursion_depth",
+        "why_it_happens": "No termination condition - the CTE would generate numbers forever.",
+        "fix_sql": "WITH RECURSIVE numbers AS (\n    SELECT 1 AS n\n    UNION ALL\n    SELECT n + 1 FROM numbers\n    WHERE n < 100  -- Termination condition\n) SELECT * FROM numbers;",
+        "key_takeaway": "Always include a WHERE clause in the recursive member to ensure termination."
+      }
+    ],
+    "reflection_prompts": [
+      "When would you choose a CTE over a subquery? Over a temporary table?",
+      "How do recursive CTEs work 'under the hood'?",
+      "What are the performance implications of using many CTEs in one query?",
+      "How would you find all descendants in a category tree using recursive CTEs?"
+    ],
+    "practice_suggestions": [
+      "Build a bill of materials query using recursive CTE (product components)",
+      "Create a query finding all paths in a social network up to 3 degrees",
+      "Write a date series generator for reporting (all days in a month)",
+      "Implement a moving average calculation using CTEs"
+    ],
+    "difficulty": "advanced",
+    "estimated_minutes": 30
+  },
+  "normalization": {
+    "definition": "Normalization is the process of organizing data to minimize redundancy and dependency. It involves dividing large tables into smaller ones and defining relationships between them. The normal forms (1NF, 2NF, 3NF, BCNF) provide progressively stricter rules for eliminating data anomalies.",
+    "why_it_matters": "Proper normalization prevents data inconsistencies (update anomalies), reduces storage waste, and ensures data integrity. However, over-normalization can hurt read performance. Understanding normalization helps you design databases that balance integrity with performance, and recognize when denormalization might be appropriate.",
+    "examples": [
+      {
+        "title": "Unnormalized data (problems)",
+        "sql": "-- Orders table with redundant customer data\nCREATE TABLE bad_orders (\n    order_id INT PRIMARY KEY,\n    order_date DATE,\n    customer_name VARCHAR(100),\n    customer_email VARCHAR(100),\n    customer_address VARCHAR(200),\n    product_names VARCHAR(500),  -- 'Laptop, Mouse, Keyboard'\n    total DECIMAL(10,2)\n);",
+        "explanation": "Problems: Customer info repeats for each order. Product names concatenated in one field. Can't query individual products. Address change requires updating many rows.",
+        "scenario": "Anti-pattern: what NOT to do. Shows common beginner mistakes."
+      },
+      {
+        "title": "Third Normal Form (3NF) design",
+        "sql": "-- Separate entities, no transitive dependencies\nCREATE TABLE customers (\n    customer_id INT PRIMARY KEY,\n    name VARCHAR(100),\n    email VARCHAR(100) UNIQUE,\n    address_id INT,\n    FOREIGN KEY (address_id) REFERENCES addresses(address_id)\n);\n\nCREATE TABLE addresses (\n    address_id INT PRIMARY KEY,\n    street VARCHAR(200),\n    city VARCHAR(100),\n    postal_code VARCHAR(20)\n);\n\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,\n    order_date DATE,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);\n\nCREATE TABLE order_items (\n    order_id INT,\n    product_id INT,\n    quantity INT,\n    price DECIMAL(10,2),\n    PRIMARY KEY (order_id, product_id)\n);",
+        "explanation": "Each entity has its own table. No repeating groups (1NF). No partial dependencies (2NF). No transitive dependencies (3NF). Can update address in one place.",
+        "scenario": "Proper e-commerce schema that scales and maintains data integrity."
+      },
+      {
+        "title": "Intentional denormalization for performance",
+        "sql": "-- Add calculated/denormalized column for frequent query\nALTER TABLE orders ADD COLUMN total_amount DECIMAL(10,2);\n\n-- Maintain via trigger\nCREATE TRIGGER update_order_total\nAFTER INSERT ON order_items\nFOR EACH ROW\nBEGIN\n    UPDATE orders\n    SET total_amount = (\n        SELECT SUM(quantity * price)\n        FROM order_items\n        WHERE order_id = NEW.order_id\n    )\n    WHERE order_id = NEW.order_id;\nEND;",
+        "explanation": "Sometimes you intentionally denormalize (add redundancy) for performance, but you maintain it automatically via triggers to prevent anomalies.",
+        "scenario": "High-read scenarios where calculating totals on every query is too slow."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Storing comma-separated values",
+        "error_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    products VARCHAR(500)  -- '1,5,7,9'\n);",
+        "error_message": "No error, but can't properly query, index, or maintain this data",
+        "why_it_happens": "Beginners try to fit multiple values in one field to avoid 'complicated' joins.",
+        "fix_sql": "CREATE TABLE order_products (\n    order_id INT,\n    product_id INT,\n    PRIMARY KEY (order_id, product_id)\n);",
+        "key_takeaway": "Never store multiple values in one column. Use junction tables for many-to-many relationships."
+      },
+      {
+        "title": "Over-normalization hurting performance",
+        "error_sql": "-- 10-table join for a simple report\nSELECT o.*, c.name, a.street, a.city, p.postal_code_name, ...\nFROM orders o\nJOIN customers c ON ...\nJOIN addresses a ON ...\nJOIN postal_codes p ON ...\nJOIN cities ci ON ...\n-- etc",
+        "error_message": "Slow query due to excessive joins",
+        "why_it_happens": "Normalizing every possible attribute leads to too many joins for common queries.",
+        "fix_sql": "-- Consider keeping commonly-accessed data together\nCREATE TABLE order_summary AS\nSELECT o.*, c.name, c.email, a.city, a.state\nFROM orders o\nJOIN customers c ON ...\nJOIN addresses a ON ...;",
+        "key_takeaway": "Normalize to 3NF, then denormalize selectively for performance based on actual query patterns."
+      }
+    ],
+    "reflection_prompts": [
+      "What problems can occur when updating data in unnormalized tables?",
+      "How do you decide between normalization and performance?",
+      "When is it acceptable to violate normal forms?",
+      "What's the difference between 2NF and 3NF? Can you give an example of 2NF but not 3NF?"
+    ],
+    "practice_suggestions": [
+      "Normalize a spreadsheet of student course enrollments into proper tables",
+      "Design a database for a library (books, patrons, loans, fines)",
+      "Create a schema for a blog with users, posts, comments, tags, and categories",
+      "Analyze an existing database schema and identify normalization violations"
+    ],
+    "difficulty": "intermediate",
+    "estimated_minutes": 30
+  },
+  "foreign-key": {
+    "definition": "A FOREIGN KEY is a column (or set of columns) that establishes a link between data in two tables. It references the PRIMARY KEY of another table, enforcing referential integrity - ensuring relationships between tables remain valid and preventing orphaned records.",
+    "why_it_matters": "Foreign keys are the foundation of relational databases. They prevent invalid data (like orders for non-existent customers), enable cascading operations (delete related records automatically), and document relationships in the schema itself. Without foreign keys, your 'relational' database is just a collection of disconnected spreadsheets.",
+    "examples": [
+      {
+        "title": "Basic foreign key with CASCADE",
+        "sql": "CREATE TABLE departments (\n    dept_id INT PRIMARY KEY,\n    name VARCHAR(50)\n);\n\nCREATE TABLE employees (\n    emp_id INT PRIMARY KEY,\n    name VARCHAR(100),\n    dept_id INT,\n    FOREIGN KEY (dept_id) REFERENCES departments(dept_id)\n        ON DELETE SET NULL\n        ON UPDATE CASCADE\n);",
+        "explanation": "ON DELETE SET NULL: If department is deleted, employees' dept_id becomes NULL (not deleted). ON UPDATE CASCADE: If dept_id changes, all employee references update automatically.",
+        "scenario": "Department restructuring: renaming or reorganizing without losing employee data."
+      },
+      {
+        "title": "Foreign key with RESTRICT (prevent deletion)",
+        "sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT NOT NULL,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n        ON DELETE RESTRICT\n        ON UPDATE CASCADE\n);",
+        "explanation": "ON DELETE RESTRICT prevents deleting a customer who has orders. You must delete or reassign orders first. Protects against accidental data loss.",
+        "scenario": "E-commerce: Prevent deleting customers with order history for accounting compliance."
+      },
+      {
+        "title": "Self-referencing foreign key",
+        "sql": "CREATE TABLE employees (\n    emp_id INT PRIMARY KEY,\n    name VARCHAR(100),\n    manager_id INT,\n    FOREIGN KEY (manager_id) REFERENCES employees(emp_id)\n        ON DELETE SET NULL\n);",
+        "explanation": "A foreign key can reference its own table. This creates hierarchical relationships like employee-manager. ON DELETE SET NULL handles when a manager is deleted.",
+        "scenario": "Organizational chart where managers are also employees in the same table."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "Referencing non-unique column",
+        "error_sql": "CREATE TABLE customers (\n    email VARCHAR(100),  -- Not UNIQUE or PRIMARY KEY\n    name VARCHAR(100)\n);\n\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_email VARCHAR(100),\n    FOREIGN KEY (customer_email) REFERENCES customers(email)\n);",
+        "error_message": "Failed to add the foreign key constraint. Missing unique key for constraint",
+        "why_it_happens": "Foreign keys must reference a PRIMARY KEY or UNIQUE column to ensure exactly one match.",
+        "fix_sql": "ALTER TABLE customers ADD UNIQUE (email);\n-- OR reference the primary key instead:\nFOREIGN KEY (customer_id) REFERENCES customers(customer_id)",
+        "key_takeaway": "Foreign keys can only reference PRIMARY KEY or UNIQUE columns."
+      },
+      {
+        "title": "Data type mismatch between FK and PK",
+        "error_sql": "CREATE TABLE customers (\n    customer_id INT PRIMARY KEY\n);\n\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id VARCHAR(10),\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
+        "error_message": "Failed to add the foreign key constraint. Column types don't match",
+        "why_it_happens": "INT and VARCHAR are incompatible types, even if they contain the same-looking values.",
+        "fix_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,  -- Must match PK type\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
+        "key_takeaway": "Foreign key columns must have exactly the same data type as the referenced column."
+      }
+    ],
+    "reflection_prompts": [
+      "What would happen to data integrity if you didn't use foreign keys?",
+      "When would you choose SET NULL vs CASCADE vs RESTRICT for ON DELETE?",
+      "How do foreign keys affect insert performance? Is the trade-off worth it?",
+      "Can you have a foreign key that references a composite primary key?"
+    ],
+    "practice_suggestions": [
+      "Design a university schema with students, courses, professors, and enrollments",
+      "Create a social media schema with users, posts, comments, and likes (all with FKs)",
+      "Implement soft delete using status flags while maintaining FK relationships",
+      "Build a product catalog with categories, subcategories, and products"
+    ],
+    "difficulty": "beginner",
+    "estimated_minutes": 20
+  },
+  "primary-key": {
+    "definition": "A PRIMARY KEY is a column (or combination of columns) that uniquely identifies each row in a table. It enforces entity integrity by ensuring no duplicates and no NULL values. Every table should have a primary key - it's how you reference specific records.",
+    "why_it_matters": "Primary keys are essential for data integrity and relationships. They provide a reliable way to identify and retrieve specific rows, enable efficient indexing for fast lookups, and serve as the target for foreign key relationships. Without primary keys, you can't reliably update or delete specific rows, and relationships between tables become impossible.",
+    "examples": [
+      {
+        "title": "Simple auto-increment primary key",
+        "sql": "CREATE TABLE customers (\n    customer_id INT PRIMARY KEY AUTO_INCREMENT,\n    email VARCHAR(255) NOT NULL UNIQUE,\n    name VARCHAR(100)\n);",
+        "explanation": "AUTO_INCREMENT generates unique IDs automatically. INTEGER PKs are small, fast, and efficient for indexing and foreign key references.",
+        "scenario": "Standard approach for most tables: simple, fast, surrogate key."
+      },
+      {
+        "title": "Composite primary key",
+        "sql": "CREATE TABLE order_items (\n    order_id INT,\n    product_id INT,\n    quantity INT NOT NULL,\n    price DECIMAL(10,2) NOT NULL,\n    PRIMARY KEY (order_id, product_id),\n    FOREIGN KEY (order_id) REFERENCES orders(order_id),\n    FOREIGN KEY (product_id) REFERENCES products(product_id)\n);",
+        "explanation": "When a single column isn't unique enough, combine columns. Here, the same order can have multiple products, and the same product can be in multiple orders, but the combination is unique.",
+        "scenario": "Junction tables for many-to-many relationships often use composite keys."
+      },
+      {
+        "title": "Natural key as primary key",
+        "sql": "CREATE TABLE countries (\n    country_code CHAR(2) PRIMARY KEY,\n    name VARCHAR(100) NOT NULL,\n    population INT\n);\n\nCREATE TABLE users (\n    email VARCHAR(255) PRIMARY KEY,\n    name VARCHAR(100),\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
+        "explanation": "Natural keys use business data as the identifier. country_code 'US' or email 'user@example.com' are meaningful and unique. No separate ID column needed.",
+        "scenario": "Lookup tables or when the natural identifier is stable and never changes."
+      }
+    ],
+    "common_mistakes": [
+      {
+        "title": "No primary key on table",
+        "error_sql": "CREATE TABLE temp_data (\n    name VARCHAR(100),\n    value INT\n);",
+        "error_message": "No immediate error, but causes problems later",
+        "why_it_happens": "Temporary tables or quick prototypes often skip PK, causing issues with updates, replication, and ORM frameworks.",
+        "fix_sql": "CREATE TABLE temp_data (\n    id INT PRIMARY KEY AUTO_INCREMENT,\n    name VARCHAR(100),\n    value INT\n);",
+        "key_takeaway": "Always define a primary key, even on 'temporary' tables."
+      },
+      {
+        "title": "Using unstable data as natural key",
+        "error_sql": "CREATE TABLE employees (\n    email VARCHAR(255) PRIMARY KEY,\n    name VARCHAR(100)\n);\n\n-- Later: employee changes email\nUPDATE employees SET email = 'new@company.com' WHERE email = 'old@company.com';",
+        "error_message": "Cascading updates to all foreign key references, or broken references if CASCADE not set",
+        "why_it_happens": "Email addresses can change. Changing a primary key requires updating all foreign key references.",
+        "fix_sql": "CREATE TABLE employees (\n    employee_id INT PRIMARY KEY AUTO_INCREMENT,\n    email VARCHAR(255) UNIQUE,  -- Enforce uniqueness but allow changes\n    name VARCHAR(100)\n);",
+        "key_takeaway": "Use surrogate keys (auto-increment) when natural keys might change."
+      }
+    ],
+    "reflection_prompts": [
+      "What's the difference between a primary key and a unique constraint?",
+      "Why are auto-increment integers usually preferred over UUIDs for primary keys?",
+      "When might you choose a composite primary key over a single column?",
+      "What problems can occur when updating a primary key value?"
+    ],
+    "practice_suggestions": [
+      "Design primary keys for: a blog posts table, a user sessions table, a product reviews table",
+      "Create a schema where all tables have appropriate primary keys and relationships",
+      "Compare query performance between tables with and without primary keys",
+      "Design a multi-tenant system where primary keys need to be unique per tenant"
+    ],
+    "difficulty": "beginner",
+    "estimated_minutes": 15
   }
 }
