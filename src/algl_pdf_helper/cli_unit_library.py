@@ -506,6 +506,11 @@ def validate_command(
         "--use-generated-report",
         help="Use the pre-filter generated quality report instead of exported report",
     ),
+    recompute: bool = typer.Option(
+        False,
+        "--recompute",
+        help="Recompute validation instead of using stored report",
+    ),
 ):
     """
     Validate an existing unit library.
@@ -517,6 +522,7 @@ def validate_command(
         algl-pdf validate ./output/unit-library/
         algl-pdf validate ./output/unit-library/ --detailed
         algl-pdf validate ./output/unit-library/ --use-generated-report
+        algl-pdf validate ./output/unit-library/ --recompute
     """
     if not HAS_EXPORTER:
         console.print("[red]❌ Error: Unit library exporter not available[/red]")
@@ -683,9 +689,20 @@ def validate_command(
         if HAS_LEARNING_QUALITY_GATES:
             console.print("[bold]Quality Gates:[/bold]")
             
-            gates = LearningQualityGates()
-            report_generator = QualityReport(gates)
-            quality_report = report_generator.generate_full_report(library)
+            # Load the selected quality report file or recompute
+            report_file = library_dir / selected_report_file
+            if not recompute and report_file.exists():
+                with open(report_file, "r", encoding="utf-8") as f:
+                    quality_report = json.load(f)
+                console.print(f"[dim]Loaded quality report from {selected_report_file}[/dim]")
+            else:
+                if recompute:
+                    console.print("[yellow]Recomputing validation as requested...[/yellow]")
+                else:
+                    console.print(f"[yellow]Report file {selected_report_file} not found, recomputing validation...[/yellow]")
+                gates = LearningQualityGates()
+                report_generator = QualityReport(gates)
+                quality_report = report_generator.generate_full_report(library)
             
             summary = quality_report.get("summary", {})
             total_units = summary.get("total_units", 0)

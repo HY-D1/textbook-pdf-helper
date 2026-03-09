@@ -843,6 +843,10 @@ class InstructionalPipeline:
             model_name=self.config.llm_model,
         )
         
+        # Initialize misconception bank for error subtype lookup
+        if self._misconception_bank is None:
+            self._misconception_bank = MisconceptionBank.load_default()
+        
         self._instructional_units = []
         self._fallback_unit_ids = []
         
@@ -855,6 +859,9 @@ class InstructionalPipeline:
             if self._ontology:
                 prereqs = self._ontology.get_prerequisites(concept_id)
             
+            # Get error subtypes for this concept from misconception bank
+            error_subtypes = self._get_error_subtypes_for_concept(concept_id)
+            
             try:
                 # Generate all variants
                 variants = self._unit_generator.generate_all_variants(
@@ -862,6 +869,7 @@ class InstructionalPipeline:
                     source_blocks=blocks,
                     config=gen_config,
                     prerequisites=prereqs,
+                    error_subtypes=error_subtypes,
                 )
                 
                 # Add generated units
@@ -887,6 +895,27 @@ class InstructionalPipeline:
             )
         
         return self._instructional_units
+    
+    def _get_error_subtypes_for_concept(self, concept_id: str) -> list[str]:
+        """
+        Get error subtype IDs for a concept from the misconception bank.
+        
+        Args:
+            concept_id: Concept identifier
+            
+        Returns:
+            List of error subtype IDs associated with this concept
+        """
+        if self._misconception_bank is None:
+            return []
+        
+        # Get patterns for this concept
+        patterns = self._misconception_bank.get_patterns_for_concept(concept_id)
+        
+        # Extract unique error subtype IDs
+        subtypes = list(set(p.error_subtype_id for p in patterns if p.error_subtype_id))
+        
+        return subtypes
     
     def _generate_misconceptions(
         self, 

@@ -150,13 +150,22 @@ def _get_unit_definition(unit: InstructionalUnit) -> str:
 
 
 def _get_unit_examples(unit: InstructionalUnit) -> list[dict]:
-    """Extract SQL examples from unit content."""
+    """Extract SQL examples from unit content, handling all stage types."""
     content = unit.content or {}
     examples = []
     if isinstance(content, dict):
-        # Try various possible example fields
+        # L3 style: list of SQLExample objects
         if "examples" in content and isinstance(content["examples"], list):
             examples.extend(content["examples"])
+
+        # L2 style: single example_sql field
+        if "example_sql" in content and isinstance(content["example_sql"], str):
+            examples.append({
+                "sql": content["example_sql"],
+                "explanation": content.get("example_explanation", ""),
+            })
+
+        # Legacy/other styles
         if "example" in content and isinstance(content["example"], dict):
             examples.append(content["example"])
         if "sql" in content and isinstance(content["sql"], str):
@@ -341,6 +350,52 @@ def _check_extraction_confidence_too_low(unit: InstructionalUnit) -> tuple[bool,
         return False, f"Grounding confidence too low ({confidence:.2f}, min 0.5)"
     
     return True, f"Grounding confidence acceptable ({confidence:.2f})"
+
+
+def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if all practice links are unresolved placeholders.
+    
+    Only applies to L3_explanation units with practice_links content.
+    If no real problems exist for a concept, the unit should be filtered in production.
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"Practice links check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check practice links"
+    
+    practice_links = content.get("practice_links", [])
+    if not practice_links:
+        return True, "No practice links present"
+    
+    # Check if all links are unresolved
+    all_unresolved = True
+    for link in practice_links:
+        if isinstance(link, dict):
+            needs_resolution = link.get("needs_resolution", False)
+            problem_ids = link.get("problem_ids", [])
+        else:
+            # Handle PracticeLink objects
+            needs_resolution = getattr(link, "needs_resolution", False)
+            problem_ids = getattr(link, "problem_ids", [])
+        
+        # A link is considered resolved if needs_resolution is False OR
+        # if it has real problem IDs (not starting with "unresolved-")
+        if not needs_resolution:
+            # Check if problem IDs are real (not unresolved- prefixed)
+            has_real_problems = any(
+                not pid.startswith("unresolved-") for pid in problem_ids
+            )
+            if has_real_problems:
+                all_unresolved = False
+                break
+    
+    if all_unresolved:
+        return False, "All practice links are unresolved placeholders"
+    
+    return True, "Has resolved practice links with real problem IDs"
 
 
 # =============================================================================
@@ -601,6 +656,13 @@ HARD_BLOCK_RULES: list[ExportRule] = [
         description="Extraction confidence < 0.5",
         check_fn=_check_extraction_confidence_too_low,
         error_message="Extraction confidence too low - content may be inaccurate"
+    ),
+    ExportRule(
+        rule_id="unresolved_practice_links",
+        rule_type=RuleType.HARD_BLOCK,
+        description="All practice links are unresolved placeholders",
+        check_fn=_check_unresolved_practice_links,
+        error_message="All practice links are unresolved placeholders - real problem IDs required for production"
     ),
 ]
 

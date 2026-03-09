@@ -40,6 +40,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -802,6 +803,7 @@ class UnitGenerator:
         source_blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> dict[str, InstructionalUnit]:
         """
         Generate all 5 adaptive-stage variants for a concept.
@@ -811,6 +813,7 @@ class UnitGenerator:
             source_blocks: Source content blocks from PDF
             config: Generation configuration
             prerequisites: Optional list of prerequisite concept IDs
+            error_subtypes: Optional list of SQL-Engage error subtype IDs
             
         Returns:
             Dictionary mapping unit types to InstructionalUnit objects:
@@ -829,53 +832,54 @@ class UnitGenerator:
             raise ValueError("source_blocks cannot be empty")
         
         prereqs = prerequisites or []
+        subtypes = error_subtypes or []
         
         # Generate all variants
         variants: dict[str, InstructionalUnit] = {}
         
         try:
             variants["L1_hint"] = self.generate_L1_hint(
-                concept_id, source_blocks, config, prereqs
+                concept_id, source_blocks, config, prereqs, subtypes
             )
         except Exception as e:
             variants["L1_hint"] = self._create_fallback_unit(
-                concept_id, "L1_hint", "hint", config, str(e)
+                concept_id, "L1_hint", "hint", config, str(e), subtypes
             )
         
         try:
             variants["L2_hint_plus_example"] = self.generate_L2_hint_plus_example(
-                concept_id, source_blocks, config, prereqs
+                concept_id, source_blocks, config, prereqs, subtypes
             )
         except Exception as e:
             variants["L2_hint_plus_example"] = self._create_fallback_unit(
-                concept_id, "L2_hint_plus_example", "hint", config, str(e)
+                concept_id, "L2_hint_plus_example", "hint", config, str(e), subtypes
             )
         
         try:
             variants["L3_explanation"] = self.generate_L3_explanation(
-                concept_id, source_blocks, config, prereqs
+                concept_id, source_blocks, config, prereqs, subtypes
             )
         except Exception as e:
             variants["L3_explanation"] = self._create_fallback_unit(
-                concept_id, "L3_explanation", "explanation", config, str(e)
+                concept_id, "L3_explanation", "explanation", config, str(e), subtypes
             )
         
         try:
             variants["L4_reflective_note"] = self.generate_L4_reflective_note(
-                concept_id, source_blocks, config, prereqs
+                concept_id, source_blocks, config, prereqs, subtypes
             )
         except Exception as e:
             variants["L4_reflective_note"] = self._create_fallback_unit(
-                concept_id, "L4_reflective_note", "reflection", config, str(e)
+                concept_id, "L4_reflective_note", "reflection", config, str(e), subtypes
             )
         
         try:
             variants["reinforcement"] = self.generate_reinforcement_microcheck(
-                concept_id, source_blocks, config, prereqs
+                concept_id, source_blocks, config, prereqs, subtypes
             )
         except Exception as e:
             variants["reinforcement"] = self._create_fallback_unit(
-                concept_id, "reinforcement", "practice", config, str(e)
+                concept_id, "reinforcement", "practice", config, str(e), subtypes
             )
         
         return variants
@@ -1018,6 +1022,7 @@ class UnitGenerator:
         blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """
         Generate L1 hint variant - 1-2 sentence reminder with syntax cue.
@@ -1027,6 +1032,7 @@ class UnitGenerator:
             blocks: Source content blocks
             config: Generation configuration
             prerequisites: Optional prerequisite concept IDs
+            error_subtypes: Optional SQL-Engage error subtype IDs
             
         Returns:
             InstructionalUnit for L1 stage
@@ -1056,6 +1062,7 @@ class UnitGenerator:
             unit_type="hint",
             target_stage="L1_hint",
             content=content.model_dump(),
+            error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="beginner",
             evidence_spans=self._create_evidence_spans(blocks),
@@ -1070,6 +1077,7 @@ class UnitGenerator:
         blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """
         Generate L2 hint+example variant - brief hint with minimal worked example.
@@ -1079,6 +1087,7 @@ class UnitGenerator:
             blocks: Source content blocks
             config: Generation configuration
             prerequisites: Optional prerequisite concept IDs
+            error_subtypes: Optional SQL-Engage error subtype IDs
             
         Returns:
             InstructionalUnit for L2 stage
@@ -1086,7 +1095,7 @@ class UnitGenerator:
         source_text = "\n\n".join(b.text_content for b in blocks)
         
         # Get L1 content as base
-        l1_unit = self.generate_L1_hint(concept_id, blocks, config, prerequisites)
+        l1_unit = self.generate_L1_hint(concept_id, blocks, config, prerequisites, error_subtypes)
         l1_content = l1_unit.content
         
         # Generate example
@@ -1135,6 +1144,7 @@ class UnitGenerator:
             unit_type="hint",
             target_stage="L2_hint_plus_example",
             content=content.model_dump(),
+            error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="beginner",
             evidence_spans=self._create_evidence_spans(blocks),
@@ -1149,6 +1159,7 @@ class UnitGenerator:
         blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """
         Generate L3 full explanation variant - comprehensive with multiple examples.
@@ -1158,6 +1169,7 @@ class UnitGenerator:
             blocks: Source content blocks
             config: Generation configuration
             prerequisites: Optional prerequisite concept IDs
+            error_subtypes: Optional SQL-Engage error subtype IDs
             
         Returns:
             InstructionalUnit for L3 stage
@@ -1285,6 +1297,7 @@ class UnitGenerator:
             unit_type="explanation",
             target_stage="L3_explanation",
             content=content.model_dump(),
+            error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="intermediate",
             evidence_spans=self._create_evidence_spans(blocks),
@@ -1299,6 +1312,7 @@ class UnitGenerator:
         blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """
         Generate L4 reflective note variant - summary with reflection prompts.
@@ -1308,6 +1322,7 @@ class UnitGenerator:
             blocks: Source content blocks
             config: Generation configuration
             prerequisites: Optional prerequisite concept IDs
+            error_subtypes: Optional SQL-Engage error subtype IDs
             
         Returns:
             InstructionalUnit for L4 stage
@@ -1347,6 +1362,7 @@ class UnitGenerator:
             unit_type="reflection",
             target_stage="L4_reflective_note",
             content=content.model_dump(),
+            error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="intermediate",
             evidence_spans=self._create_evidence_spans(blocks),
@@ -1361,6 +1377,7 @@ class UnitGenerator:
         blocks: list[ContentBlock],
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """
         Generate reinforcement microcheck variant - 10-second recall prompt.
@@ -1370,6 +1387,7 @@ class UnitGenerator:
             blocks: Source content blocks
             config: Generation configuration
             prerequisites: Optional prerequisite concept IDs
+            error_subtypes: Optional SQL-Engage error subtype IDs
             
         Returns:
             InstructionalUnit for reinforcement stage
@@ -1405,6 +1423,7 @@ class UnitGenerator:
             unit_type="practice",
             target_stage="reinforcement",
             content=content.model_dump(),
+            error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="beginner",
             evidence_spans=self._create_evidence_spans(blocks),
@@ -1420,6 +1439,7 @@ class UnitGenerator:
         unit_type: str,
         config: GenerationConfig,
         error_message: str,
+        error_subtypes: list[str] | None = None,
     ) -> InstructionalUnit:
         """Create a fallback unit when generation fails."""
         # Map internal unit_type to canonical UnitType
@@ -1445,6 +1465,7 @@ class UnitGenerator:
                     "fallback_reason": error_message,
                 },
             },
+            error_subtypes=error_subtypes or [],
             prerequisites=[],
             difficulty="beginner",
             evidence_spans=[],
@@ -1939,8 +1960,12 @@ class UnitGenerator:
         
         Returns a list of problem IDs if found, or None if no mapping exists.
         """
-        # This could be extended to query a problem database or mapping file
-        # For now, return None to indicate no real problems are mapped
+        # Load practice map from data directory (project root)
+        practice_map_path = Path(__file__).parent.parent.parent / "data" / "practice_map.json"
+        if practice_map_path.exists():
+            with open(practice_map_path) as f:
+                practice_map = json.load(f)
+            return practice_map.get(concept_id)
         return None
     
     def _get_page_references_str(self, blocks: list[ContentBlock]) -> str:
