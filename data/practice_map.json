@@ -57,5 +57,15 @@
   "numeric-functions": ["problem-numeric-funcs-1", "problem-numeric-funcs-2"],
   "casting-conversion": ["problem-cast-1", "problem-cast-2"],
   "normalization": ["problem-normalization-1", "problem-normalization-2"],
-  "normal-forms": ["problem-normal-forms-1", "problem-normal-forms-2"]
+  "normal-forms": ["problem-normal-forms-1", "problem-normal-forms-2"],
+  "alias": ["problem-alias-1", "problem-alias-2"],
+  "correlated-subquery": ["problem-correlated-subquery-1", "problem-correlated-subquery-2"],
+  "data-types": ["problem-data-types-1", "problem-data-types-2"],
+  "exists-operator": ["problem-exists-1", "problem-exists-2"],
+  "null-handling": ["problem-null-1", "problem-null-2"],
+  "outer-join": ["problem-outer-join-1", "problem-outer-join-2"],
+  "pattern-matching": ["problem-pattern-1", "problem-pattern-2"],
+  "subqueries-intro": ["problem-subqueries-intro-1", "problem-subqueries-intro-2"],
+  "subquery-in-select": ["problem-subquery-select-1", "problem-subquery-select-2"],
+  "subquery-in-where": ["problem-subquery-where-1", "problem-subquery-where-2"]
 }
