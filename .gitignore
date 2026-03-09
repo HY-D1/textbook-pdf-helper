@@ -109,3 +109,4 @@ docs/**/*.md
 
 # Ensure no other markdown exceptions
 AGENTS.md
+test_debug_output/
