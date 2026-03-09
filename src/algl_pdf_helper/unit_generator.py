@@ -941,8 +941,11 @@ class UnitGenerator:
         """Create evidence span references from content blocks."""
         evidence_spans = []
         for b in blocks:
-            text_content = b.text_content
+            text_content = b.text_content or ""
             excerpt = text_content[:100] + "..." if len(text_content) > 100 else text_content
+            # Ensure excerpt is not empty (SourceSpan requires at least 1 character)
+            if not excerpt:
+                excerpt = "[No text content]"
             
             # Map BlockType to canonical string representation using explicit mapping
             block_type_str = "prose"  # Default fallback
@@ -972,6 +975,10 @@ class UnitGenerator:
     
     def _call_llm(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
         """Call LLM with prompt and return structured response."""
+        # If provider is "none", skip silently (quiet fallback mode)
+        if config.llm_provider == "none":
+            return {}
+        
         try:
             # Use MultiPassGenerator for Ollama provider
             if config.llm_provider == 'ollama':
@@ -996,7 +1003,10 @@ class UnitGenerator:
             return {}
             
         except Exception as e:
-            self.logger.warning(f"LLM call failed: {e}")
+            # Only log warning once per session, not per call
+            if not hasattr(self, '_llm_warning_logged'):
+                self.logger.warning(f"LLM unavailable ({config.llm_provider}), using grounded fallback")
+                self._llm_warning_logged = True
             return {}
     
     def _parse_json_response(self, response: str) -> dict[str, Any]:
@@ -1037,7 +1047,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L1 stage
         """
-        source_text = "\n\n".join(b.text_content for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks if b.text_content)
         prompt = self.prompt_builder.build_L1_prompt(concept_id, source_text)
         
         # Try LLM generation
@@ -1092,7 +1102,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L2 stage
         """
-        source_text = "\n\n".join(b.text_content for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks if b.text_content)
         
         # Get L1 content as base
         l1_unit = self.generate_L1_hint(concept_id, blocks, config, prerequisites, error_subtypes)
@@ -1174,7 +1184,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L3 stage
         """
-        source_text = "\n\n".join(b.text_content for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks if b.text_content)
         
         # Generate definition
         def_prompt = self.prompt_builder.build_definition_prompt(
@@ -1327,7 +1337,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for L4 stage
         """
-        source_text = "\n\n".join(b.text_content for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks if b.text_content)
         
         prompt = self.prompt_builder.build_reflection_prompt(concept_id, source_text)
         llm_response = self._call_llm(prompt, config)
@@ -1392,7 +1402,7 @@ class UnitGenerator:
         Returns:
             InstructionalUnit for reinforcement stage
         """
-        source_text = "\n\n".join(b.text_content for b in blocks)
+        source_text = "\n\n".join(b.text_content for b in blocks if b.text_content)
         
         prompt = self.prompt_builder.build_reinforcement_prompt(concept_id, source_text)
         llm_response = self._call_llm(prompt, config)
@@ -1488,6 +1498,7 @@ class UnitGenerator:
             "aggregate-functions": "Use aggregate functions like COUNT, SUM, AVG to calculate summary values.",
             "group-by": "Use GROUP BY to organize rows with the same values into summary rows.",
             "subqueries": "Use subqueries to nest SELECT statements inside other queries.",
+            "exists-operator": "Use EXISTS to test if a subquery returns any rows. Returns TRUE or FALSE.",
         }
         return hints.get(concept_id, f"Remember how to use {concept_id}.")
     
@@ -1500,6 +1511,7 @@ class UnitGenerator:
             "aggregate-functions": "SELECT AGG(column) FROM table;",
             "group-by": "SELECT ... FROM ... GROUP BY column;",
             "subqueries": "SELECT ... FROM ... WHERE column = (SELECT ...);",
+            "exists-operator": "SELECT ... FROM ... WHERE EXISTS (SELECT 1 FROM ... WHERE ...);",
         }
         return cues.get(concept_id, f"{concept_id} syntax pattern")
     
@@ -1512,6 +1524,7 @@ class UnitGenerator:
             "aggregate-functions": "When calculating summary statistics",
             "group-by": "When grouping data for aggregate calculations",
             "subqueries": "When you need results from one query in another",
+            "exists-operator": "When checking if related data exists without needing the actual values",
         }
         return contexts.get(concept_id, f"When working with {concept_id}")
     
@@ -1524,6 +1537,7 @@ class UnitGenerator:
             "aggregate-functions": "SELECT city, COUNT(*) FROM users GROUP BY city;",
             "group-by": "SELECT city, AVG(age) FROM users GROUP BY city HAVING COUNT(*) > 2;",
             "subqueries": "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);",
+            "exists-operator": "SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);",
         }
         return examples.get(concept_id, f"SELECT * FROM users LIMIT 5;")
     
@@ -1536,6 +1550,7 @@ class UnitGenerator:
             "aggregate-functions": "Mixing aggregate and non-aggregate columns without GROUP BY",
             "group-by": "Including columns in SELECT that aren't in GROUP BY",
             "subqueries": "Using = with subqueries that return multiple rows",
+            "exists-operator": "Using SELECT * in EXISTS subquery instead of SELECT 1 (performance issue)",
         }
         return pitfalls.get(concept_id, "Watch for syntax errors")
     
@@ -1548,6 +1563,7 @@ class UnitGenerator:
             "aggregate-functions": "Aggregate functions perform calculations on sets of values and return a single result.",
             "group-by": "GROUP BY organizes rows with the same values in specified columns into summary rows.",
             "subqueries": "A subquery is a SELECT statement nested inside another SQL statement.",
+            "exists-operator": "EXISTS tests whether a subquery returns any rows, returning TRUE if rows exist or FALSE if empty.",
         }
         return definitions.get(concept_id, f"{concept_id} is an important SQL concept.")
     
@@ -1604,6 +1620,7 @@ class UnitGenerator:
             "aggregate-functions": ["group-by", "having", "select-basic"],
             "group-by": ["aggregate-functions", "having", "select-basic"],
             "subqueries": ["select-basic", "where-clause", "joins"],
+            "exists-operator": ["subqueries", "where-clause", "correlated-subquery"],
         }
         return connections.get(concept_id, [])
     
@@ -1730,6 +1747,12 @@ class UnitGenerator:
         - "X refers to ..."
         - "X allows you to ..."
         
+        Rejects heading-like content:
+        - Chapter titles ("Chapter 1: ...")
+        - All-caps headings
+        - Table of contents patterns
+        - "Reference Document" text
+        
         Returns the best matching sentence or None if no good match found.
         """
         definitional_patterns = [
@@ -1741,63 +1764,184 @@ class UnitGenerator:
             r'\bis\s+used\s+(?:for|to)\s+',
             r'\bprovides\s+(?:a|an)\s+way\s+to\s+',
             r'\benables?\s+',
+            r'\bretrieves?\s+',
+            r'\breturns?\s+',
+            r'\bcreates?\s+',
+            r'\bmodifies?\s+',
+            r'\bdeletes?\s+',
         ]
         
         candidates = []
         
+        # Priority order for block types - prefer explanatory prose over headings
+        block_type_priority = {
+            BlockType.EXPLANATORY_PROSE: 3,
+            BlockType.GLOSSARY: 3,
+            BlockType.SIDEBAR: 2,
+            BlockType.SUMMARY: 2,
+            BlockType.HEADING: 0,
+            BlockType.SUBHEADING: 0,
+        }
+        
         for block in blocks:
             if not block.text_content:
                 continue
-                
-            # Prioritize explanatory prose and glossary blocks
-            is_explanatory = (
-                hasattr(block, 'block_type') and 
-                block.block_type in (BlockType.EXPLANATORY_PROSE, BlockType.GLOSSARY)
-            )
             
             text = block.text_content.strip()
-            # Split into sentences (simple heuristic)
             sentences = re.split(r'(?<=[.!?])\s+', text)
             
             for sentence in sentences:
                 sentence = sentence.strip()
+                sentence_lower = sentence.lower()
+                
                 # Skip sentences that are too short or too long
                 if len(sentence) < 30 or len(sentence) > 300:
                     continue
-                    
+                
+                # REJECT: Chapter titles ("Chapter 1: Introduction", "Chapter One")
+                if re.match(r'^Chapter\s+\d+[:\s]', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: More chapter/section patterns ("Section 3.2", "Unit 5", "Module 1")
+                if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: All-caps headings (likely section titles)
+                if sentence.isupper():
+                    continue
+                
+                # REJECT: Table of contents patterns ("1 SELECT Statement", "2.1 Joins")
+                if re.match(r'^\d+(?:\.\d+)?\s+[A-Z]', sentence):
+                    continue
+                
+                # REJECT: "Reference Document", "Golden Reference" or similar meta-text
+                if 'reference document' in sentence_lower or 'golden reference' in sentence_lower:
+                    continue
+                
+                # REJECT: Generic textbook boilerplate
+                if re.search(r'\blearning objective', sentence_lower):
+                    continue
+                
+                # REJECT: Pattern "X - Examples" or "X - Overview" or "X - Summary"
+                if re.search(r'\s+-\s+(Examples|Overview|Summary|Details|Introduction|Conclusion)$', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: Title case only with no small words (likely a heading)
+                words = sentence.split()
+                if words and all(w[0].isupper() for w in words if w and w[0].isalpha()):
+                    # Might be a title, check if it has any "small words"
+                    small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by']
+                    if not any(w.lower() in small_words for w in words):
+                        continue
+                
+                # REJECT: Very short definitions (less than 40 chars after stripping)
+                if len(sentence.strip()) < 40:
+                    continue
+                
                 # Check for definitional patterns
                 score = 0
-                sentence_lower = sentence.lower()
                 
                 for pattern in definitional_patterns:
                     if re.search(pattern, sentence_lower):
                         score += 2
                 
-                # Bonus for explanatory blocks
-                if is_explanatory:
-                    score += 1
-                    
+                # Bonus for priority block types
+                if hasattr(block, 'block_type') and block.block_type in block_type_priority:
+                    score += block_type_priority[block.block_type]
+                
                 # Bonus for sentences starting with uppercase (likely complete sentences)
-                if sentence[0].isupper():
+                if sentence and sentence[0].isupper():
                     score += 0.5
-                    
+                
                 # Penalty for sentences with too many SQL keywords (likely example code)
                 sql_keywords = ['select', 'from', 'where', 'join', 'group by']
                 sql_count = sum(1 for kw in sql_keywords if kw in sentence_lower)
                 if sql_count >= 2:
                     score -= 3
-                    
+                
                 if score > 0:
                     candidates.append((sentence, score))
         
         if not candidates:
             return None
-            
+        
         # Sort by score descending, then by length (prefer medium-length definitions)
         candidates.sort(key=lambda x: (x[1], -abs(len(x[0]) - 150)), reverse=True)
         return candidates[0][0]
 
-    def _extract_why_it_matters(self, blocks: list[ContentBlock]) -> str | None:
+    def _is_heading_like_definition(self, text: str) -> bool:
+        """
+        Check if text looks like a heading or reference rather than a definition.
+        
+        Returns True if the text appears to be:
+        - Chapter titles ("Chapter 1: Introduction")
+        - Section headings ("Section 3.2 - Examples")
+        - Reference document text ("Golden Reference...")
+        - All-caps headings
+        - Title-only text without sentence structure
+        """
+        if not text:
+            return True
+        
+        text_lower = text.lower()
+        text_stripped = text.strip()
+        
+        # Check for chapter/section/unit patterns
+        if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+', text, re.IGNORECASE):
+            return True
+        
+        # Check for "Golden Reference" or "Reference Document"
+        if 'golden reference' in text_lower or 'reference document' in text_lower:
+            return True
+        
+        # Check for "References" or "Bibliography" as standalone
+        if re.match(r'^References?$', text_stripped, re.IGNORECASE):
+            return True
+        
+        # Check for heading patterns like "X - Examples" or "X - Overview"
+        if re.search(r'\s+-\s+(Examples|Overview|Summary|Details|Introduction|Conclusion)$', text, re.IGNORECASE):
+            return True
+        
+        # All-caps is likely a heading
+        if text.isupper():
+            return True
+        
+        # Title case without small words is likely a heading
+        words = text.split()
+        if len(words) > 1 and all(w[0].isupper() for w in words if w and w[0].isalpha()):
+            small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by', 'as']
+            if not any(w.lower() in small_words for w in words):
+                return True
+        
+        # Very short text is likely not a proper definition
+        if len(text_stripped) < 40:
+            return True
+        
+        return False
+
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate simple Jaccard similarity between two texts."""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Normalize and tokenize
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        # Calculate Jaccard similarity
+        intersection = words1 & words2
+        union = words1 | words2
+        
+        return len(intersection) / len(union) if union else 0.0
+
+    def _extract_why_it_matters(
+        self, 
+        blocks: list[ContentBlock], 
+        definition: str | None = None
+    ) -> str | None:
         """
         Extract 'why it matters' content from evidence spans.
         
@@ -1806,6 +1950,8 @@ class UnitGenerator:
         - Use-case mentions ("commonly used for...", "essential when...")
         - Benefit statements ("allows you to...", "helps...")
         
+        Ensures the result differs from the definition to avoid duplication.
+        
         Returns the best matching content or None if no good match found.
         """
         why_patterns = [
@@ -1813,9 +1959,11 @@ class UnitGenerator:
             (r'\bwithout\s+this\s*[,;]?\s*\w+', 3),
             (r'\bcommonly\s+(?:used|applied)\s+(?:for|when|in)\s+', 3),
             (r'\bessential\s+(?:when|for|to)\s+', 3),
+            (r'\bcrucial\s+(?:when|for|to)\s+', 3),
             (r'\bimportant\s+(?:when|for|to)\s+', 2),
             (r'\ballows?\s+(?:you\s+)?to\s+', 2),
             (r'\bhelps?\s+(?:you\s+)?(?:to\s+)?\w+', 2),
+            (r'\bthis\s+helps', 2),
             (r'\buseful\s+(?:when|for)\s+', 2),
             (r'\bnecessary\s+(?:when|for)\s+', 2),
             (r'\brequired\s+(?:when|for|to)\s+', 2),
@@ -1825,43 +1973,71 @@ class UnitGenerator:
         
         candidates = []
         
+        # Priority order for block types
+        block_type_priority = {
+            BlockType.EXPLANATORY_PROSE: 3,
+            BlockType.SUMMARY: 2,
+            BlockType.SIDEBAR: 1,
+            BlockType.HEADING: 0,
+            BlockType.SUBHEADING: 0,
+        }
+        
         for block in blocks:
             if not block.text_content:
                 continue
-                
+            
             text = block.text_content.strip()
             sentences = re.split(r'(?<=[.!?])\s+', text)
             
             for sentence in sentences:
                 sentence = sentence.strip()
+                sentence_lower = sentence.lower()
+                
                 # Skip sentences that are too short or too long
                 if len(sentence) < 25 or len(sentence) > 250:
                     continue
-                    
+                
+                # REJECT: Generic definitions that don't explain "why"
+                generic_phrases = [
+                    'important for effective sql',
+                    'essential for database',
+                    'crucial for sql',
+                    'fundamental concept',
+                ]
+                if any(phrase in sentence_lower for phrase in generic_phrases):
+                    continue
+                
                 # Check for why-it-matters patterns
                 score = 0
-                sentence_lower = sentence.lower()
                 
                 for pattern, weight in why_patterns:
                     if re.search(pattern, sentence_lower):
                         score += weight
                 
+                # Bonus for priority block types
+                if hasattr(block, 'block_type') and block.block_type in block_type_priority:
+                    score += block_type_priority[block.block_type]
+                
                 # Bonus for sentences starting with uppercase
                 if sentence and sentence[0].isupper():
                     score += 0.5
-                    
+                
                 # Penalty for code-heavy sentences
                 sql_keywords = ['select', 'from', 'where', 'join']
                 sql_count = sum(1 for kw in sql_keywords if kw in sentence_lower)
                 if sql_count >= 2:
                     score -= 2
-                    
+                
+                # Penalty for similarity to definition (avoid duplication)
+                if definition and self._text_similarity(sentence, definition) > 0.5:
+                    score -= 5  # Heavy penalty
+                
                 if score > 0:
                     candidates.append((sentence, score))
         
         if not candidates:
             return None
-            
+        
         # Sort by score descending
         candidates.sort(key=lambda x: x[1], reverse=True)
         return candidates[0][0]
@@ -1994,38 +2170,71 @@ class UnitGenerator:
             "common_mistakes": concept.get("common_mistakes", []),
         }
     
+    def _is_heading_like(self, text: str) -> bool:
+        """Check if text looks like a heading rather than explanatory content."""
+        text = text.strip()
+        text_lower = text.lower()
+        
+        # Chapter titles
+        if re.match(r'^Chapter\s+\d+[:\s]', text, re.IGNORECASE):
+            return True
+        
+        # All-caps headings
+        if text.isupper():
+            return True
+        
+        # ToC-like patterns ("1 SELECT Statement", "2.1 Joins")
+        if re.match(r'^\d+(?:\.\d+)?\s+[A-Z]', text):
+            return True
+        
+        # Reference document text
+        if 'reference document' in text_lower:
+            return True
+        
+        # Learning objectives heading
+        if re.search(r'\blearning objective', text_lower):
+            return True
+        
+        return False
+
     def _build_grounded_L1_content(
         self, 
         concept_id: str, 
         blocks: list[ContentBlock]
     ) -> L1Content:
-        """Build L1 hint content grounded in evidence spans (no-LLM path)."""
+        """Build L1 hint content grounded in evidence spans (no-LLM path).
+        
+        Creates tutoring-style hints that avoid:
+        - Chapter titles and section headings
+        - Page references in learner-facing text
+        - Generic boilerplate text
+        """
         # Get info from ontology
         ontology = self._get_ontology_info(concept_id)
         
         # Extract key terms from blocks
         key_terms = self._extract_key_terms_from_blocks(blocks)
         
-        # Get page references
-        page_ref = self._get_page_references_str(blocks)
+        # Build hint text - prefer extracted definition, then ontology, then default
+        extracted_def = self._extract_definition_sentence(blocks)
         
-        # Build hint text using ontology if available, otherwise extract from blocks
-        if ontology.get("definition"):
+        if extracted_def and not self._is_heading_like(extracted_def):
+            hint_text = extracted_def
+        elif ontology.get("definition"):
             hint_text = ontology["definition"]
         else:
             first_sentence = self._get_first_sentence_from_blocks(blocks)
-            if first_sentence:
+            if first_sentence and not self._is_heading_like(first_sentence):
                 hint_text = first_sentence
             else:
                 hint_text = self._get_default_hint(concept_id)
         
-        # Add key terms if found
+        # Add key terms if found (for tutoring context)
         if key_terms:
             hint_text += f" Key concepts: {', '.join(key_terms)}."
         
-        # Add page reference
-        if page_ref:
-            hint_text += f" See {page_ref} for details."
+        # NOTE: Page references are intentionally NOT included in learner-facing text.
+        # Source pages are already tracked in evidence_spans metadata for UI display.
         
         # Build syntax cue
         if ontology.get("syntax_pattern"):
@@ -2099,20 +2308,39 @@ class UnitGenerator:
         
         # Build definition: Try to extract from text first, then ontology, then default
         definition = self._extract_definition_sentence(blocks)
+        
+        # Check if extracted definition is heading-like - if so, fall back to ontology
+        if definition and self._is_heading_like_definition(definition):
+            definition = None  # Force fallback
+        
         if not definition:
             if ontology.get("definition"):
                 definition = ontology["definition"]
             else:
                 first_sentence = self._get_first_sentence_from_blocks(blocks)
-                definition = first_sentence if first_sentence else self._get_default_definition(concept_id)
+                # Also check if first sentence is heading-like
+                if first_sentence and not self._is_heading_like_definition(first_sentence):
+                    definition = first_sentence
+                else:
+                    definition = self._get_default_definition(concept_id)
         
         # Build why it matters: Try to extract from text first, then ontology, then default
-        why_it_matters = self._extract_why_it_matters(blocks)
+        # Pass definition to avoid duplication
+        why_it_matters = self._extract_why_it_matters(blocks, definition=definition)
         if not why_it_matters:
             if ontology.get("use_when"):
                 why_it_matters = f"Use this when {ontology['use_when']}"
             else:
-                why_it_matters = "Important for effective SQL querying."
+                # Generate a specific "why" that's different from definition
+                why_it_matters = f"Understanding {concept_id} helps you work effectively with SQL databases."
+        
+        # Final check: ensure why_it_matters differs significantly from definition
+        if self._text_similarity(why_it_matters, definition) > 0.6:
+            # They're too similar - use ontology or generate different text
+            if ontology.get("use_when"):
+                why_it_matters = f"This is essential when {ontology['use_when']}"
+            else:
+                why_it_matters = f"Understanding {concept_id} helps you work effectively with SQL databases."
         
         # Get learning objectives from ontology
         learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
@@ -2127,11 +2355,19 @@ class UnitGenerator:
                 sql = self.transformer.transform_to_practice_schema(
                     ex["sql"], ["Sailors", "Boats", "Reserves"]
                 )
+                # Ensure scenario and explanation meet minimum length requirements
+                scenario = ex.get('explanation') or ""
+                if len(scenario) < 10:
+                    scenario = f"SQL example demonstrating {concept_id} usage pattern"
+                explanation = ex.get('explanation') or ""
+                if len(explanation) < 20:
+                    explanation = f"This example demonstrates {concept_id} concepts with practical SQL code."
+                
                 examples.append(SQLExample(
                     title=f"Example {i+1} (page {ex['page']})" if ex.get('page') else f"Example {i+1}",
-                    scenario=ex.get('explanation', f"From textbook page {ex['page']}") if ex.get('page') else "Source-based example",
+                    scenario=scenario,
                     sql=sql,
-                    explanation=ex.get('explanation', f"Example extracted from page {ex['page']}.") if ex.get('page') else "Example from source material.",
+                    explanation=explanation,
                     expected_output="Returns matching rows",
                     schema_used="source",  # Mark as from source
                 ))
