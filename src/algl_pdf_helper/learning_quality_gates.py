@@ -1002,6 +1002,114 @@ class LearningQualityGates:
                 severity=Severity.INFO,
             )
     
+    def validate_practice_links_real(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Check that practice links point to real problems, not placeholders.
+        
+        Validates:
+        - Practice links use real problem IDs (not 'problem-*' or 'unresolved-*')
+        - No placeholder practice links in production content
+        - Links have proper metadata when available
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with validation results
+        """
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=True,
+                score=1.0,
+                message="Content format not supported for practice link validation",
+                severity=Severity.INFO,
+            )
+        
+        # Only relevant for units with practice links
+        practice_links = content.get("practice_links", [])
+        if not practice_links:
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=True,
+                score=1.0,
+                message="No practice links to validate",
+                severity=Severity.INFO,
+            )
+        
+        # Count placeholder patterns
+        placeholder_count = 0
+        unresolved_count = 0
+        total_links = 0
+        
+        for link in practice_links:
+            if isinstance(link, dict):
+                problem_ids = link.get("problem_ids", [])
+                needs_resolution = link.get("needs_resolution", False)
+            else:
+                # Handle PracticeLink objects
+                problem_ids = getattr(link, "problem_ids", [])
+                needs_resolution = getattr(link, "needs_resolution", False)
+            
+            for pid in problem_ids:
+                total_links += 1
+                if pid.startswith("unresolved-"):
+                    unresolved_count += 1
+                    placeholder_count += 1
+                elif pid.startswith("problem-"):
+                    placeholder_count += 1
+                elif needs_resolution:
+                    placeholder_count += 1
+        
+        if total_links == 0:
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=True,
+                score=1.0,
+                message="No problem IDs found in practice links",
+                severity=Severity.INFO,
+            )
+        
+        # Calculate score based on real vs placeholder links
+        real_count = total_links - placeholder_count
+        score = real_count / total_links
+        
+        if placeholder_count == total_links:
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=False,
+                score=0.0,
+                message=f"All {total_links} practice links are placeholders - replace with real problem IDs",
+                severity=Severity.WARNING,
+            )
+        
+        if unresolved_count > 0:
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=False,
+                score=score,
+                message=f"{unresolved_count} unresolved practice links found - integration with practice system needed",
+                severity=Severity.WARNING,
+            )
+        
+        if placeholder_count > 0:
+            return QualityCheck(
+                check_name="practice_links_real",
+                passed=True,
+                score=score,
+                message=f"{placeholder_count}/{total_links} practice links are placeholders - {real_count} are real",
+                severity=Severity.WARNING,
+            )
+        
+        return QualityCheck(
+            check_name="practice_links_real",
+            passed=True,
+            score=1.0,
+            message=f"All {total_links} practice links point to real problem IDs",
+            severity=Severity.INFO,
+        )
+    
     def validate_takeaway_present(self, unit: InstructionalUnit) -> QualityCheck:
         """
         Validate that a concise takeaway is present (stage-aware).
@@ -1677,6 +1785,7 @@ class QualityReport:
             self.gates.validate_content_relevance(unit),
             self.gates.validate_explanation_quality(unit),
             self.gates.validate_practice_included(unit),
+            self.gates.validate_practice_links_real(unit),
             self.gates.validate_takeaway_present(unit),
             self.gates.validate_prerequisite_tags(unit),
             self.gates.validate_error_subtype_tags(unit),
@@ -1728,7 +1837,7 @@ class QualityReport:
             "prerequisite_tags", "error_subtype_tags", "stage_variants", "reinforcement_present",
         }
         export_integrity = {
-            "no_placeholders", "learner_ready",
+            "no_placeholders", "learner_ready", "practice_links_real",
         }
         
         if check_name in content_validity:
@@ -1787,6 +1896,10 @@ class QualityReport:
             elif check_name == "practice_included":
                 recommendations.append(
                     f"[{count} units] Include practice items aligned to concepts"
+                )
+            elif check_name == "practice_links_real":
+                recommendations.append(
+                    f"[{count} units] Replace placeholder practice IDs with real problem IDs from practice system"
                 )
             elif check_name == "prerequisite_tags":
                 recommendations.append(

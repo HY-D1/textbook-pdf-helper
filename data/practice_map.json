@@ -1,71 +1,1389 @@
 {
-  "select-basic": ["problem-select-1", "problem-select-2"],
-  "where-clause": ["problem-where-1", "problem-where-2"],
-  "joins-intro": ["problem-join-1", "problem-join-2"],
-  "inner-join": ["problem-inner-join-1", "problem-inner-join-2"],
-  "left-join": ["problem-left-join-1", "problem-left-join-2"],
-  "right-join": ["problem-right-join-1", "problem-right-join-2"],
-  "full-join": ["problem-full-join-1", "problem-full-join-2"],
-  "cross-join": ["problem-cross-join-1", "problem-cross-join-2"],
-  "self-join": ["problem-self-join-1", "problem-self-join-2"],
-  "aggregate-functions": ["problem-aggregate-1", "problem-aggregate-2"],
-  "group-by": ["problem-group-by-1", "problem-group-by-2"],
-  "having-clause": ["problem-having-1", "problem-having-2"],
-  "order-by": ["problem-order-by-1", "problem-order-by-2"],
-  "limit-offset": ["problem-limit-1", "problem-limit-2"],
-  "distinct": ["problem-distinct-1", "problem-distinct-2"],
-  "subqueries": ["problem-subquery-1", "problem-subquery-2"],
-  "correlated-subqueries": ["problem-correlated-1", "problem-correlated-2"],
-  "exists-subqueries": ["problem-exists-1", "problem-exists-2"],
-  "in-subqueries": ["problem-in-1", "problem-in-2"],
-  "union": ["problem-union-1", "problem-union-2"],
-  "intersect": ["problem-intersect-1", "problem-intersect-2"],
-  "except": ["problem-except-1", "problem-except-2"],
-  "insert-statement": ["problem-insert-1", "problem-insert-2"],
-  "update-statement": ["problem-update-1", "problem-update-2"],
-  "delete-statement": ["problem-delete-1", "problem-delete-2"],
-  "create-table": ["problem-create-table-1", "problem-create-table-2"],
-  "alter-table": ["problem-alter-table-1", "problem-alter-table-2"],
-  "drop-table": ["problem-drop-table-1", "problem-drop-table-2"],
-  "constraints": ["problem-constraints-1", "problem-constraints-2"],
-  "primary-key": ["problem-primary-key-1", "problem-primary-key-2"],
-  "foreign-key": ["problem-foreign-key-1", "problem-foreign-key-2"],
-  "unique-constraint": ["problem-unique-1", "problem-unique-2"],
-  "not-null": ["problem-not-null-1", "problem-not-null-2"],
-  "check-constraint": ["problem-check-1", "problem-check-2"],
-  "default-values": ["problem-default-1", "problem-default-2"],
-  "indexes": ["problem-indexes-1", "problem-indexes-2"],
-  "transactions": ["problem-transactions-1", "problem-transactions-2"],
-  "commit-rollback": ["problem-commit-rollback-1", "problem-commit-rollback-2"],
-  "isolation-levels": ["problem-isolation-1", "problem-isolation-2"],
-  "views": ["problem-views-1", "problem-views-2"],
-  "stored-procedures": ["problem-procedures-1", "problem-procedures-2"],
-  "functions": ["problem-functions-1", "problem-functions-2"],
-  "triggers": ["problem-triggers-1", "problem-triggers-2"],
-  "cte-common-table-expressions": ["problem-cte-1", "problem-cte-2"],
-  "recursive-cte": ["problem-recursive-cte-1", "problem-recursive-cte-2"],
-  "window-functions": ["problem-window-1", "problem-window-2"],
-  "over-clause": ["problem-over-1", "problem-over-2"],
-  "partition-by": ["problem-partition-by-1", "problem-partition-by-2"],
-  "row-number": ["problem-row-number-1", "problem-row-number-2"],
-  "rank-dense-rank": ["problem-rank-1", "problem-rank-2"],
-  "lead-lag": ["problem-lead-lag-1", "problem-lead-lag-2"],
-  "case-expressions": ["problem-case-1", "problem-case-2"],
-  "coalesce-nullif": ["problem-coalesce-1", "problem-coalesce-2"],
-  "string-functions": ["problem-string-funcs-1", "problem-string-funcs-2"],
-  "date-functions": ["problem-date-funcs-1", "problem-date-funcs-2"],
-  "numeric-functions": ["problem-numeric-funcs-1", "problem-numeric-funcs-2"],
-  "casting-conversion": ["problem-cast-1", "problem-cast-2"],
-  "normalization": ["problem-normalization-1", "problem-normalization-2"],
-  "normal-forms": ["problem-normal-forms-1", "problem-normal-forms-2"],
-  "alias": ["problem-alias-1", "problem-alias-2"],
-  "correlated-subquery": ["problem-correlated-subquery-1", "problem-correlated-subquery-2"],
-  "data-types": ["problem-data-types-1", "problem-data-types-2"],
-  "exists-operator": ["problem-exists-1", "problem-exists-2"],
-  "null-handling": ["problem-null-1", "problem-null-2"],
-  "outer-join": ["problem-outer-join-1", "problem-outer-join-2"],
-  "pattern-matching": ["problem-pattern-1", "problem-pattern-2"],
-  "subqueries-intro": ["problem-subqueries-intro-1", "problem-subqueries-intro-2"],
-  "subquery-in-select": ["problem-subquery-select-1", "problem-subquery-select-2"],
-  "subquery-in-where": ["problem-subquery-where-1", "problem-subquery-where-2"]
+  "_metadata": {
+    "format_version": "1.0",
+    "status": "placeholder",
+    "note": "Replace with real problem IDs when SQL-Engage/HintWise integration is ready",
+    "estimated_integration_date": "2024-Q2",
+    "contact": "platform-team@example.com"
+  },
+  "select-basic": [
+    {
+      "id": "problem-select-1",
+      "placeholder_for": "sql-engage/select-basics/*",
+      "title": "Select All Columns",
+      "difficulty": "beginner",
+      "concepts": ["select-basic", "syntax"],
+      "subtypes": ["missing_comma_in_select"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-select-2",
+      "placeholder_for": "sql-engage/select-basics/*",
+      "title": "Select Specific Columns",
+      "difficulty": "beginner",
+      "concepts": ["select-basic", "columns"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "where-clause": [
+    {
+      "id": "problem-where-1",
+      "placeholder_for": "sql-engage/filtering/*",
+      "title": "Simple WHERE Clause",
+      "difficulty": "beginner",
+      "concepts": ["where-clause", "comparison-operators"],
+      "subtypes": ["string_literal_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-where-2",
+      "placeholder_for": "sql-engage/filtering/*",
+      "title": "Multiple WHERE Conditions",
+      "difficulty": "intermediate",
+      "concepts": ["where-clause", "and-or-operators"],
+      "subtypes": ["operator_precedence_error"],
+      "is_placeholder": true
+    }
+  ],
+  "joins-intro": [
+    {
+      "id": "problem-join-1",
+      "placeholder_for": "sql-engage/joins/*",
+      "title": "Understanding Joins",
+      "difficulty": "intermediate",
+      "concepts": ["joins-intro", "inner-join"],
+      "subtypes": ["join_syntax_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-join-2",
+      "placeholder_for": "sql-engage/joins/*",
+      "title": "Join Table Relationships",
+      "difficulty": "intermediate",
+      "concepts": ["joins-intro", "foreign-key"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "inner-join": [
+    {
+      "id": "problem-inner-join-1",
+      "placeholder_for": "sql-engage/joins/inner/*",
+      "title": "Basic INNER JOIN",
+      "difficulty": "intermediate",
+      "concepts": ["inner-join", "join-syntax"],
+      "subtypes": ["missing_on_clause"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-inner-join-2",
+      "placeholder_for": "sql-engage/joins/inner/*",
+      "title": "Multi-Table INNER JOIN",
+      "difficulty": "advanced",
+      "concepts": ["inner-join", "multi-table"],
+      "subtypes": ["ambiguous_column_error"],
+      "is_placeholder": true
+    }
+  ],
+  "left-join": [
+    {
+      "id": "problem-left-join-1",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "LEFT JOIN Basics",
+      "difficulty": "intermediate",
+      "concepts": ["left-join", "outer-join"],
+      "subtypes": ["wrong_join_type_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-left-join-2",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "LEFT JOIN with Filtering",
+      "difficulty": "advanced",
+      "concepts": ["left-join", "where-clause"],
+      "subtypes": ["where_vs_on_error"],
+      "is_placeholder": true
+    }
+  ],
+  "right-join": [
+    {
+      "id": "problem-right-join-1",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "RIGHT JOIN Usage",
+      "difficulty": "intermediate",
+      "concepts": ["right-join", "outer-join"],
+      "subtypes": [],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-right-join-2",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "RIGHT JOIN vs LEFT JOIN",
+      "difficulty": "intermediate",
+      "concepts": ["right-join", "left-join"],
+      "subtypes": ["join_direction_confusion"],
+      "is_placeholder": true
+    }
+  ],
+  "full-join": [
+    {
+      "id": "problem-full-join-1",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "FULL OUTER JOIN",
+      "difficulty": "advanced",
+      "concepts": ["full-join", "outer-join"],
+      "subtypes": ["unsupported_join_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-full-join-2",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "FULL JOIN with NULL Handling",
+      "difficulty": "advanced",
+      "concepts": ["full-join", "null-handling"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "cross-join": [
+    {
+      "id": "problem-cross-join-1",
+      "placeholder_for": "sql-engage/joins/cross/*",
+      "title": "CROSS JOIN Basics",
+      "difficulty": "intermediate",
+      "concepts": ["cross-join", "cartesian-product"],
+      "subtypes": ["accidental_cross_join"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-cross-join-2",
+      "placeholder_for": "sql-engage/joins/cross/*",
+      "title": "CROSS JOIN Use Cases",
+      "difficulty": "advanced",
+      "concepts": ["cross-join", "data-generation"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "self-join": [
+    {
+      "id": "problem-self-join-1",
+      "placeholder_for": "sql-engage/joins/self/*",
+      "title": "Self-Join Introduction",
+      "difficulty": "intermediate",
+      "concepts": ["self-join", "table-aliases"],
+      "subtypes": ["missing_alias_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-self-join-2",
+      "placeholder_for": "sql-engage/joins/self/*",
+      "title": "Hierarchical Data with Self-Join",
+      "difficulty": "advanced",
+      "concepts": ["self-join", "hierarchical-data"],
+      "subtypes": ["recursive_data_confusion"],
+      "is_placeholder": true
+    }
+  ],
+  "aggregate-functions": [
+    {
+      "id": "problem-aggregate-1",
+      "placeholder_for": "sql-engage/aggregates/*",
+      "title": "Basic Aggregate Functions",
+      "difficulty": "beginner",
+      "concepts": ["aggregate-functions", "count-sum-avg"],
+      "subtypes": ["count_star_vs_count_col"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-aggregate-2",
+      "placeholder_for": "sql-engage/aggregates/*",
+      "title": "Nested Aggregate Functions",
+      "difficulty": "advanced",
+      "concepts": ["aggregate-functions", "nesting"],
+      "subtypes": ["aggregate_in_where_error"],
+      "is_placeholder": true
+    }
+  ],
+  "group-by": [
+    {
+      "id": "problem-group-by-1",
+      "placeholder_for": "sql-engage/grouping/*",
+      "title": "GROUP BY Basics",
+      "difficulty": "intermediate",
+      "concepts": ["group-by", "aggregation"],
+      "subtypes": ["missing_group_by_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-group-by-2",
+      "placeholder_for": "sql-engage/grouping/*",
+      "title": "Multiple Column GROUP BY",
+      "difficulty": "intermediate",
+      "concepts": ["group-by", "multi-column"],
+      "subtypes": ["partial_group_by_error"],
+      "is_placeholder": true
+    }
+  ],
+  "having-clause": [
+    {
+      "id": "problem-having-1",
+      "placeholder_for": "sql-engage/grouping/having/*",
+      "title": "HAVING Clause Basics",
+      "difficulty": "intermediate",
+      "concepts": ["having-clause", "aggregate-filtering"],
+      "subtypes": ["having_vs_where_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-having-2",
+      "placeholder_for": "sql-engage/grouping/having/*",
+      "title": "HAVING with Multiple Conditions",
+      "difficulty": "advanced",
+      "concepts": ["having-clause", "complex-filters"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "order-by": [
+    {
+      "id": "problem-order-by-1",
+      "placeholder_for": "sql-engage/sorting/*",
+      "title": "ORDER BY Basics",
+      "difficulty": "beginner",
+      "concepts": ["order-by", "sorting"],
+      "subtypes": ["sort_direction_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-order-by-2",
+      "placeholder_for": "sql-engage/sorting/*",
+      "title": "Multi-Column Sorting",
+      "difficulty": "intermediate",
+      "concepts": ["order-by", "multi-column-sort"],
+      "subtypes": ["sort_order_precedence"],
+      "is_placeholder": true
+    }
+  ],
+  "limit-offset": [
+    {
+      "id": "problem-limit-1",
+      "placeholder_for": "sql-engage/pagination/*",
+      "title": "LIMIT Clause",
+      "difficulty": "beginner",
+      "concepts": ["limit-offset", "pagination"],
+      "subtypes": ["limit_syntax_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-limit-2",
+      "placeholder_for": "sql-engage/pagination/*",
+      "title": "LIMIT with OFFSET",
+      "difficulty": "intermediate",
+      "concepts": ["limit-offset", "pagination"],
+      "subtypes": ["offset_calculation_error"],
+      "is_placeholder": true
+    }
+  ],
+  "distinct": [
+    {
+      "id": "problem-distinct-1",
+      "placeholder_for": "sql-engage/distinct/*",
+      "title": "SELECT DISTINCT",
+      "difficulty": "beginner",
+      "concepts": ["distinct", "deduplication"],
+      "subtypes": ["distinct_position_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-distinct-2",
+      "placeholder_for": "sql-engage/distinct/*",
+      "title": "DISTINCT with Multiple Columns",
+      "difficulty": "intermediate",
+      "concepts": ["distinct", "multi-column"],
+      "subtypes": ["distinct_semantics_error"],
+      "is_placeholder": true
+    }
+  ],
+  "subqueries": [
+    {
+      "id": "problem-subquery-1",
+      "placeholder_for": "sql-engage/subqueries/*",
+      "title": "Basic Subquery",
+      "difficulty": "intermediate",
+      "concepts": ["subqueries", "nested-select"],
+      "subtypes": ["subquery_correlation_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-subquery-2",
+      "placeholder_for": "sql-engage/subqueries/*",
+      "title": "Subquery in WHERE Clause",
+      "difficulty": "intermediate",
+      "concepts": ["subqueries", "where-subquery"],
+      "subtypes": ["single_vs_multi_row_error"],
+      "is_placeholder": true
+    }
+  ],
+  "correlated-subqueries": [
+    {
+      "id": "problem-correlated-1",
+      "placeholder_for": "sql-engage/subqueries/correlated/*",
+      "title": "Correlated Subquery Introduction",
+      "difficulty": "advanced",
+      "concepts": ["correlated-subqueries", "exists-operator"],
+      "subtypes": ["correlation_reference_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-correlated-2",
+      "placeholder_for": "sql-engage/subqueries/correlated/*",
+      "title": "EXISTS with Correlated Subquery",
+      "difficulty": "advanced",
+      "concepts": ["correlated-subqueries", "exists"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "exists-subqueries": [
+    {
+      "id": "problem-exists-1",
+      "placeholder_for": "sql-engage/subqueries/exists/*",
+      "title": "EXISTS Operator",
+      "difficulty": "intermediate",
+      "concepts": ["exists-subqueries", "semi-join"],
+      "subtypes": ["exists_vs_in_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-exists-2",
+      "placeholder_for": "sql-engage/subqueries/exists/*",
+      "title": "NOT EXISTS",
+      "difficulty": "intermediate",
+      "concepts": ["exists-subqueries", "anti-join"],
+      "subtypes": ["not_exists_logic_error"],
+      "is_placeholder": true
+    }
+  ],
+  "in-subqueries": [
+    {
+      "id": "problem-in-1",
+      "placeholder_for": "sql-engage/subqueries/in/*",
+      "title": "IN with Subquery",
+      "difficulty": "intermediate",
+      "concepts": ["in-subqueries", "membership-testing"],
+      "subtypes": ["in_vs_equals_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-in-2",
+      "placeholder_for": "sql-engage/subqueries/in/*",
+      "title": "NOT IN with NULL Handling",
+      "difficulty": "advanced",
+      "concepts": ["in-subqueries", "null-handling"],
+      "subtypes": ["not_in_null_behavior"],
+      "is_placeholder": true
+    }
+  ],
+  "union": [
+    {
+      "id": "problem-union-1",
+      "placeholder_for": "sql-engage/set-operations/union/*",
+      "title": "UNION Basics",
+      "difficulty": "intermediate",
+      "concepts": ["union", "set-operations"],
+      "subtypes": ["union_column_mismatch"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-union-2",
+      "placeholder_for": "sql-engage/set-operations/union/*",
+      "title": "UNION ALL vs UNION",
+      "difficulty": "intermediate",
+      "concepts": ["union", "union-all"],
+      "subtypes": ["duplicate_removal_confusion"],
+      "is_placeholder": true
+    }
+  ],
+  "intersect": [
+    {
+      "id": "problem-intersect-1",
+      "placeholder_for": "sql-engage/set-operations/intersect/*",
+      "title": "INTERSECT Operator",
+      "difficulty": "intermediate",
+      "concepts": ["intersect", "set-operations"],
+      "subtypes": ["unsupported_intersect_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-intersect-2",
+      "placeholder_for": "sql-engage/set-operations/intersect/*",
+      "title": "INTERSECT vs INNER JOIN",
+      "difficulty": "advanced",
+      "concepts": ["intersect", "join-alternatives"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "except": [
+    {
+      "id": "problem-except-1",
+      "placeholder_for": "sql-engage/set-operations/except/*",
+      "title": "EXCEPT Operator",
+      "difficulty": "intermediate",
+      "concepts": ["except", "set-operations"],
+      "subtypes": ["unsupported_except_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-except-2",
+      "placeholder_for": "sql-engage/set-operations/except/*",
+      "title": "EXCEPT vs NOT IN",
+      "difficulty": "advanced",
+      "concepts": ["except", "anti-join-alternatives"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "insert-statement": [
+    {
+      "id": "problem-insert-1",
+      "placeholder_for": "sql-engage/dml/insert/*",
+      "title": "Basic INSERT",
+      "difficulty": "beginner",
+      "concepts": ["insert-statement", "data-modification"],
+      "subtypes": ["column_count_mismatch"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-insert-2",
+      "placeholder_for": "sql-engage/dml/insert/*",
+      "title": "INSERT with SELECT",
+      "difficulty": "intermediate",
+      "concepts": ["insert-statement", "insert-select"],
+      "subtypes": ["insert_select_column_error"],
+      "is_placeholder": true
+    }
+  ],
+  "update-statement": [
+    {
+      "id": "problem-update-1",
+      "placeholder_for": "sql-engage/dml/update/*",
+      "title": "Basic UPDATE",
+      "difficulty": "beginner",
+      "concepts": ["update-statement", "data-modification"],
+      "subtypes": ["missing_where_update"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-update-2",
+      "placeholder_for": "sql-engage/dml/update/*",
+      "title": "UPDATE with JOIN",
+      "difficulty": "advanced",
+      "concepts": ["update-statement", "update-join"],
+      "subtypes": ["update_join_syntax_error"],
+      "is_placeholder": true
+    }
+  ],
+  "delete-statement": [
+    {
+      "id": "problem-delete-1",
+      "placeholder_for": "sql-engage/dml/delete/*",
+      "title": "Basic DELETE",
+      "difficulty": "beginner",
+      "concepts": ["delete-statement", "data-modification"],
+      "subtypes": ["missing_where_delete"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-delete-2",
+      "placeholder_for": "sql-engage/dml/delete/*",
+      "title": "DELETE with Subquery",
+      "difficulty": "intermediate",
+      "concepts": ["delete-statement", "delete-subquery"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "create-table": [
+    {
+      "id": "problem-create-table-1",
+      "placeholder_for": "sql-engage/ddl/create-table/*",
+      "title": "CREATE TABLE Basics",
+      "difficulty": "beginner",
+      "concepts": ["create-table", "ddl"],
+      "subtypes": ["datatype_selection_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-create-table-2",
+      "placeholder_for": "sql-engage/ddl/create-table/*",
+      "title": "CREATE TABLE with Constraints",
+      "difficulty": "intermediate",
+      "concepts": ["create-table", "constraints"],
+      "subtypes": ["constraint_syntax_error"],
+      "is_placeholder": true
+    }
+  ],
+  "alter-table": [
+    {
+      "id": "problem-alter-table-1",
+      "placeholder_for": "sql-engage/ddl/alter/*",
+      "title": "ALTER TABLE ADD COLUMN",
+      "difficulty": "intermediate",
+      "concepts": ["alter-table", "schema-modification"],
+      "subtypes": ["alter_column_conflict"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-alter-table-2",
+      "placeholder_for": "sql-engage/ddl/alter/*",
+      "title": "ALTER TABLE DROP COLUMN",
+      "difficulty": "intermediate",
+      "concepts": ["alter-table", "schema-modification"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "drop-table": [
+    {
+      "id": "problem-drop-table-1",
+      "placeholder_for": "sql-engage/ddl/drop/*",
+      "title": "DROP TABLE",
+      "difficulty": "beginner",
+      "concepts": ["drop-table", "ddl"],
+      "subtypes": ["accidental_drop_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-drop-table-2",
+      "placeholder_for": "sql-engage/ddl/drop/*",
+      "title": "DROP TABLE IF EXISTS",
+      "difficulty": "beginner",
+      "concepts": ["drop-table", "safe-ddl"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "constraints": [
+    {
+      "id": "problem-constraints-1",
+      "placeholder_for": "sql-engage/ddl/constraints/*",
+      "title": "Table Constraints",
+      "difficulty": "intermediate",
+      "concepts": ["constraints", "ddl"],
+      "subtypes": ["constraint_naming_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-constraints-2",
+      "placeholder_for": "sql-engage/ddl/constraints/*",
+      "title": "Constraint Validation",
+      "difficulty": "intermediate",
+      "concepts": ["constraints", "data-integrity"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "primary-key": [
+    {
+      "id": "problem-primary-key-1",
+      "placeholder_for": "sql-engage/ddl/keys/primary/*",
+      "title": "PRIMARY KEY Constraint",
+      "difficulty": "beginner",
+      "concepts": ["primary-key", "unique-identifier"],
+      "subtypes": ["composite_pk_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-primary-key-2",
+      "placeholder_for": "sql-engage/ddl/keys/primary/*",
+      "title": "Auto-Increment Primary Key",
+      "difficulty": "intermediate",
+      "concepts": ["primary-key", "identity-column"],
+      "subtypes": ["identity_vs_sequence_confusion"],
+      "is_placeholder": true
+    }
+  ],
+  "foreign-key": [
+    {
+      "id": "problem-foreign-key-1",
+      "placeholder_for": "sql-engage/ddl/keys/foreign/*",
+      "title": "FOREIGN KEY Constraint",
+      "difficulty": "intermediate",
+      "concepts": ["foreign-key", "referential-integrity"],
+      "subtypes": ["fk_reference_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-foreign-key-2",
+      "placeholder_for": "sql-engage/ddl/keys/foreign/*",
+      "title": "Foreign Key Actions",
+      "difficulty": "advanced",
+      "concepts": ["foreign-key", "cascade-actions"],
+      "subtypes": ["cascade_behavior_error"],
+      "is_placeholder": true
+    }
+  ],
+  "unique-constraint": [
+    {
+      "id": "problem-unique-1",
+      "placeholder_for": "sql-engage/ddl/constraints/unique/*",
+      "title": "UNIQUE Constraint",
+      "difficulty": "beginner",
+      "concepts": ["unique-constraint", "data-integrity"],
+      "subtypes": ["unique_vs_pk_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-unique-2",
+      "placeholder_for": "sql-engage/ddl/constraints/unique/*",
+      "title": "Multi-Column UNIQUE",
+      "difficulty": "intermediate",
+      "concepts": ["unique-constraint", "composite-unique"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "not-null": [
+    {
+      "id": "problem-not-null-1",
+      "placeholder_for": "sql-engage/ddl/constraints/not-null/*",
+      "title": "NOT NULL Constraint",
+      "difficulty": "beginner",
+      "concepts": ["not-null", "data-integrity"],
+      "subtypes": ["null_vs_empty_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-not-null-2",
+      "placeholder_for": "sql-engage/ddl/constraints/not-null/*",
+      "title": "NOT NULL with DEFAULT",
+      "difficulty": "intermediate",
+      "concepts": ["not-null", "default-values"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "check-constraint": [
+    {
+      "id": "problem-check-1",
+      "placeholder_for": "sql-engage/ddl/constraints/check/*",
+      "title": "CHECK Constraint",
+      "difficulty": "intermediate",
+      "concepts": ["check-constraint", "data-validation"],
+      "subtypes": ["check_constraint_complexity"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-check-2",
+      "placeholder_for": "sql-engage/ddl/constraints/check/*",
+      "title": "CHECK with Multiple Conditions",
+      "difficulty": "intermediate",
+      "concepts": ["check-constraint", "complex-validation"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "default-values": [
+    {
+      "id": "problem-default-1",
+      "placeholder_for": "sql-engage/ddl/constraints/default/*",
+      "title": "DEFAULT Values",
+      "difficulty": "beginner",
+      "concepts": ["default-values", "data-initialization"],
+      "subtypes": ["default_value_type_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-default-2",
+      "placeholder_for": "sql-engage/ddl/constraints/default/*",
+      "title": "DEFAULT with Expressions",
+      "difficulty": "intermediate",
+      "concepts": ["default-values", "computed-defaults"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "indexes": [
+    {
+      "id": "problem-indexes-1",
+      "placeholder_for": "sql-engage/performance/indexes/*",
+      "title": "CREATE INDEX",
+      "difficulty": "intermediate",
+      "concepts": ["indexes", "query-optimization"],
+      "subtypes": ["redundant_index_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-indexes-2",
+      "placeholder_for": "sql-engage/performance/indexes/*",
+      "title": "Multi-Column Indexes",
+      "difficulty": "advanced",
+      "concepts": ["indexes", "composite-indexes"],
+      "subtypes": ["index_column_order_error"],
+      "is_placeholder": true
+    }
+  ],
+  "transactions": [
+    {
+      "id": "problem-transactions-1",
+      "placeholder_for": "sql-engage/advanced/transactions/*",
+      "title": "Transaction Basics",
+      "difficulty": "intermediate",
+      "concepts": ["transactions", "acid"],
+      "subtypes": ["autocommit_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-transactions-2",
+      "placeholder_for": "sql-engage/advanced/transactions/*",
+      "title": "Transaction Control",
+      "difficulty": "advanced",
+      "concepts": ["transactions", "savepoints"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "commit-rollback": [
+    {
+      "id": "problem-commit-rollback-1",
+      "placeholder_for": "sql-engage/advanced/transactions/*",
+      "title": "COMMIT and ROLLBACK",
+      "difficulty": "intermediate",
+      "concepts": ["commit-rollback", "transaction-control"],
+      "subtypes": ["rollback_scope_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-commit-rollback-2",
+      "placeholder_for": "sql-engage/advanced/transactions/*",
+      "title": "ROLLBACK to Savepoint",
+      "difficulty": "advanced",
+      "concepts": ["commit-rollback", "partial-rollback"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "isolation-levels": [
+    {
+      "id": "problem-isolation-1",
+      "placeholder_for": "sql-engage/advanced/transactions/isolation/*",
+      "title": "Transaction Isolation Levels",
+      "difficulty": "advanced",
+      "concepts": ["isolation-levels", "concurrency"],
+      "subtypes": ["isolation_level_selection_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-isolation-2",
+      "placeholder_for": "sql-engage/advanced/transactions/isolation/*",
+      "title": "Read Phenomena",
+      "difficulty": "advanced",
+      "concepts": ["isolation-levels", "dirty-read-phantom"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "views": [
+    {
+      "id": "problem-views-1",
+      "placeholder_for": "sql-engage/advanced/views/*",
+      "title": "CREATE VIEW",
+      "difficulty": "intermediate",
+      "concepts": ["views", "virtual-tables"],
+      "subtypes": ["view_column_name_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-views-2",
+      "placeholder_for": "sql-engage/advanced/views/*",
+      "title": "Updatable Views",
+      "difficulty": "advanced",
+      "concepts": ["views", "view-modification"],
+      "subtypes": ["non_updatable_view_error"],
+      "is_placeholder": true
+    }
+  ],
+  "stored-procedures": [
+    {
+      "id": "problem-procedures-1",
+      "placeholder_for": "sql-engage/advanced/procedures/*",
+      "title": "Stored Procedure Basics",
+      "difficulty": "advanced",
+      "concepts": ["stored-procedures", "routines"],
+      "subtypes": ["procedure_parameter_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-procedures-2",
+      "placeholder_for": "sql-engage/advanced/procedures/*",
+      "title": "Procedure Control Flow",
+      "difficulty": "advanced",
+      "concepts": ["stored-procedures", "control-flow"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "functions": [
+    {
+      "id": "problem-functions-1",
+      "placeholder_for": "sql-engage/advanced/functions/*",
+      "title": "User-Defined Functions",
+      "difficulty": "advanced",
+      "concepts": ["functions", "scalar-functions"],
+      "subtypes": ["function_return_type_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-functions-2",
+      "placeholder_for": "sql-engage/advanced/functions/*",
+      "title": "Table-Valued Functions",
+      "difficulty": "advanced",
+      "concepts": ["functions", "table-functions"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "triggers": [
+    {
+      "id": "problem-triggers-1",
+      "placeholder_for": "sql-engage/advanced/triggers/*",
+      "title": "Trigger Basics",
+      "difficulty": "advanced",
+      "concepts": ["triggers", "event-handling"],
+      "subtypes": ["trigger_timing_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-triggers-2",
+      "placeholder_for": "sql-engage/advanced/triggers/*",
+      "title": "Trigger with Condition",
+      "difficulty": "advanced",
+      "concepts": ["triggers", "conditional-logic"],
+      "subtypes": ["trigger_recursion_error"],
+      "is_placeholder": true
+    }
+  ],
+  "cte-common-table-expressions": [
+    {
+      "id": "problem-cte-1",
+      "placeholder_for": "sql-engage/advanced/cte/*",
+      "title": "Simple CTE",
+      "difficulty": "intermediate",
+      "concepts": ["cte-common-table-expressions", "named-subqueries"],
+      "subtypes": ["cte_scope_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-cte-2",
+      "placeholder_for": "sql-engage/advanced/cte/*",
+      "title": "Multiple CTEs",
+      "difficulty": "intermediate",
+      "concepts": ["cte-common-table-expressions", "cte-chaining"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "recursive-cte": [
+    {
+      "id": "problem-recursive-cte-1",
+      "placeholder_for": "sql-engage/advanced/cte/recursive/*",
+      "title": "Recursive CTE Basics",
+      "difficulty": "advanced",
+      "concepts": ["recursive-cte", "hierarchical-queries"],
+      "subtypes": ["recursive_anchor_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-recursive-cte-2",
+      "placeholder_for": "sql-engage/advanced/cte/recursive/*",
+      "title": "Recursive CTE with Cycle Detection",
+      "difficulty": "advanced",
+      "concepts": ["recursive-cte", "cycle-detection"],
+      "subtypes": ["infinite_recursion_risk"],
+      "is_placeholder": true
+    }
+  ],
+  "window-functions": [
+    {
+      "id": "problem-window-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/*",
+      "title": "Window Function Basics",
+      "difficulty": "advanced",
+      "concepts": ["window-functions", "analytical-queries"],
+      "subtypes": ["window_syntax_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-window-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/*",
+      "title": "Window Frame Specification",
+      "difficulty": "advanced",
+      "concepts": ["window-functions", "frame-clause"],
+      "subtypes": ["frame_boundary_error"],
+      "is_placeholder": true
+    }
+  ],
+  "over-clause": [
+    {
+      "id": "problem-over-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/over/*",
+      "title": "OVER Clause",
+      "difficulty": "advanced",
+      "concepts": ["over-clause", "window-definition"],
+      "subtypes": ["over_order_by_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-over-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/over/*",
+      "title": "OVER with PARTITION",
+      "difficulty": "advanced",
+      "concepts": ["over-clause", "partition-by"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "partition-by": [
+    {
+      "id": "problem-partition-by-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/partition/*",
+      "title": "PARTITION BY Basics",
+      "difficulty": "advanced",
+      "concepts": ["partition-by", "window-grouping"],
+      "subtypes": ["partition_vs_group_by_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-partition-by-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/partition/*",
+      "title": "Multiple PARTITION BY Columns",
+      "difficulty": "advanced",
+      "concepts": ["partition-by", "multi-column-partition"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "row-number": [
+    {
+      "id": "problem-row-number-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/ranking/*",
+      "title": "ROW_NUMBER()",
+      "difficulty": "advanced",
+      "concepts": ["row-number", "ranking-functions"],
+      "subtypes": ["row_number_duplicates"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-row-number-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/ranking/*",
+      "title": "ROW_NUMBER() for Pagination",
+      "difficulty": "advanced",
+      "concepts": ["row-number", "pagination"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "rank-dense-rank": [
+    {
+      "id": "problem-rank-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/ranking/*",
+      "title": "RANK() vs DENSE_RANK()",
+      "difficulty": "advanced",
+      "concepts": ["rank-dense-rank", "ranking-functions"],
+      "subtypes": ["rank_gap_confusion"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-rank-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/ranking/*",
+      "title": "Top-N with RANK",
+      "difficulty": "advanced",
+      "concepts": ["rank-dense-rank", "top-n-queries"],
+      "subtypes": ["top_n_ties_handling"],
+      "is_placeholder": true
+    }
+  ],
+  "lead-lag": [
+    {
+      "id": "problem-lead-lag-1",
+      "placeholder_for": "sql-engage/advanced/window-functions/offset/*",
+      "title": "LEAD() and LAG()",
+      "difficulty": "advanced",
+      "concepts": ["lead-lag", "offset-functions"],
+      "subtypes": ["lead_lag_default_value"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-lead-lag-2",
+      "placeholder_for": "sql-engage/advanced/window-functions/offset/*",
+      "title": "LEAD/LAG with Offset",
+      "difficulty": "advanced",
+      "concepts": ["lead-lag", "multi-row-offset"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "case-expressions": [
+    {
+      "id": "problem-case-1",
+      "placeholder_for": "sql-engage/expressions/case/*",
+      "title": "Simple CASE Expression",
+      "difficulty": "intermediate",
+      "concepts": ["case-expressions", "conditional-logic"],
+      "subtypes": ["case_else_omission"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-case-2",
+      "placeholder_for": "sql-engage/expressions/case/*",
+      "title": "Searched CASE Expression",
+      "difficulty": "intermediate",
+      "concepts": ["case-expressions", "complex-conditions"],
+      "subtypes": ["case_order_matters"],
+      "is_placeholder": true
+    }
+  ],
+  "coalesce-nullif": [
+    {
+      "id": "problem-coalesce-1",
+      "placeholder_for": "sql-engage/functions/coalesce/*",
+      "title": "COALESCE Function",
+      "difficulty": "intermediate",
+      "concepts": ["coalesce-nullif", "null-handling"],
+      "subtypes": ["coalesce_all_null_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-coalesce-2",
+      "placeholder_for": "sql-engage/functions/nullif/*",
+      "title": "NULLIF Function",
+      "difficulty": "intermediate",
+      "concepts": ["coalesce-nullif", "null-logic"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "string-functions": [
+    {
+      "id": "problem-string-funcs-1",
+      "placeholder_for": "sql-engage/functions/string/*",
+      "title": "Common String Functions",
+      "difficulty": "beginner",
+      "concepts": ["string-functions", "text-manipulation"],
+      "subtypes": ["concat_null_behavior"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-string-funcs-2",
+      "placeholder_for": "sql-engage/functions/string/*",
+      "title": "String Pattern Functions",
+      "difficulty": "intermediate",
+      "concepts": ["string-functions", "pattern-matching"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "date-functions": [
+    {
+      "id": "problem-date-funcs-1",
+      "placeholder_for": "sql-engage/functions/date/*",
+      "title": "Date Functions",
+      "difficulty": "intermediate",
+      "concepts": ["date-functions", "temporal-data"],
+      "subtypes": ["date_format_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-date-funcs-2",
+      "placeholder_for": "sql-engage/functions/date/*",
+      "title": "Date Arithmetic",
+      "difficulty": "intermediate",
+      "concepts": ["date-functions", "date-math"],
+      "subtypes": ["interval_syntax_error"],
+      "is_placeholder": true
+    }
+  ],
+  "numeric-functions": [
+    {
+      "id": "problem-numeric-funcs-1",
+      "placeholder_for": "sql-engage/functions/numeric/*",
+      "title": "Math Functions",
+      "difficulty": "beginner",
+      "concepts": ["numeric-functions", "mathematical-operations"],
+      "subtypes": ["integer_division_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-numeric-funcs-2",
+      "placeholder_for": "sql-engage/functions/numeric/*",
+      "title": "Rounding and Precision",
+      "difficulty": "intermediate",
+      "concepts": ["numeric-functions", "precision"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "casting-conversion": [
+    {
+      "id": "problem-cast-1",
+      "placeholder_for": "sql-engage/functions/cast/*",
+      "title": "CAST Function",
+      "difficulty": "intermediate",
+      "concepts": ["casting-conversion", "datatype-conversion"],
+      "subtypes": ["cast_compatibility_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-cast-2",
+      "placeholder_for": "sql-engage/functions/cast/*",
+      "title": "Implicit vs Explicit Conversion",
+      "difficulty": "intermediate",
+      "concepts": ["casting-conversion", "type-coercion"],
+      "subtypes": ["implicit_conversion_surprise"],
+      "is_placeholder": true
+    }
+  ],
+  "normalization": [
+    {
+      "id": "problem-normalization-1",
+      "placeholder_for": "sql-engage/design/normalization/*",
+      "title": "Database Normalization",
+      "difficulty": "intermediate",
+      "concepts": ["normalization", "database-design"],
+      "subtypes": ["over_normalization_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-normalization-2",
+      "placeholder_for": "sql-engage/design/normalization/*",
+      "title": "Normalization vs Denormalization",
+      "difficulty": "advanced",
+      "concepts": ["normalization", "performance-tradeoffs"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "normal-forms": [
+    {
+      "id": "problem-normal-forms-1",
+      "placeholder_for": "sql-engage/design/normal-forms/*",
+      "title": "First and Second Normal Form",
+      "difficulty": "intermediate",
+      "concepts": ["normal-forms", "1nf-2nf"],
+      "subtypes": ["partial_dependency_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-normal-forms-2",
+      "placeholder_for": "sql-engage/design/normal-forms/*",
+      "title": "Third Normal Form",
+      "difficulty": "intermediate",
+      "concepts": ["normal-forms", "3nf"],
+      "subtypes": ["transitive_dependency_error"],
+      "is_placeholder": true
+    }
+  ],
+  "alias": [
+    {
+      "id": "problem-alias-1",
+      "placeholder_for": "sql-engage/basics/alias/*",
+      "title": "Column Aliases",
+      "difficulty": "beginner",
+      "concepts": ["alias", "naming"],
+      "subtypes": ["alias_quotes_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-alias-2",
+      "placeholder_for": "sql-engage/basics/alias/*",
+      "title": "Table Aliases",
+      "difficulty": "beginner",
+      "concepts": ["alias", "table-references"],
+      "subtypes": ["alias_scope_error"],
+      "is_placeholder": true
+    }
+  ],
+  "correlated-subquery": [
+    {
+      "id": "problem-correlated-subquery-1",
+      "placeholder_for": "sql-engage/subqueries/correlated/*",
+      "title": "Correlated Subquery Pattern",
+      "difficulty": "advanced",
+      "concepts": ["correlated-subquery", "row-by-row-processing"],
+      "subtypes": ["correlation_performance_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-correlated-subquery-2",
+      "placeholder_for": "sql-engage/subqueries/correlated/*",
+      "title": "Correlated vs Non-Correlated",
+      "difficulty": "advanced",
+      "concepts": ["correlated-subquery", "query-optimization"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "data-types": [
+    {
+      "id": "problem-data-types-1",
+      "placeholder_for": "sql-engage/basics/datatypes/*",
+      "title": "Common Data Types",
+      "difficulty": "beginner",
+      "concepts": ["data-types", "column-definition"],
+      "subtypes": ["datatype_overflow_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-data-types-2",
+      "placeholder_for": "sql-engage/basics/datatypes/*",
+      "title": "Data Type Selection",
+      "difficulty": "intermediate",
+      "concepts": ["data-types", "storage-efficiency"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "exists-operator": [
+    {
+      "id": "problem-exists-1",
+      "placeholder_for": "sql-engage/subqueries/exists/*",
+      "title": "EXISTS Operator Deep Dive",
+      "difficulty": "intermediate",
+      "concepts": ["exists-operator", "semi-join"],
+      "subtypes": ["exists_select_star_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-exists-2",
+      "placeholder_for": "sql-engage/subqueries/exists/*",
+      "title": "EXISTS Performance",
+      "difficulty": "advanced",
+      "concepts": ["exists-operator", "query-optimization"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "null-handling": [
+    {
+      "id": "problem-null-1",
+      "placeholder_for": "sql-engage/basics/null/*",
+      "title": "NULL Semantics",
+      "difficulty": "beginner",
+      "concepts": ["null-handling", "three-valued-logic"],
+      "subtypes": ["null_equality_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-null-2",
+      "placeholder_for": "sql-engage/basics/null/*",
+      "title": "IS NULL vs = NULL",
+      "difficulty": "beginner",
+      "concepts": ["null-handling", "null-comparison"],
+      "subtypes": ["equals_null_error"],
+      "is_placeholder": true
+    }
+  ],
+  "outer-join": [
+    {
+      "id": "problem-outer-join-1",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "OUTER JOIN Concepts",
+      "difficulty": "intermediate",
+      "concepts": ["outer-join", "left-right-full"],
+      "subtypes": ["outer_join_filter_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-outer-join-2",
+      "placeholder_for": "sql-engage/joins/outer/*",
+      "title": "OUTER JOIN Use Cases",
+      "difficulty": "intermediate",
+      "concepts": ["outer-join", "optional-relationships"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "pattern-matching": [
+    {
+      "id": "problem-pattern-1",
+      "placeholder_for": "sql-engage/basics/like/*",
+      "title": "LIKE Operator",
+      "difficulty": "beginner",
+      "concepts": ["pattern-matching", "wildcard-search"],
+      "subtypes": ["like_case_sensitivity"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-pattern-2",
+      "placeholder_for": "sql-engage/basics/like/*",
+      "title": "LIKE Wildcards (% and _)",
+      "difficulty": "beginner",
+      "concepts": ["pattern-matching", "wildcard-characters"],
+      "subtypes": ["like_escape_error"],
+      "is_placeholder": true
+    }
+  ],
+  "subqueries-intro": [
+    {
+      "id": "problem-subqueries-intro-1",
+      "placeholder_for": "sql-engage/subqueries/intro/*",
+      "title": "Subquery Introduction",
+      "difficulty": "intermediate",
+      "concepts": ["subqueries-intro", "nested-queries"],
+      "subtypes": ["subquery_placement_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-subqueries-intro-2",
+      "placeholder_for": "sql-engage/subqueries/intro/*",
+      "title": "Subquery vs JOIN",
+      "difficulty": "intermediate",
+      "concepts": ["subqueries-intro", "query-alternatives"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "subquery-in-select": [
+    {
+      "id": "problem-subquery-select-1",
+      "placeholder_for": "sql-engage/subqueries/in-select/*",
+      "title": "Scalar Subquery in SELECT",
+      "difficulty": "intermediate",
+      "concepts": ["subquery-in-select", "scalar-subquery"],
+      "subtypes": ["multi_row_in_select_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-subquery-select-2",
+      "placeholder_for": "sql-engage/subqueries/in-select/*",
+      "title": "Correlated Subquery in SELECT",
+      "difficulty": "advanced",
+      "concepts": ["subquery-in-select", "correlated-scalar"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ],
+  "subquery-in-where": [
+    {
+      "id": "problem-subquery-where-1",
+      "placeholder_for": "sql-engage/subqueries/in-where/*",
+      "title": "Subquery in WHERE",
+      "difficulty": "intermediate",
+      "concepts": ["subquery-in-where", "filtering"],
+      "subtypes": ["subquery_correlation_error"],
+      "is_placeholder": true
+    },
+    {
+      "id": "problem-subquery-where-2",
+      "placeholder_for": "sql-engage/subqueries/in-where/*",
+      "title": "Multiple Subqueries in WHERE",
+      "difficulty": "advanced",
+      "concepts": ["subquery-in-where", "complex-filtering"],
+      "subtypes": [],
+      "is_placeholder": true
+    }
+  ]
 }

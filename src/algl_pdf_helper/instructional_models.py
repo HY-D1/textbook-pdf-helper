@@ -95,6 +95,7 @@ class PracticeLink(BaseModel):
     Canonical schema for practice problem links.
     
     Maps concepts to related practice problems with difficulty tracking.
+    Supports both simple string IDs and rich metadata objects.
     """
     
     concept_id: str = Field(
@@ -115,6 +116,10 @@ class PracticeLink(BaseModel):
         default=False,
         description="Whether these problem IDs are placeholders requiring resolution"
     )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Extra metadata from practice system (difficulty, concepts, subtypes)"
+    )
     
     def add_problem(self, problem_id: str) -> None:
         """Add a problem ID if not already present."""
@@ -125,16 +130,28 @@ class PracticeLink(BaseModel):
         """Check if this link contains only unresolved placeholder problem IDs."""
         if not self.problem_ids:
             return True
-        return all(pid.startswith("unresolved-") for pid in self.problem_ids)
+        return all(
+            pid.startswith("unresolved-") or pid.startswith("problem-")
+            for pid in self.problem_ids
+        )
     
     def get_real_problem_ids(self) -> list[str]:
         """Get only the real (non-placeholder) problem IDs."""
-        return [pid for pid in self.problem_ids if not pid.startswith("unresolved-")]
+        return [
+            pid for pid in self.problem_ids 
+            if not pid.startswith("unresolved-") and not pid.startswith("problem-")
+        ]
     
     def mark_as_resolved(self, resolved_ids: list[str]) -> None:
         """Replace placeholder IDs with resolved real problem IDs."""
         self.problem_ids = resolved_ids
         self.needs_resolution = False
+    
+    def is_placeholder(self) -> bool:
+        """Check if this link uses placeholder IDs (problem-* pattern)."""
+        if not self.problem_ids:
+            return True
+        return all(pid.startswith("problem-") for pid in self.problem_ids)
 
 
 class MisconceptionExample(BaseModel):
