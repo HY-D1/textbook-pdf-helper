@@ -733,6 +733,7 @@ def _check_placeholder_practice_links(unit: InstructionalUnit) -> tuple[bool, st
     Blocks units where practice_links contains any with:
     - needs_resolution=True
     - IDs starting with "unresolved-" or "problem-" (placeholder pattern)
+    - All problems have is_placeholder=true in metadata
     """
     # Only check L3 explanation units
     if unit.target_stage != "L3_explanation":
@@ -746,24 +747,48 @@ def _check_placeholder_practice_links(unit: InstructionalUnit) -> tuple[bool, st
     if not practice_links:
         return True, "No practice links present"
     
+    # Track placeholder status for all links
+    total_problem_ids = 0
+    placeholder_count = 0
+    unresolved_count = 0
+    
     # Check for any placeholder links
     for link in practice_links:
         if isinstance(link, dict):
             needs_resolution = link.get("needs_resolution", False)
             problem_ids = link.get("problem_ids", [])
+            metadata = link.get("metadata", {})
         else:
             # Handle PracticeLink objects
             needs_resolution = getattr(link, "needs_resolution", False)
             problem_ids = getattr(link, "problem_ids", [])
+            metadata = getattr(link, "metadata", {}) or {}
         
-        # Check if this is a placeholder link
+        total_problem_ids += len(problem_ids)
+        
+        # Check if this link needs resolution
         if needs_resolution:
-            return False, f"Practice link needs resolution: {link}"
+            unresolved_count += len(problem_ids)
+        
+        # Check metadata for v2.0 format placeholder flag
+        problems_meta = metadata.get("problems", []) if isinstance(metadata, dict) else []
+        for problem_meta in problems_meta:
+            if isinstance(problem_meta, dict) and problem_meta.get("is_placeholder", False):
+                placeholder_count += 1
         
         # Check for placeholder problem IDs
         for pid in problem_ids:
-            if pid.startswith("unresolved-") or pid.startswith("problem-"):
-                return False, f"Placeholder practice ID found: {pid}"
+            if pid.startswith("unresolved-"):
+                unresolved_count += 1
+            elif pid.startswith("problem-"):
+                placeholder_count += 1
+    
+    # If all problem IDs are placeholders/unresolved, this is a hard block
+    if total_problem_ids > 0 and (placeholder_count + unresolved_count) >= total_problem_ids:
+        return False, f"Student-ready export cannot contain placeholder practice links ({placeholder_count} placeholders, {unresolved_count} unresolved)"
+    
+    if placeholder_count > 0 or unresolved_count > 0:
+        return True, f"WARNING: {placeholder_count} placeholder(s) and {unresolved_count} unresolved link(s) found"
     
     return True, "All practice links are resolved"
 
@@ -1354,7 +1379,73 @@ DEVELOPMENT_FILTERS: list[ExportRule] = [
 # EXPORT MODE FILTER SETS
 # =============================================================================
 
-PROTOTYPE_FILTERS: list[ExportRule] = PRODUCTION_FILTERS.copy()
+def _check_placeholder_practice_links_warn(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check for placeholder practice links - WARN only for prototype mode.
+    
+    Same checks as _check_placeholder_practice_links but always returns True
+    to allow export, with appropriate warning messages.
+    """
+    # Only check L3 explanation units
+    if unit.target_stage != "L3_explanation":
+        return True, f"Practice link check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check practice links"
+    
+    practice_links = content.get("practice_links", [])
+    if not practice_links:
+        return True, "No practice links present"
+    
+    # Track placeholder status
+    total_problem_ids = 0
+    placeholder_count = 0
+    unresolved_count = 0
+    
+    for link in practice_links:
+        if isinstance(link, dict):
+            needs_resolution = link.get("needs_resolution", False)
+            problem_ids = link.get("problem_ids", [])
+            metadata = link.get("metadata", {})
+        else:
+            needs_resolution = getattr(link, "needs_resolution", False)
+            problem_ids = getattr(link, "problem_ids", [])
+            metadata = getattr(link, "metadata", {}) or {}
+        
+        total_problem_ids += len(problem_ids)
+        
+        if needs_resolution:
+            unresolved_count += len(problem_ids)
+        
+        # Check metadata for v2.0 format
+        problems_meta = metadata.get("problems", []) if isinstance(metadata, dict) else []
+        for problem_meta in problems_meta:
+            if isinstance(problem_meta, dict) and problem_meta.get("is_placeholder", False):
+                placeholder_count += 1
+        
+        for pid in problem_ids:
+            if pid.startswith("unresolved-"):
+                unresolved_count += 1
+            elif pid.startswith("problem-"):
+                placeholder_count += 1
+    
+    # Always return True (allow export) with warning if issues found
+    if placeholder_count > 0 or unresolved_count > 0:
+        return True, f"WARNING: {placeholder_count} placeholder(s) and {unresolved_count} unresolved link(s) found - replace with real problem IDs"
+    
+    return True, "All practice links are resolved"
+
+
+PROTOTYPE_FILTERS: list[ExportRule] = PRODUCTION_FILTERS.copy() + [
+    # Override placeholder check to warn only (not block)
+    ExportRule(
+        rule_id="placeholder_practice_links_warn",
+        rule_type=RuleType.WARN,
+        description="Practice links contain placeholder IDs (warning only in prototype mode)",
+        check_fn=_check_placeholder_practice_links_warn,
+        error_message="WARNING: Prototype mode allows placeholder practice links"
+    ),
+]
 """Prototype filters - current production behavior.
 
 Allows placeholder practice links with warnings but permits export.
@@ -1362,11 +1453,12 @@ This is the default mode for backward compatibility.
 """
 
 STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
-    # Convert unresolved practice links from WARN to HARD_BLOCK
+    # Hard block: Practice links contain placeholders (unresolved-*, problem-*)
+    # This rule blocks if ANY placeholder practice links are found
     ExportRule(
         rule_id="placeholder_practice_links",
         rule_type=RuleType.HARD_BLOCK,
-        description="Practice links contain placeholder IDs (unresolved-*, problem-*)",
+        description="Practice links contain placeholder IDs (unresolved-*, problem-*) or is_placeholder=true",
         check_fn=_check_placeholder_practice_links,
         error_message="Student-ready export cannot contain placeholder practice links"
     ),

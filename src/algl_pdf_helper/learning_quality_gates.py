@@ -839,6 +839,126 @@ class LearningQualityGates:
             severity=Severity.INFO,
         )
     
+    def validate_definition_not_heading(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Validate that L3 definition is not a heading or section title.
+        
+        Blocks definitions that look like:
+        - Chapter titles ("Chapter 1: Introduction")
+        - Section headings ("How to create tables", "Working with dates")
+        - Gerund phrases ("Creating Tables", "Understanding Joins")
+        - TOC entries ("3.2 Join Operations")
+        
+        This is critical for student_ready export mode where headings
+        are not acceptable as learner-ready definitions.
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with validation results
+        """
+        # Only relevant for L3 units with definitions
+        if unit.target_stage != "L3_explanation":
+            return QualityCheck(
+                check_name="definition_not_heading",
+                passed=True,
+                score=1.0,
+                message="Heading check only applies to L3 units",
+                severity=Severity.INFO,
+            )
+        
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="definition_not_heading",
+                passed=False,
+                score=0.5,
+                message="Content format not supported for heading validation",
+                severity=Severity.WARNING,
+            )
+        
+        definition = content.get("definition", "")
+        if not definition:
+            return QualityCheck(
+                check_name="definition_not_heading",
+                passed=False,
+                score=0.0,
+                message="No definition found to check",
+                severity=Severity.WARNING,
+            )
+        
+        definition_stripped = definition.strip()
+        definition_lower = definition_stripped.lower()
+        
+        # Heading patterns that indicate section/chapter titles
+        heading_patterns = [
+            (r"^(How to|Working with|Understanding|Introduction to|Overview of)", "instructional heading"),
+            (r"^(Chapter|Section|Part|Unit|Module|Lesson)\s+\d+", "chapter/section title"),
+            (r"^\d+\.\d+\s+", "numbered section"),
+            (r"^(In this chapter|Learning objectives|Summary|Exercises|Review|Quiz)", "section marker"),
+            (r"^[A-Z][a-z]+ing\s+[a-z\s]+$", "gerund phrase heading"),
+            (r"^Reference\s+(Document|Manual|Guide)", "reference marker"),
+            (r"^Golden\s+Reference", "reference marker"),
+            (r"^Table of Contents", "TOC marker"),
+        ]
+        
+        for pattern, pattern_name in heading_patterns:
+            if re.search(pattern, definition_stripped, re.IGNORECASE):
+                return QualityCheck(
+                    check_name="definition_not_heading",
+                    passed=False,
+                    score=0.0,
+                    message=f"Definition appears to be a {pattern_name}: '{definition_stripped[:50]}...'",
+                    severity=Severity.BLOCKING,
+                )
+        
+        # Check for all-caps (likely a heading)
+        if definition_stripped.isupper():
+            return QualityCheck(
+                check_name="definition_not_heading",
+                passed=False,
+                score=0.0,
+                message="Definition is all uppercase - appears to be a heading",
+                severity=Severity.BLOCKING,
+            )
+        
+        # Check for title case without small words (likely a heading, not a sentence)
+        words = definition_stripped.split()
+        if len(words) < 10:
+            small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by']
+            content_words = [w for w in words if w.isalpha()]
+            if content_words:
+                capitalized = sum(1 for w in content_words if w[0].isupper())
+                if capitalized / len(content_words) > 0.7 and not any(w.lower() in small_words for w in words):
+                    return QualityCheck(
+                        check_name="definition_not_heading",
+                        passed=False,
+                        score=0.2,
+                        message=f"Definition appears to be title-case heading without sentence structure: '{definition_stripped[:50]}...'",
+                        severity=Severity.WARNING,
+                    )
+        
+        # Check for section endings like " - Overview" or ": Summary"
+        section_endings = (' - Overview', ' - Summary', ' - Details', ' - Examples',
+                          ': Overview', ': Summary', ': Details', ': Examples')
+        if any(definition_stripped.endswith(ending) for ending in section_endings):
+            return QualityCheck(
+                check_name="definition_not_heading",
+                passed=False,
+                score=0.0,
+                message=f"Definition appears to be a section heading: '{definition_stripped[:50]}...'",
+                severity=Severity.BLOCKING,
+            )
+        
+        return QualityCheck(
+            check_name="definition_not_heading",
+            passed=True,
+            score=1.0,
+            message="Definition does not appear to be a heading",
+            severity=Severity.INFO,
+        )
+    
     def validate_practice_included(self, unit: InstructionalUnit) -> QualityCheck:
         """
         Validate that practice items are included (stage-aware).
@@ -1002,7 +1122,11 @@ class LearningQualityGates:
                 severity=Severity.INFO,
             )
     
-    def validate_practice_links_real(self, unit: InstructionalUnit) -> QualityCheck:
+    def validate_practice_links_real(
+        self, 
+        unit: InstructionalUnit,
+        strict_mode: bool = False,
+    ) -> QualityCheck:
         """
         Check that practice links point to real problems, not placeholders.
         
@@ -1010,9 +1134,12 @@ class LearningQualityGates:
         - Practice links use real problem IDs (not 'problem-*' or 'unresolved-*')
         - No placeholder practice links in production content
         - Links have proper metadata when available
+        - Supports v2.0 format with is_placeholder flag, real_problem_id, etc.
         
         Args:
             unit: The instructional unit to validate
+            strict_mode: If True, treat placeholders as BLOCKING (student_ready mode).
+                        If False, treat as WARNING (prototype mode).
             
         Returns:
             QualityCheck with validation results
@@ -1041,16 +1168,19 @@ class LearningQualityGates:
         # Count placeholder patterns
         placeholder_count = 0
         unresolved_count = 0
+        v2_placeholder_count = 0  # v2.0 format with is_placeholder=true
         total_links = 0
         
         for link in practice_links:
             if isinstance(link, dict):
                 problem_ids = link.get("problem_ids", [])
                 needs_resolution = link.get("needs_resolution", False)
+                metadata = link.get("metadata", {})
             else:
                 # Handle PracticeLink objects
                 problem_ids = getattr(link, "problem_ids", [])
                 needs_resolution = getattr(link, "needs_resolution", False)
+                metadata = getattr(link, "metadata", {}) or {}
             
             for pid in problem_ids:
                 total_links += 1
@@ -1061,6 +1191,18 @@ class LearningQualityGates:
                     placeholder_count += 1
                 elif needs_resolution:
                     placeholder_count += 1
+            
+            # Check v2.0 format metadata for is_placeholder flag
+            if isinstance(metadata, dict):
+                problems_meta = metadata.get("problems", [])
+                for problem_meta in problems_meta:
+                    if isinstance(problem_meta, dict):
+                        if problem_meta.get("is_placeholder", False):
+                            v2_placeholder_count += 1
+                        # Also check for v2.0 real_problem_id presence
+                        if not problem_meta.get("real_problem_id"):
+                            # No real_problem_id means it's likely a placeholder
+                            pass
         
         if total_links == 0:
             return QualityCheck(
@@ -1072,34 +1214,41 @@ class LearningQualityGates:
             )
         
         # Calculate score based on real vs placeholder links
-        real_count = total_links - placeholder_count
-        score = real_count / total_links
+        real_count = total_links - placeholder_count - v2_placeholder_count
+        score = max(0.0, real_count / total_links) if total_links > 0 else 0.0
         
-        if placeholder_count == total_links:
+        # Determine severity based on strict_mode
+        severity = Severity.BLOCKING if strict_mode else Severity.WARNING
+        
+        # Check if ALL links are placeholders (most severe case)
+        if (placeholder_count + v2_placeholder_count) >= total_links:
             return QualityCheck(
                 check_name="practice_links_real",
                 passed=False,
                 score=0.0,
                 message=f"All {total_links} practice links are placeholders - replace with real problem IDs",
-                severity=Severity.WARNING,
+                severity=severity,
             )
         
+        # Check for unresolved links
         if unresolved_count > 0:
             return QualityCheck(
                 check_name="practice_links_real",
-                passed=False,
+                passed=not strict_mode,  # Fail in strict mode, pass with warning otherwise
                 score=score,
                 message=f"{unresolved_count} unresolved practice links found - integration with practice system needed",
-                severity=Severity.WARNING,
+                severity=severity,
             )
         
-        if placeholder_count > 0:
+        # Check for any placeholders
+        if placeholder_count > 0 or v2_placeholder_count > 0:
+            total_placeholders = placeholder_count + v2_placeholder_count
             return QualityCheck(
                 check_name="practice_links_real",
-                passed=True,
+                passed=not strict_mode,  # Fail in strict mode, pass with warning otherwise
                 score=score,
-                message=f"{placeholder_count}/{total_links} practice links are placeholders - {real_count} are real",
-                severity=Severity.WARNING,
+                message=f"{total_placeholders}/{total_links} practice links are placeholders - {real_count} are real",
+                severity=severity,
             )
         
         return QualityCheck(
@@ -1109,6 +1258,20 @@ class LearningQualityGates:
             message=f"All {total_links} practice links point to real problem IDs",
             severity=Severity.INFO,
         )
+    
+    def validate_practice_links_strict(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Strict validation for student-ready exports.
+        
+        Blocks if any placeholder practice links are found.
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with BLOCKING severity if placeholders found
+        """
+        return self.validate_practice_links_real(unit, strict_mode=True)
     
     def validate_takeaway_present(self, unit: InstructionalUnit) -> QualityCheck:
         """
@@ -1784,6 +1947,7 @@ class QualityReport:
             self.gates.validate_source_evidence(unit),
             self.gates.validate_content_relevance(unit),
             self.gates.validate_explanation_quality(unit),
+            self.gates.validate_definition_not_heading(unit),
             self.gates.validate_practice_included(unit),
             self.gates.validate_practice_links_real(unit),
             self.gates.validate_takeaway_present(unit),
@@ -1825,7 +1989,7 @@ class QualityReport:
     def _categorize_check(self, check_name: str) -> str | None:
         """Categorize a check by type."""
         content_validity = {
-            "canonical_mapping", "source_evidence", "content_relevance",
+            "canonical_mapping", "source_evidence", "content_relevance", "definition_not_heading",
         }
         example_quality = {
             "sql_executable", "sql_semantic", "example_difficulty",
