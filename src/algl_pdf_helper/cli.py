@@ -31,12 +31,7 @@ try:
 except ImportError:
     pass  # Educational CLI is optional
 
-# Import unit library CLI
-try:
-    from .cli_unit_library import app as unit_library_app
-    app.add_typer(unit_library_app, name="unit", help="Unit library pipeline")
-except ImportError:
-    pass  # Unit library CLI is optional
+# Unit library commands are re-exported as top-level commands below (line ~1149)
 
 
 def resolve_output_dir(output_dir: Path | None) -> Path:

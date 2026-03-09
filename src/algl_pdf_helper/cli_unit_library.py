@@ -677,6 +677,11 @@ def validate_command(
             # Update overall pass status
             if not overall_passed:
                 all_passed = False
+        else:
+            # FAIL explicitly instead of silently passing
+            console.print("[red]❌ Error: Learning quality gates not available[/red]")
+            console.print("   Install required dependencies to run validation.")
+            raise typer.Exit(1)
         
         # Overall result
         if all_passed:
@@ -773,19 +778,37 @@ def inspect_command(
         console.print(f"[bold]Found {len(units)} unit(s) for concept '{concept}':[/bold]")
         console.print()
         
-        # Group by stage
-        stages = {"L1": [], "L2": [], "L3": [], "L4": [], "reinforcement": []}
+        # Group by target_stage
+        stages: dict[str, list] = {
+            "L1_hint": [],
+            "L2_hint_plus_example": [],
+            "L3_explanation": [],
+            "L4_reflective_note": [],
+            "reinforcement": [],
+        }
         for unit in units:
-            stage = getattr(unit, "stage", "unknown")
-            if stage in stages:
-                stages[stage].append(unit)
+            target_stage = getattr(unit, "target_stage", "unknown")
+            if target_stage in stages:
+                stages[target_stage].append(unit)
+            else:
+                # Handle legacy or unknown stage names
+                stage_mapping = {
+                    "L1": "L1_hint",
+                    "L2": "L2_hint_plus_example",
+                    "L3": "L3_explanation",
+                    "L4": "L4_reflective_note",
+                }
+                mapped = stage_mapping.get(str(target_stage), None)
+                if mapped and mapped in stages:
+                    stages[mapped].append(unit)
         
         # Display each stage
         for stage_name, stage_units in stages.items():
             if not stage_units:
                 continue
             
-            console.print(f"[bold cyan]{stage_name.upper()} Stage:[/bold cyan]")
+            display_name = stage_name.replace("_", " ").title()
+            console.print(f"[bold cyan]{display_name}:[/bold cyan]")
             
             for unit in stage_units:
                 # Unit header
@@ -805,7 +828,7 @@ def inspect_command(
                         if hint:
                             console.print(f"    Hint: {hint[:100]}...")
                     
-                    elif stage_name == "L2":
+                    elif stage_name == "L2_hint_plus_example":
                         explanation = content.get("example_explanation", "") if isinstance(content, dict) else ""
                         if explanation:
                             console.print(f"    Explanation: {explanation[:100]}...")
@@ -816,7 +839,7 @@ def inspect_command(
                                 console.print("    SQL:")
                                 console.print(Syntax(sql, "sql", theme="monokai", line_numbers=False))
                     
-                    elif stage_name == "L3":
+                    elif stage_name == "L3_explanation":
                         definition = content.get("definition", "") if isinstance(content, dict) else ""
                         if definition:
                             console.print(f"    Definition: {definition[:150]}...")
@@ -831,7 +854,7 @@ def inspect_command(
                                         console.print(f"    Example {i}:")
                                         console.print(Syntax(sql, "sql", theme="monokai", line_numbers=False))
                     
-                    elif stage_name == "L4":
+                    elif stage_name == "L4_reflective_note":
                         reflection_prompts = content.get("reflection_prompts", []) if isinstance(content, dict) else []
                         if reflection_prompts:
                             console.print(f"    Reflection Prompts ({len(reflection_prompts)}):")

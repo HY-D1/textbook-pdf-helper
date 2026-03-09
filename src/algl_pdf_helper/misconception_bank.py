@@ -226,7 +226,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="joins-intro",
         pattern_name="Missing JOIN Condition (Cartesian Product)",
         learner_symptom="Query returns too many rows (Cartesian product) or missing ON clause error",
-        likely_prereq_failure="inner-join",
+        likely_prereq_failure="joins-intro",
         sql_pattern=r"JOIN\s+\w+\s+(?!ON\b)",
         remediation_order=2,
         example_bad_sql="SELECT * FROM employees JOIN departments;",
@@ -244,7 +244,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="joins-intro",
         pattern_name="Wrong JOIN Type Selected",
         learner_symptom="Missing expected rows or including unwanted NULLs in results",
-        likely_prereq_failure="outer-join",
+        likely_prereq_failure="joins-intro",
         sql_pattern=r"(INNER|LEFT|RIGHT|FULL)\s+JOIN",
         remediation_order=3,
         example_bad_sql="SELECT * FROM employees INNER JOIN departments ON employees.dept_id = departments.dept_id; -- Missing employees without departments",
@@ -262,7 +262,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="joins-intro",
         pattern_name="Ambiguous Column Reference",
         learner_symptom="Column reference is ambiguous error",
-        likely_prereq_failure="joins-intro",
+        likely_prereq_failure="alias",
         sql_pattern=r"SELECT\s+.*\b(id|name|code|status)\b.*FROM\s+\w+\s*,\s*\w+",
         remediation_order=2,
         example_bad_sql="SELECT id, name FROM employees, departments;",
@@ -280,7 +280,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="joins-intro",
         pattern_name="Missing Table Alias",
         learner_symptom="Difficult to read queries or ambiguous column errors",
-        likely_prereq_failure="joins-intro",
+        likely_prereq_failure="alias",
         sql_pattern=r"SELECT\s+\w+\.\w+.*FROM\s+\w+\s+\w+\s*,",
         remediation_order=1,
         example_bad_sql="SELECT e.name, d.name FROM employees e, departments d WHERE e.dept_id = d.dept_id;",
@@ -319,7 +319,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="having-clause",
         pattern_name="HAVING without GROUP BY",
         learner_symptom="HAVING clause without GROUP BY error or confusing results",
-        likely_prereq_failure="group-by",
+        likely_prereq_failure="aggregate-functions",
         sql_pattern=r"HAVING\b(?!.*GROUP\s+BY)",
         remediation_order=2,
         example_bad_sql="SELECT * FROM employees HAVING COUNT(*) > 5;",
@@ -336,7 +336,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="having-clause",
         pattern_name="WHERE vs HAVING Misuse",
         learner_symptom="Aggregate functions not allowed in WHERE clause error",
-        likely_prereq_failure="group-by",
+        likely_prereq_failure="where-clause",
         sql_pattern=r"WHERE\s+.*\b(COUNT|SUM|AVG|MAX|MIN)\s*\(",
         remediation_order=2,
         example_bad_sql="SELECT dept_id, AVG(salary) FROM employees WHERE AVG(salary) > 50000 GROUP BY dept_id;",
@@ -375,7 +375,7 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         concept_id="subqueries-intro",
         pattern_name="Subquery Returns Multiple Rows",
         learner_symptom="Subquery returns more than one row error",
-        likely_prereq_failure="subqueries-intro",
+        likely_prereq_failure="where-clause",
         sql_pattern=r"=\s*\(\s*SELECT",
         remediation_order=2,
         example_bad_sql="SELECT * FROM employees WHERE dept_id = (SELECT dept_id FROM departments WHERE location = 'NYC');",
@@ -974,11 +974,12 @@ class ErrorLinkedTagging:
     DEFAULT_ESCALATION_PATH = ["hint", "explanation", "practice", "prereq_repair"]
     
     # Concept-specific escalation overrides
+    # All concept IDs verified against sql_ontology.py canonical definitions
     CONCEPT_ESCALATION_PATHS: dict[str, list[str]] = {
         "select-basic": ["hint", "explanation", "practice"],
-        "joins": ["hint", "explanation", "contrast_example", "practice", "prereq_repair"],
+        "joins-intro": ["hint", "explanation", "contrast_example", "practice", "prereq_repair"],
         "group-by": ["hint", "explanation", "worked_example", "practice", "prereq_repair"],
-        "subqueries": ["hint", "explanation", "practice", "prereq_repair"],
+        "subqueries-intro": ["hint", "explanation", "practice", "prereq_repair"],
     }
     
     @classmethod

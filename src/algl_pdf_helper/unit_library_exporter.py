@@ -56,8 +56,6 @@ from .instructional_models import (
     SQLExample,
     UnitLibraryExport,
 )
-from .pedagogical_models import ValidationError
-from .quality_gates import QualityGateResult
 from .sql_ontology import ConceptOntology, SQL_CONCEPTS, PREREQUISITE_DAG
 
 

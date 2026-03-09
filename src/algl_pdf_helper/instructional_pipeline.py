@@ -552,9 +552,9 @@ class InstructionalPipeline:
             self._run_stage(PipelineStage.FILTERING, self._apply_export_filters, result)
             
             # Stage 11: Export
-            output_path = self._export()
-            result.output_path = output_path
-            result.stages_completed.append(PipelineStage.EXPORT)
+            export_path = self._run_stage(PipelineStage.EXPORT, self._export, result)
+            if export_path:
+                result.output_path = export_path
             
             result.success = len(result.stages_failed) == 0
             
@@ -580,13 +580,18 @@ class InstructionalPipeline:
         stage: PipelineStage, 
         stage_fn: callable,
         result: PipelineResult
-    ) -> None:
-        """Run a single pipeline stage with error handling."""
+    ) -> Any:
+        """Run a single pipeline stage with error handling.
+        
+        Returns:
+            The return value from the stage function, or None if stage failed.
+        """
         self.progress.start_stage(stage)
         try:
-            stage_fn()
+            result_value = stage_fn()
             self.progress.end_stage(stage, success=True)
             result.stages_completed.append(stage)
+            return result_value
         except Exception as e:
             self.progress.end_stage(stage, success=False)
             result.stages_failed.append((stage, str(e)))
@@ -858,7 +863,7 @@ class InstructionalPipeline:
                 
                 # Add generated units
                 for variant_name, unit in variants.items():
-                    if variant_name in self.config.generate_variants:
+                    if unit.target_stage in self.config.generate_variants:
                         self._instructional_units.append(unit)
                         
                         # Track fallback units
@@ -1317,11 +1322,11 @@ class InstructionalPipeline:
         return output_path
     
     def _build_concept_graph(self, library: UnitLibraryExport) -> dict:
-        """Build concept graph from actually mapped concepts.
+        """Build concept graph from mapped concepts in this PDF.
         
         Instead of including all concepts from the ontology, this builds
-        the graph only from concepts that were actually mapped from the PDF
-        and exported in the final library.
+        the graph only from concepts that have instructional units in
+        the exported library.
         
         Args:
             library: The filtered unit library export
@@ -1329,21 +1334,14 @@ class InstructionalPipeline:
         Returns:
             Dict with nodes, edges, and metadata about included concepts
         """
-        # Get concepts that were actually mapped from PDF content
-        mapped_concept_ids = set(self._concept_blocks.keys())
+        # Get concepts that actually have units in this document
+        mapped_concept_ids = set()
+        for unit in library.instructional_units:
+            mapped_concept_ids.add(unit.concept_id)
         
-        # Get concepts from exported units
-        exported_concept_ids = set(
-            unit.concept_id 
-            for unit in library.instructional_units
-        ) if library.instructional_units else set()
-        
-        # Use intersection: concepts that are both mapped AND have units
-        relevant_concepts = mapped_concept_ids & exported_concept_ids
-        
-        # Build nodes only for relevant concepts
+        # Build nodes only for mapped concepts
         nodes = []
-        for concept_id in relevant_concepts:
+        for concept_id in mapped_concept_ids:
             concept = self._ontology.get_concept(concept_id) if self._ontology else None
             if concept:
                 evidence_count = len(self._concept_blocks.get(concept_id, []))
@@ -1357,26 +1355,25 @@ class InstructionalPipeline:
                     "has_content": evidence_count > 0,
                 })
         
-        # Build edges only where BOTH concepts are relevant
+        # Build edges from prerequisites where both ends are mapped
         edges = []
         if self._ontology:
-            all_edges = self._ontology._prereqs
-            for edge in all_edges:
-                if edge["from"] in relevant_concepts and edge["to"] in relevant_concepts:
-                    edges.append(edge)
-        
-        # Add error association edges from units
-        for unit in library.instructional_units:
-            for error_subtype in unit.error_subtypes:
-                edges.append({
-                    "from": unit.concept_id,
-                    "to": f"error:{error_subtype}",
-                    "type": "error_association",
-                })
+            for concept_id in mapped_concept_ids:
+                concept = self._ontology.get_concept(concept_id)
+                if concept:
+                    # Get prerequisites for this concept
+                    prereqs = self._ontology.get_prerequisites(concept_id)
+                    for prereq_id in prereqs:
+                        if prereq_id in mapped_concept_ids:
+                            edges.append({
+                                "source": prereq_id,
+                                "target": concept_id,
+                                "type": "prerequisite",
+                            })
         
         # Metadata about what's included vs omitted
         all_ontology = set(self._ontology.list_all_concepts()) if self._ontology else set()
-        omitted = all_ontology - relevant_concepts
+        omitted = all_ontology - mapped_concept_ids
         
         return {
             "nodes": nodes,
@@ -1384,7 +1381,7 @@ class InstructionalPipeline:
             "metadata": {
                 "total_ontology_concepts": len(all_ontology),
                 "mapped_concepts": len(mapped_concept_ids),
-                "exported_concepts": len(relevant_concepts),
+                "exported_concepts": len(mapped_concept_ids),
                 "omitted_concepts": sorted(omitted),
                 "omitted_count": len(omitted),
                 "edge_count": len(edges),
@@ -1395,9 +1392,9 @@ class InstructionalPipeline:
         """Gather processing statistics from all stages.
         
         Returns accurate counts including:
-        - generated_units: Total units created before filtering
-        - filtered_out: Units removed by quality/export filters
-        - exported_units: Units actually written to files (after filtering)
+        - generated_instructional_units: Total units created before filtering
+        - exported_instructional_units: Units actually exported (after filtering)
+        - filtered_out_units: Units removed by quality/export filters
         - fallback_units: Units that failed generation and used fallback content
         """
         # Use stored generation stats if available, otherwise compute from current state
@@ -1419,12 +1416,12 @@ class InstructionalPipeline:
             "extraction_blocks": len(self._content_blocks),
             "teaching_blocks": len(self._teaching_blocks),
             "concepts_mapped": len(self._concept_blocks),
-            # Legacy field for backward compatibility - now equals exported_units
+            # Legacy field for backward compatibility - equals exported_units
             "instructional_units": exported_units,
-            # Clear separation of metrics
-            "generated_units": generated_units,
-            "filtered_out": filtered_out,
-            "exported_units": exported_units,
+            # Clear separation of metrics for generated vs exported
+            "generated_instructional_units": generated_units,
+            "exported_instructional_units": exported_units,
+            "filtered_out_units": filtered_out,
             "misconception_units": len(self._misconception_units),
             "reinforcement_items": len(self._reinforcement_items),
             "filtered_units": len(getattr(self, '_filtered_unit_ids', [])),

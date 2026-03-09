@@ -59,7 +59,6 @@ from .pedagogical_generator import (
     TEXTBOOK_TO_PRACTICE_MAPPING,
     FOREIGN_KEY_MAPPINGS,
 )
-from .pedagogical_models import Mistake
 from .generation_pipeline import MultiPassGenerator
 from .sql_ontology import get_concept
 

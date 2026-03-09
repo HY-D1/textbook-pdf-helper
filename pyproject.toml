@@ -16,6 +16,8 @@ dependencies = [
   "typer>=0.12",
   "pymupdf>=1.23",
   "pyyaml>=6.0",
+  "rich>=13.0",
+  "sqlparse>=0.4",
 ]
 
 [project.optional-dependencies]
