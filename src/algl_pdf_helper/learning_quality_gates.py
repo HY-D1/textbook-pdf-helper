@@ -1137,8 +1137,9 @@ class LearningQualityGates:
         Validate prerequisite tags.
         
         Checks:
-        - Prerequisites are listed
+        - Prerequisites are listed (for non-root concepts)
         - Prerequisites exist in ontology
+        - Root concepts (no prerequisites in ontology) can have empty prerequisites
         
         Args:
             unit: The instructional unit to validate
@@ -1148,7 +1149,21 @@ class LearningQualityGates:
         """
         prereqs = unit.prerequisites or []
         
+        # Check if this is a root concept in the ontology (has no prerequisites)
+        ontology_prereqs = self.ontology.get_prerequisites(unit.concept_id)
+        is_root_concept = not ontology_prereqs
+        
         if not prereqs:
+            # Root concepts are allowed to have empty prerequisites
+            if is_root_concept:
+                return QualityCheck(
+                    check_name="prerequisite_tags",
+                    passed=True,
+                    score=1.0,
+                    message=f"Root concept '{unit.concept_id}' - no prerequisites expected",
+                    severity=Severity.INFO,
+                )
+            # Non-root concepts should have prerequisites
             return QualityCheck(
                 check_name="prerequisite_tags",
                 passed=False,
