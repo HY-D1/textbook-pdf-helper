@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from .instructional_models import (
     InstructionalUnit,
@@ -120,7 +120,7 @@ class PipelineConfig:
         output_dir: Directory for output files
         doc_id: Document identifier (auto-generated if None)
         llm_provider: LLM provider (kimi, openai, ollama)
-        llm_model: Specific model name to use
+        llm_model: Specific model name to use (provider-specific default if None)
         concept_ontology_path: Optional path to custom ontology
         filter_level: Content filtering strictness (strict/production/development)
         generate_variants: List of L1-L4 variants to generate
@@ -134,7 +134,7 @@ class PipelineConfig:
     output_dir: Path = field(default_factory=lambda: Path("./output"))
     doc_id: str | None = None
     llm_provider: Literal["kimi", "openai", "ollama"] = "kimi"
-    llm_model: str = "kimi-k2-5"
+    llm_model: str | None = None  # Will be resolved to provider-specific default
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
     generate_variants: list[str] = field(
@@ -146,6 +146,13 @@ class PipelineConfig:
     skip_misconceptions: bool = False
     validate_sql: bool = True
     min_quality_score: float = 0.7
+    
+    # Provider-specific default models
+    PROVIDER_DEFAULT_MODELS: ClassVar[dict[str, str]] = {
+        "kimi": "kimi-k2-5",
+        "openai": "gpt-4",
+        "ollama": "llama3.2:3b",
+    }
     
     def __post_init__(self):
         """Validate configuration and set defaults."""
@@ -168,6 +175,53 @@ class PipelineConfig:
         # Check PDF exists
         if not self.pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {self.pdf_path}")
+        
+        # Resolve provider-specific default model
+        if self.llm_model is None:
+            self.llm_model = self.PROVIDER_DEFAULT_MODELS.get(
+                self.llm_provider, "kimi-k2-5"
+            )
+        
+        # Validate provider-model combination
+        self._validate_provider_model()
+    
+    def _validate_provider_model(self) -> None:
+        """Validate that the model is appropriate for the provider."""
+        provider = self.llm_provider
+        model = self.llm_model
+        
+        # Provider-specific model patterns
+        provider_patterns = {
+            "kimi": ["kimi-"],
+            "openai": ["gpt-", "o1-", "o3-", "text-"],
+            "ollama": [],  # Ollama accepts any local model name
+        }
+        
+        patterns = provider_patterns.get(provider, [])
+        
+        # Check if model appears to be for a different provider
+        if provider == "kimi" and any(model.startswith(p) for p in ["gpt-", "o1-", "o3-"]):
+            raise ValueError(
+                f"Model '{model}' appears to be an OpenAI model, "
+                f"but provider is set to '{provider}'. "
+                f"Did you mean to use --llm-provider openai?"
+            )
+        
+        if provider == "openai" and model.startswith("kimi-"):
+            raise ValueError(
+                f"Model '{model}' appears to be a Kimi model, "
+                f"but provider is set to '{provider}'. "
+                f"Did you mean to use --llm-provider kimi?"
+            )
+        
+        # For Ollama, warn about potential incompatible models but don't fail
+        if provider == "ollama":
+            if any(model.startswith(p) for p in ["kimi-", "gpt-", "o1-", "o3-", "claude-"]):
+                logger.warning(
+                    f"Model '{model}' appears to be a cloud API model, "
+                    f"but provider is set to 'ollama'. "
+                    f"This will likely fail. Use a local model name like 'llama3.2:3b'."
+                )
 
 
 # =============================================================================
@@ -436,6 +490,8 @@ class InstructionalPipeline:
         self._validation_results: dict[str, Any] = {}
         self._quality_report: dict[str, Any] = {}
         self._filtered_unit_ids: list[str] = []
+        self._filtered_library: UnitLibraryExport | None = None
+        self._generation_stats: dict[str, int] = {}
         
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
@@ -496,7 +552,9 @@ class InstructionalPipeline:
             self._run_stage(PipelineStage.FILTERING, self._apply_export_filters, result)
             
             # Stage 11: Export
-            self._run_stage(PipelineStage.EXPORT, self._export, result)
+            output_path = self._export()
+            result.output_path = output_path
+            result.stages_completed.append(PipelineStage.EXPORT)
             
             result.success = len(result.stages_failed) == 0
             
@@ -1206,6 +1264,14 @@ class InstructionalPipeline:
             "filter_level": self.config.filter_level,
         }
         
+        # Store filtered library and stats for _gather_statistics()
+        self._filtered_library = filtered_library
+        self._generation_stats = {
+            "generated_units": generated_count,
+            "filtered_out": filtered_out_count,
+            "exported_units": exported_count,
+        }
+        
         self._logger.info(
             f"Created export with {len(filtered_library.instructional_units)} units "
             f"({len(filter_result.filtered_units)} filtered), "
@@ -1326,16 +1392,43 @@ class InstructionalPipeline:
         }
     
     def _gather_statistics(self) -> dict[str, Any]:
-        """Gather processing statistics from all stages."""
+        """Gather processing statistics from all stages.
+        
+        Returns accurate counts including:
+        - generated_units: Total units created before filtering
+        - filtered_out: Units removed by quality/export filters
+        - exported_units: Units actually written to files (after filtering)
+        - fallback_units: Units that failed generation and used fallback content
+        """
+        # Use stored generation stats if available, otherwise compute from current state
+        stats = getattr(self, '_generation_stats', {})
+        
+        # Get exported units count from filtered library if available
+        filtered_library = getattr(self, '_filtered_library', None)
+        if filtered_library and filtered_library.instructional_units is not None:
+            exported_units = len(filtered_library.instructional_units)
+        else:
+            exported_units = 0
+        
+        # Get counts from stored stats or compute from current state
+        generated_units = stats.get('generated_units', len(self._instructional_units))
+        filtered_out = stats.get('filtered_out', len(getattr(self, '_filtered_unit_ids', [])))
+        fallback_count = len(getattr(self, '_fallback_unit_ids', []))
+        
         return {
             "extraction_blocks": len(self._content_blocks),
             "teaching_blocks": len(self._teaching_blocks),
             "concepts_mapped": len(self._concept_blocks),
-            "instructional_units": len(self._instructional_units),
+            # Legacy field for backward compatibility - now equals exported_units
+            "instructional_units": exported_units,
+            # Clear separation of metrics
+            "generated_units": generated_units,
+            "filtered_out": filtered_out,
+            "exported_units": exported_units,
             "misconception_units": len(self._misconception_units),
             "reinforcement_items": len(self._reinforcement_items),
             "filtered_units": len(getattr(self, '_filtered_unit_ids', [])),
-            "fallback_units": len(getattr(self, '_fallback_unit_ids', [])),
+            "fallback_units": fallback_count,
             "stage_timings": self.progress.get_stage_durations(),
         }
 

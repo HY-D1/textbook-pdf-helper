@@ -228,7 +228,15 @@ def _check_placeholder_example_present(unit: InstructionalUnit) -> tuple[bool, s
 
 
 def _check_empty_definition(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if definition/content is empty or too short."""
+    """Check if definition/content is empty or too short.
+    
+    Only applies to L3_explanation units - other stages don't require
+    full definitions (L1/L2 are hints, L4 is reflective, reinforcement is practice).
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"Definition check skipped for {unit.target_stage}"
+    
     definition = _get_unit_definition(unit)
     if not definition.strip():
         return False, "Definition is empty"
@@ -238,7 +246,17 @@ def _check_empty_definition(unit: InstructionalUnit) -> tuple[bool, str]:
 
 
 def _check_no_valid_example(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if there's at least one executable SQL example."""
+    """Check if there's at least one executable SQL example.
+    
+    Only applies to L2_hint_plus_example and L3_explanation units.
+    Skipped for L1_hint (just hints), L4_reflective_note (reflection), 
+    and reinforcement (practice) stages.
+    """
+    # Only apply to L2 and L3 stages
+    applicable_stages = {"L2_hint_plus_example", "L3_explanation"}
+    if unit.target_stage not in applicable_stages:
+        return True, f"SQL example check skipped for {unit.target_stage}"
+    
     examples = _get_unit_examples(unit)
     
     if not examples:
@@ -330,7 +348,16 @@ def _check_extraction_confidence_too_low(unit: InstructionalUnit) -> tuple[bool,
 # =============================================================================
 
 def _check_missing_learning_objectives(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if unit has learning objectives in content."""
+    """Check if unit has learning objectives in content.
+    
+    Only applies to L3_explanation units - other stages don't require
+    formal learning objectives (L1/L2 are hints, L4 is reflective, 
+    reinforcement is practice).
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"Learning objectives check skipped for {unit.target_stage}"
+    
     content = unit.content or {}
     objectives = []
     
@@ -377,12 +404,16 @@ def _check_incomplete_stage_variants(unit: InstructionalUnit) -> tuple[bool, str
 
 
 def _check_example_not_validated(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if SQL examples have been execution-tested (based on content quality)."""
-    # Check if examples exist and have proper structure
+    """Check if SQL examples have been execution-tested (based on content quality).
+    
+    Only applies to units that actually contain SQL examples to validate.
+    Skipped for units without SQL content (L1_hint, L4_reflective_note, etc.).
+    """
+    # Check if examples exist - if no examples, skip validation
     examples = _get_unit_examples(unit)
     
     if not examples:
-        return False, "No SQL examples to validate"
+        return True, f"No SQL examples to validate for {unit.target_stage}"
     
     # Check if examples have explanation/validation markers
     for ex in examples:

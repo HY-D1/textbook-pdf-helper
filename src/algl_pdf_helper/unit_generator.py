@@ -36,6 +36,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -52,7 +53,7 @@ from .instructional_models import (
     TargetStage,
     UnitType,
 )
-from .section_extractor import ContentBlock
+from .section_extractor import BlockType, ContentBlock
 from .pedagogical_generator import (
     PRACTICE_SCHEMAS,
     TEXTBOOK_TO_PRACTICE_MAPPING,
@@ -60,6 +61,7 @@ from .pedagogical_generator import (
 )
 from .pedagogical_models import Mistake
 from .generation_pipeline import MultiPassGenerator
+from .sql_ontology import get_concept
 
 
 # =============================================================================
@@ -89,6 +91,9 @@ class L3Content(BaseModel):
     """
     definition: str = Field(..., max_length=1000, description="What this concept is")
     why_it_matters: str = Field(..., max_length=500, description="Real-world relevance")
+    learning_objectives: list[str] = Field(
+        ..., min_length=1, description="Learning objectives from ontology"
+    )
     examples: list[SQLExample] = Field(
         ..., min_length=1, max_length=5, description="SQL examples using canonical schema"
     )
@@ -790,6 +795,7 @@ class UnitGenerator:
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.transformer = transformer or ContentTransformer()
         self._generation_stats: dict[str, Any] = {}
+        self.logger = logging.getLogger(__name__)
     
     def generate_all_variants(
         self,
@@ -875,6 +881,23 @@ class UnitGenerator:
         
         return variants
     
+    # Canonical mapping from BlockType enum to SourceSpan block_type Literal
+    _BLOCK_TYPE_CANONICAL_MAP: dict[BlockType, str] = {
+        BlockType.HEADING: "heading",
+        BlockType.SUBHEADING: "heading",
+        BlockType.EXPLANATORY_PROSE: "prose",
+        BlockType.SIDEBAR: "prose",
+        BlockType.SQL_CODE: "code",
+        BlockType.OUTPUT_TABLE: "table",
+        BlockType.FIGURE: "figure",
+        BlockType.DIAGRAM: "figure",
+        BlockType.EXERCISE: "exercise",
+        BlockType.SUMMARY: "summary",
+        BlockType.GLOSSARY: "summary",
+        BlockType.ADMIN_TEXT: "admin",
+        BlockType.UNKNOWN: "prose",
+    }
+
     def _create_evidence_spans(self, blocks: list[ContentBlock], doc_id: str = "unknown") -> list[SourceSpan]:
         """Create evidence span references from content blocks."""
         evidence_spans = []
@@ -882,14 +905,38 @@ class UnitGenerator:
             text_content = b.text_content
             excerpt = text_content[:100] + "..." if len(text_content) > 100 else text_content
             
-            # Map BlockType to string representation
-            block_type_str = "prose"
+            # Map BlockType to canonical string representation using explicit mapping
+            block_type_str = "prose"  # Default fallback
             if hasattr(b, 'block_type'):
                 if isinstance(b.block_type, str):
-                    block_type_str = b.block_type.lower()
+                    # Handle string block types - try to normalize to canonical values
+                    str_lower = b.block_type.lower()
+                    # Map common non-canonical values to canonical ones
+                    if str_lower in ("heading", "subheading"):
+                        block_type_str = "heading"
+                    elif str_lower in ("explanatory_prose", "sidebar"):
+                        block_type_str = "prose"
+                    elif str_lower == "sql_code":
+                        block_type_str = "code"
+                    elif str_lower == "output_table":
+                        block_type_str = "table"
+                    elif str_lower in ("figure", "diagram"):
+                        block_type_str = "figure"
+                    elif str_lower == "exercise":
+                        block_type_str = "exercise"
+                    elif str_lower in ("summary", "glossary"):
+                        block_type_str = "summary"
+                    elif str_lower == "admin_text":
+                        block_type_str = "admin"
+                    elif str_lower in ("heading", "prose", "code", "figure", "table", "exercise", "summary", "admin"):
+                        # Already canonical
+                        block_type_str = str_lower
+                    else:
+                        # Unknown - default to prose
+                        block_type_str = "prose"
                 else:
-                    # It's an enum
-                    block_type_str = b.block_type.name.lower()
+                    # It's a BlockType enum - use the canonical mapping
+                    block_type_str = self._BLOCK_TYPE_CANONICAL_MAP.get(b.block_type, "prose")
             
             evidence_spans.append(
                 SourceSpan(
@@ -983,12 +1030,8 @@ class UnitGenerator:
                 when_to_use=llm_response.get("when_to_use", ""),
             )
         else:
-            # Fallback content
-            content = L1Content(
-                hint_text=self._get_default_hint(concept_id),
-                syntax_cue=self._get_default_syntax_cue(concept_id),
-                when_to_use=self._get_default_when_to_use(concept_id),
-            )
+            # Use grounded defaults from evidence spans (no-LLM path)
+            content = self._build_grounded_L1_content(concept_id, blocks)
         
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
@@ -1045,23 +1088,29 @@ class UnitGenerator:
                 example_sql = example.get("sql", self._get_default_example_sql(concept_id))
                 example_explanation = example.get("explanation", "See the SQL above.")
             else:
-                example_sql = self._get_default_example_sql(concept_id)
-                example_explanation = "Basic usage example."
+                example_sql = ""
+                example_explanation = ""
         else:
-            example_sql = self._get_default_example_sql(concept_id)
-            example_explanation = "Basic usage example."
+            # Use grounded defaults (no-LLM path)
+            example_sql = ""
+            example_explanation = ""
         
-        # Transform SQL to practice schema
-        example_sql = self.transformer.transform_to_practice_schema(
-            example_sql, ["Sailors", "Boats", "Reserves"]
-        )
-        
-        content = L2Content(
-            hint_text=l1_content.get("hint_text", self._get_default_hint(concept_id)),
-            example_sql=example_sql,
-            example_explanation=example_explanation,
-            common_pitfall=self._get_default_pitfall(concept_id),
-        )
+        # If we have LLM example, use it; otherwise grounded defaults will be used
+        if example_sql:
+            # Transform SQL to practice schema
+            example_sql = self.transformer.transform_to_practice_schema(
+                example_sql, ["Sailors", "Boats", "Reserves"]
+            )
+            content = L2Content(
+                hint_text=l1_content.get("hint_text", self._get_default_hint(concept_id)),
+                example_sql=example_sql,
+                example_explanation=example_explanation,
+                common_pitfall=self._get_default_pitfall(concept_id),
+            )
+        else:
+            # Use grounded defaults from evidence spans (no-LLM path)
+            l1_hint = l1_content.get("hint_text", self._get_default_hint(concept_id))
+            content = self._build_grounded_L2_content(concept_id, blocks, l1_hint)
         
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
@@ -1119,76 +1168,87 @@ class UnitGenerator:
         )
         mist_response = self._call_llm(mist_prompt, config)
         
-        # Build content using canonical schemas
-        examples: list[SQLExample] = []
-        if ex_response and "examples" in ex_response:
-            for ex in ex_response["examples"]:
-                sql = self.transformer.transform_to_practice_schema(
-                    ex.get("sql", ""), ["Sailors", "Boats", "Reserves"]
+        # Check if we have LLM responses - if not, use grounded defaults (no-LLM path)
+        has_llm_content = def_response or ex_response or mist_response
+        
+        if not has_llm_content:
+            # Use grounded defaults from evidence spans (no-LLM path)
+            content = self._build_grounded_L3_content(concept_id, blocks)
+        else:
+            # Build content using LLM responses
+            examples: list[SQLExample] = []
+            if ex_response and "examples" in ex_response:
+                for ex in ex_response["examples"]:
+                    sql = self.transformer.transform_to_practice_schema(
+                        ex.get("sql", ""), ["Sailors", "Boats", "Reserves"]
+                    )
+                    examples.append(SQLExample(
+                        title=ex.get("title", "Example"),
+                        scenario=ex.get("scenario", ""),
+                        sql=sql,
+                        explanation=ex.get("explanation", ""),
+                        expected_output=ex.get("expected_output", ""),
+                    ))
+            
+            if not examples:
+                examples = self._get_default_sql_examples(concept_id)
+            
+            contrast: SQLExample | None = None
+            if ex_response and "contrast_example" in ex_response:
+                ce = ex_response["contrast_example"]
+                # Convert contrast example to SQLExample format
+                incorrect_sql = self.transformer.transform_to_practice_schema(
+                    ce.get("incorrect_sql", ""), ["Sailors", "Boats", "Reserves"]
                 )
-                examples.append(SQLExample(
-                    title=ex.get("title", "Example"),
-                    scenario=ex.get("scenario", ""),
-                    sql=sql,
-                    explanation=ex.get("explanation", ""),
-                    expected_output=ex.get("expected_output", ""),
-                ))
-        
-        if not examples:
-            examples = self._get_default_sql_examples(concept_id)
-        
-        contrast: SQLExample | None = None
-        if ex_response and "contrast_example" in ex_response:
-            ce = ex_response["contrast_example"]
-            # Convert contrast example to SQLExample format
-            incorrect_sql = self.transformer.transform_to_practice_schema(
-                ce.get("incorrect_sql", ""), ["Sailors", "Boats", "Reserves"]
+                corrected_sql = self.transformer.transform_to_practice_schema(
+                    ce.get("corrected_sql", ""), ["Sailors", "Boats", "Reserves"]
+                )
+                contrast = SQLExample(
+                    title="Contrast: What NOT to do",
+                    scenario=ce.get("why_wrong", ""),
+                    sql=incorrect_sql,  # The incorrect SQL is what we show
+                    explanation=f"Why wrong: {ce.get('why_wrong', '')}\n\nCorrected: {corrected_sql}",
+                )
+            
+            mistakes: list[MisconceptionExample] = []
+            if mist_response and "mistakes" in mist_response:
+                for m in mist_response["mistakes"]:
+                    mistakes.append(MisconceptionExample(
+                        title=m.get("title", "Mistake"),
+                        error_sql=self.transformer.transform_to_practice_schema(
+                            m.get("error_sql", ""), ["Sailors", "Boats", "Reserves"]
+                        ),
+                        error_message=m.get("error_message", ""),
+                        why_it_happens=m.get("why_it_happens", ""),
+                        fix_sql=self.transformer.transform_to_practice_schema(
+                            m.get("fix_sql", ""), ["Sailors", "Boats", "Reserves"]
+                        ),
+                        key_takeaway=m.get("key_takeaway", ""),
+                    ))
+            
+            if not mistakes:
+                mistakes = self._get_default_misconceptions(concept_id)
+            
+            # Build practice links as canonical PracticeLink objects
+            practice_links = [
+                PracticeLink(
+                    concept_id=concept_id,
+                    problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
+                )
+            ]
+            
+            # Get learning objectives from ontology (preferred over LLM generation)
+            learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
+            
+            content = L3Content(
+                definition=def_response.get("definition", self._get_default_definition(concept_id)) if def_response else self._get_default_definition(concept_id),
+                why_it_matters=def_response.get("why_it_matters", "Important for database queries.") if def_response else "Important for database queries.",
+                learning_objectives=learning_objectives,
+                examples=examples,
+                contrast_example=contrast,
+                common_mistakes=mistakes,
+                practice_links=practice_links,
             )
-            corrected_sql = self.transformer.transform_to_practice_schema(
-                ce.get("corrected_sql", ""), ["Sailors", "Boats", "Reserves"]
-            )
-            contrast = SQLExample(
-                title="Contrast: What NOT to do",
-                scenario=ce.get("why_wrong", ""),
-                sql=incorrect_sql,  # The incorrect SQL is what we show
-                explanation=f"Why wrong: {ce.get('why_wrong', '')}\n\nCorrected: {corrected_sql}",
-            )
-        
-        mistakes: list[MisconceptionExample] = []
-        if mist_response and "mistakes" in mist_response:
-            for m in mist_response["mistakes"]:
-                mistakes.append(MisconceptionExample(
-                    title=m.get("title", "Mistake"),
-                    error_sql=self.transformer.transform_to_practice_schema(
-                        m.get("error_sql", ""), ["Sailors", "Boats", "Reserves"]
-                    ),
-                    error_message=m.get("error_message", ""),
-                    why_it_happens=m.get("why_it_happens", ""),
-                    fix_sql=self.transformer.transform_to_practice_schema(
-                        m.get("fix_sql", ""), ["Sailors", "Boats", "Reserves"]
-                    ),
-                    key_takeaway=m.get("key_takeaway", ""),
-                ))
-        
-        if not mistakes:
-            mistakes = self._get_default_misconceptions(concept_id)
-        
-        # Build practice links as canonical PracticeLink objects
-        practice_links = [
-            PracticeLink(
-                concept_id=concept_id,
-                problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
-            )
-        ]
-        
-        content = L3Content(
-            definition=def_response.get("definition", self._get_default_definition(concept_id)) if def_response else self._get_default_definition(concept_id),
-            why_it_matters=def_response.get("why_it_matters", "Important for database queries.") if def_response else "Important for database queries.",
-            examples=examples,
-            contrast_example=contrast,
-            common_mistakes=mistakes,
-            practice_links=practice_links,
-        )
         
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
@@ -1249,13 +1309,8 @@ class UnitGenerator:
                 connections=llm_response.get("connections", self._get_default_connections(concept_id)),
             )
         else:
-            content = L4Content(
-                key_concept_summary=self._get_default_summary(concept_id),
-                reflection_prompts=self._get_default_reflection_prompts(concept_id),
-                explain_in_own_words=f"Explain {concept_id} in your own words as if teaching a beginner.",
-                transfer_questions=self._get_default_transfer_questions(concept_id),
-                connections=self._get_default_connections(concept_id),
-            )
+            # Use grounded defaults from evidence spans (no-LLM path)
+            content = self._build_grounded_L4_content(concept_id, blocks)
         
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
@@ -1312,12 +1367,8 @@ class UnitGenerator:
                 next_review_timing=llm_response.get("next_review_timing", "1 day"),
             )
         else:
-            content = ReinforcementContent(
-                recall_prompt=self._get_default_recall_prompt(concept_id),
-                quick_check_question=self._get_default_check_question(concept_id),
-                quick_check_answer=self._get_default_check_answer(concept_id),
-                next_review_timing="1 day",
-            )
+            # Use grounded defaults from evidence spans (no-LLM path)
+            content = self._build_grounded_reinforcement_content(concept_id, blocks)
         
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
@@ -1544,6 +1595,359 @@ class UnitGenerator:
             "subqueries": "yes",
         }
         return answers.get(concept_id, "yes")
+    
+    def _get_learning_objectives_from_ontology(self, concept_id: str) -> list[str]:
+        """
+        Get learning objectives for a concept from the SQL ontology.
+        
+        Args:
+            concept_id: The canonical concept ID
+            
+        Returns:
+            List of learning objectives from the ontology, or default objectives
+            if the concept is not found
+        """
+        concept = get_concept(concept_id)
+        if concept and "learning_objectives" in concept:
+            return concept["learning_objectives"]
+        
+        # Return a default objective if concept not found or has no objectives
+        return [f"Understand and apply {concept_id} in SQL queries"]
+    
+    # =============================================================================
+    # GROUNDED DEFAULT CONTENT HELPERS (No-LLM Path)
+    # =============================================================================
+    
+    def _extract_key_terms_from_blocks(self, blocks: list[ContentBlock]) -> list[str]:
+        """Extract key SQL terms from content blocks."""
+        # Combine all text
+        text = " ".join(b.text_content for b in blocks if b.text_content)
+        text_upper = text.upper()
+        
+        # Common SQL keywords to look for
+        sql_keywords = [
+            "SELECT", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT",
+            "FULL", "CROSS", "NATURAL", "ON", "AS", "GROUP BY", "ORDER BY", 
+            "HAVING", "COUNT", "SUM", "AVG", "MAX", "MIN", "DISTINCT",
+            "INSERT", "UPDATE", "DELETE", "CREATE", "TABLE", "INDEX", "VIEW",
+            "UNION", "INTERSECT", "EXCEPT", "LIMIT", "OFFSET", "LIKE", "IN", "BETWEEN"
+        ]
+        
+        found = []
+        for keyword in sql_keywords:
+            if keyword in text_upper:
+                found.append(keyword.title() if " " not in keyword else keyword.title())
+        
+        return found[:5]  # Limit to top 5
+    
+    def _get_first_sentence_from_blocks(self, blocks: list[ContentBlock]) -> str:
+        """Get first sentence from blocks as definition."""
+        for block in blocks:
+            if block.text_content:
+                text = block.text_content.strip()
+                # Find first sentence
+                for delim in [". ", ".\n", "!", "?"]:
+                    if delim in text:
+                        return text[:text.find(delim) + 1].strip()
+                # If no sentence delimiter, return first 150 chars
+                return text[:150] if len(text) > 150 else text
+        return ""
+    
+    def _extract_sql_examples_from_blocks(self, blocks: list[ContentBlock]) -> list[dict]:
+        """Extract SQL examples from content blocks."""
+        examples = []
+        for block in blocks:
+            if not block.text_content:
+                continue
+            text = block.text_content
+            # Look for SQL patterns - more comprehensive pattern
+            # Match SELECT, INSERT, UPDATE, DELETE, CREATE statements
+            sql_pattern = r"(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+.+?;"
+            matches = re.findall(sql_pattern, text, re.IGNORECASE | re.DOTALL)
+            for match in matches:
+                # Clean up the match - take first 200 chars to avoid capturing too much
+                sql = match[:200] if len(match) > 200 else match
+                examples.append({
+                    "sql": sql,
+                    "page": block.page_number,
+                })
+        return examples
+    
+    def _get_page_references_str(self, blocks: list[ContentBlock]) -> str:
+        """Get page references from blocks as a string."""
+        pages = sorted(set(b.page_number for b in blocks if b.page_number > 0))
+        if not pages:
+            return ""
+        if len(pages) == 1:
+            return f"page {pages[0]}"
+        elif len(pages) <= 3:
+            return f"pages {', '.join(map(str, pages))}"
+        else:
+            return f"pages {pages[0]}-{pages[-1]}"
+    
+    def _get_ontology_info(self, concept_id: str) -> dict[str, Any]:
+        """Get information from SQL ontology for a concept."""
+        concept = get_concept(concept_id)
+        if not concept:
+            return {}
+        return {
+            "title": concept.get("title", concept_id),
+            "definition": concept.get("definition", ""),
+            "syntax_pattern": concept.get("syntax_pattern", ""),
+            "use_when": concept.get("use_when", ""),
+            "key_points": concept.get("key_points", []),
+            "common_mistakes": concept.get("common_mistakes", []),
+        }
+    
+    def _build_grounded_L1_content(
+        self, 
+        concept_id: str, 
+        blocks: list[ContentBlock]
+    ) -> L1Content:
+        """Build L1 hint content grounded in evidence spans (no-LLM path)."""
+        # Get info from ontology
+        ontology = self._get_ontology_info(concept_id)
+        
+        # Extract key terms from blocks
+        key_terms = self._extract_key_terms_from_blocks(blocks)
+        
+        # Get page references
+        page_ref = self._get_page_references_str(blocks)
+        
+        # Build hint text using ontology if available, otherwise extract from blocks
+        if ontology.get("definition"):
+            hint_text = ontology["definition"]
+        else:
+            first_sentence = self._get_first_sentence_from_blocks(blocks)
+            if first_sentence:
+                hint_text = first_sentence
+            else:
+                hint_text = self._get_default_hint(concept_id)
+        
+        # Add key terms if found
+        if key_terms:
+            hint_text += f" Key concepts: {', '.join(key_terms)}."
+        
+        # Add page reference
+        if page_ref:
+            hint_text += f" See {page_ref} for details."
+        
+        # Build syntax cue
+        if ontology.get("syntax_pattern"):
+            syntax_cue = ontology["syntax_pattern"]
+        elif key_terms:
+            # Build basic syntax from key terms
+            syntax_cue = f"{key_terms[0]} ..."
+        else:
+            syntax_cue = self._get_default_syntax_cue(concept_id)
+        
+        # Build when to use
+        if ontology.get("use_when"):
+            when_to_use = ontology["use_when"]
+        else:
+            when_to_use = self._get_default_when_to_use(concept_id)
+        
+        return L1Content(
+            hint_text=hint_text[:300],  # Respect max length
+            syntax_cue=syntax_cue[:200],
+            when_to_use=when_to_use[:200],
+        )
+    
+    def _build_grounded_L2_content(
+        self,
+        concept_id: str,
+        blocks: list[ContentBlock],
+        l1_hint: str,
+    ) -> L2Content:
+        """Build L2 hint+example content grounded in evidence spans (no-LLM path)."""
+        # Extract SQL examples from blocks
+        sql_examples = self._extract_sql_examples_from_blocks(blocks)
+        
+        if sql_examples:
+            # Use the first extracted SQL example
+            example_sql = sql_examples[0]["sql"]
+            example_page = sql_examples[0]["page"]
+            example_explanation = f"Example from page {example_page}."
+        else:
+            # Fall back to default example
+            example_sql = self._get_default_example_sql(concept_id)
+            example_explanation = "Basic usage example."
+        
+        # Transform SQL to practice schema
+        example_sql = self.transformer.transform_to_practice_schema(
+            example_sql, ["Sailors", "Boats", "Reserves"]
+        )
+        
+        # Get pitfall from ontology or default
+        ontology = self._get_ontology_info(concept_id)
+        common_mistakes = ontology.get("common_mistakes", [])
+        if common_mistakes:
+            common_pitfall = common_mistakes[0] if isinstance(common_mistakes[0], str) else str(common_mistakes[0])
+        else:
+            common_pitfall = self._get_default_pitfall(concept_id)
+        
+        return L2Content(
+            hint_text=l1_hint[:300],
+            example_sql=example_sql[:500],
+            example_explanation=example_explanation[:300],
+            common_pitfall=common_pitfall[:200],
+        )
+    
+    def _build_grounded_L3_content(
+        self,
+        concept_id: str,
+        blocks: list[ContentBlock],
+    ) -> L3Content:
+        """Build L3 explanation content grounded in evidence spans (no-LLM path)."""
+        # Get ontology info
+        ontology = self._get_ontology_info(concept_id)
+        
+        # Build definition
+        if ontology.get("definition"):
+            definition = ontology["definition"]
+        else:
+            first_sentence = self._get_first_sentence_from_blocks(blocks)
+            definition = first_sentence if first_sentence else self._get_default_definition(concept_id)
+        
+        # Build why it matters
+        if ontology.get("use_when"):
+            why_it_matters = f"Use this when {ontology['use_when']}"
+        else:
+            why_it_matters = "Important for effective SQL querying."
+        
+        # Get learning objectives from ontology
+        learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
+        
+        # Build examples from extracted SQL or defaults
+        sql_examples = self._extract_sql_examples_from_blocks(blocks)
+        examples: list[SQLExample] = []
+        
+        if sql_examples:
+            for i, ex in enumerate(sql_examples[:3]):  # Max 3 examples
+                sql = self.transformer.transform_to_practice_schema(
+                    ex["sql"], ["Sailors", "Boats", "Reserves"]
+                )
+                examples.append(SQLExample(
+                    title=f"Example {i+1} (page {ex['page']})",
+                    scenario=f"From textbook page {ex['page']}",
+                    sql=sql,
+                    explanation=f"Example extracted from page {ex['page']}.",
+                    expected_output="Returns matching rows",
+                ))
+        
+        if not examples:
+            examples = self._get_default_sql_examples(concept_id)
+        
+        # Build common mistakes from ontology or defaults
+        mistakes: list[MisconceptionExample] = []
+        if ontology.get("common_mistakes"):
+            for i, m in enumerate(ontology["common_mistakes"][:3]):
+                if isinstance(m, dict):
+                    mistakes.append(MisconceptionExample(
+                        title=m.get("title", f"Mistake {i+1}"),
+                        error_sql=m.get("incorrect", "SELECT *;"),
+                        error_message=m.get("error_message", "Syntax error"),
+                        why_it_happens=m.get("explanation", "Common misconception"),
+                        fix_sql=m.get("corrected", "SELECT * FROM table;"),
+                        key_takeaway=m.get("takeaway", "Check your syntax"),
+                    ))
+        
+        if not mistakes:
+            mistakes = self._get_default_misconceptions(concept_id)
+        
+        # Practice links
+        practice_links = [
+            PracticeLink(
+                concept_id=concept_id,
+                problem_ids=[f"problem-{concept_id}-1", f"problem-{concept_id}-2"]
+            )
+        ]
+        
+        return L3Content(
+            definition=definition[:1000],
+            why_it_matters=why_it_matters[:500],
+            learning_objectives=learning_objectives,
+            examples=examples,
+            contrast_example=None,
+            common_mistakes=mistakes,
+            practice_links=practice_links,
+        )
+    
+    def _build_grounded_L4_content(
+        self,
+        concept_id: str,
+        blocks: list[ContentBlock],
+    ) -> L4Content:
+        """Build L4 reflective content grounded in evidence spans (no-LLM path)."""
+        # Get ontology info
+        ontology = self._get_ontology_info(concept_id)
+        
+        # Build summary
+        if ontology.get("definition"):
+            key_concept_summary = f"{ontology['definition']} Mastering this concept is essential for effective SQL querying."
+        else:
+            key_concept_summary = self._get_default_summary(concept_id)
+        
+        # Use ontology key points for reflection if available
+        if ontology.get("key_points"):
+            reflection_prompts = [f"Why is '{point}' important?" for point in ontology["key_points"][:3]]
+        else:
+            reflection_prompts = self._get_default_reflection_prompts(concept_id)
+        
+        # Build explain prompt
+        explain_in_own_words = f"Explain {concept_id} in your own words as if teaching a beginner."
+        if ontology.get("use_when"):
+            explain_in_own_words += f" Include when you would use this (hint: {ontology['use_when']})."
+        
+        # Transfer questions
+        transfer_questions = self._get_default_transfer_questions(concept_id)
+        
+        # Connections from ontology or defaults
+        connections = ontology.get("related_concepts", []) if ontology else []
+        if not connections:
+            connections = self._get_default_connections(concept_id)
+        
+        return L4Content(
+            key_concept_summary=key_concept_summary[:500],
+            reflection_prompts=reflection_prompts[:5],
+            explain_in_own_words=explain_in_own_words[:500],
+            transfer_questions=transfer_questions[:3],
+            connections=connections,
+        )
+    
+    def _build_grounded_reinforcement_content(
+        self,
+        concept_id: str,
+        blocks: list[ContentBlock],
+    ) -> ReinforcementContent:
+        """Build reinforcement content grounded in evidence spans (no-LLM path)."""
+        # Get ontology info
+        ontology = self._get_ontology_info(concept_id)
+        
+        # Build recall prompt
+        if ontology.get("title"):
+            recall_prompt = f"What's the purpose of {ontology['title']}?"
+        else:
+            recall_prompt = self._get_default_recall_prompt(concept_id)
+        
+        # Quick check question - use ontology if available
+        if ontology.get("syntax_pattern"):
+            quick_check_question = f"Complete the pattern: {ontology['syntax_pattern'][:50]}...?"
+        else:
+            quick_check_question = self._get_default_check_question(concept_id)
+        
+        # Answer
+        if ontology.get("definition"):
+            quick_check_answer = ontology["definition"][:100]
+        else:
+            quick_check_answer = self._get_default_check_answer(concept_id)
+        
+        return ReinforcementContent(
+            recall_prompt=recall_prompt[:200],
+            quick_check_question=quick_check_question[:300],
+            quick_check_answer=quick_check_answer[:300],
+            next_review_timing="1 day",
+        )
 
 
 # =============================================================================

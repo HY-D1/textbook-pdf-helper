@@ -114,6 +114,13 @@ LLMProviderCLI = typer.Option(
     help="LLM provider: kimi, openai, or ollama"
 )
 
+# Provider-specific default models
+DEFAULT_MODELS: dict[str, str] = {
+    "kimi": "kimi-k2-5",
+    "openai": "gpt-4",
+    "ollama": "llama3.2:3b",
+}
+
 
 def generate_doc_id() -> str:
     """Generate a unique document ID."""
@@ -182,10 +189,10 @@ def process_command(
         help="Document ID (auto-generated if not provided)",
     ),
     llm_provider: str = LLMProviderCLI,
-    llm_model: str = typer.Option(
-        "kimi-k2-5",
+    llm_model: str | None = typer.Option(
+        None,
         "--llm-model",
-        help="LLM model to use",
+        help="LLM model to use (defaults: kimi-k2-5, gpt-4, llama3.2:3b)",
     ),
     filter_level: str = FilterLevelCLI,
     skip_reinforcement: bool = typer.Option(
@@ -249,13 +256,16 @@ def process_command(
     ))
     console.print()
     
+    # Determine the model to use
+    resolved_model = llm_model or DEFAULT_MODELS.get(llm_provider, "kimi-k2-5")
+    
     # Create pipeline configuration from CLI arguments
     config = PipelineConfig(
         pdf_path=pdf_path,
         output_dir=output_dir,
         doc_id=doc_id,
         llm_provider=llm_provider,  # type: ignore
-        llm_model=llm_model,
+        llm_model=resolved_model,
         filter_level=filter_level_to_literal(filter_level),  # type: ignore
         skip_reinforcement=skip_reinforcement,
         skip_misconceptions=skip_misconceptions,
@@ -327,31 +337,33 @@ def process_command(
     stats_table.add_column("Metric", style="cyan")
     stats_table.add_column("Value", style="white")
     
-    total_units = stats.get("instructional_units", 0)
+    # Get all metrics with clear naming
+    exported_units = stats.get("exported_units", stats.get("instructional_units", 0))
+    generated_units = stats.get("generated_units", exported_units)
+    filtered_out = stats.get("filtered_out", 0)
+    fallback_units = stats.get("fallback_units", 0)
     misconception_units = stats.get("misconception_units", 0)
     reinforcement_items = stats.get("reinforcement_items", 0)
     concepts_mapped = stats.get("concepts_mapped", 0)
     teaching_blocks = stats.get("teaching_blocks", 0)
     
-    # Show pre/post filter counts if available
-    generated_units = stats.get("generated_units", total_units)
-    filtered_out = stats.get("filtered_out", 0)
-    fallback_units = stats.get("fallback_units", 0)
-    
-    if generated_units != total_units or filtered_out > 0:
+    # Always show the generation pipeline clearly
+    if generated_units > 0 and (generated_units != exported_units or filtered_out > 0):
+        # Full breakdown when filtering occurred
         stats_table.add_row("Generated Units", str(generated_units))
         if filtered_out > 0:
             stats_table.add_row("Filtered Out", f"[red]{filtered_out}[/red]")
-        stats_table.add_row("Exported Units", f"[green]{total_units}[/green]")
+        stats_table.add_row("Exported Units", f"[green]{exported_units}[/green]")
     else:
-        stats_table.add_row("Total Units", str(total_units))
+        # Simple case: no filtering happened
+        stats_table.add_row("Total Units", str(exported_units))
     
     stats_table.add_row("Misconception Units", str(misconception_units))
     stats_table.add_row("Reinforcement Items", str(reinforcement_items))
     stats_table.add_row("Concepts Covered", str(concepts_mapped))
     stats_table.add_row("Teaching Blocks", str(teaching_blocks))
     
-    # Show fallback units if any
+    # Show fallback units if any (these are quality failures)
     if fallback_units > 0:
         stats_table.add_row("Fallback Units", f"[yellow]{fallback_units}[/yellow]")
     
@@ -378,45 +390,45 @@ def process_command(
     console.print(f"[green]✅ Unit library exported to:[/green] {output_dir}/")
     
     # List generated files
-    if result.output_path:
-        console.print()
-        console.print("[bold]Generated Files:[/bold]")
-        expected_files = [
-            "instructional_units.jsonl",
-            "source_spans.jsonl",
-            "concept_graph.json",
-            "quality_report.json",
-            "export_manifest.json",
-        ]
-        for filename in expected_files:
-            file_path = result.output_path / filename
-            if file_path.exists():
-                size = file_path.stat().st_size
-                console.print(f"  [green]✓[/green] {filename} ({size:,} bytes)")
-            else:
-                console.print(f"  [yellow]○[/yellow] {filename} (not found)")
+    output_path = result.output_path if result.output_path else Path(output_dir)
+    console.print()
+    console.print("[bold]Generated Files:[/bold]")
+    expected_files = [
+        "instructional_units.jsonl",
+        "source_spans.jsonl",
+        "concept_graph.json",
+        "quality_report.json",
+        "export_manifest.json",
+    ]
+    for filename in expected_files:
+        file_path = output_path / filename
+        if file_path.exists():
+            size = file_path.stat().st_size
+            console.print(f"  [green]✓[/green] {filename} ({size:,} bytes)")
+        else:
+            console.print(f"  [yellow]○[/yellow] {filename} (not found)")
+    
+    # After export, reload and verify
+    try:
+        exported_library = load_unit_library(Path(output_dir))
+        actual_unit_count = len(exported_library.instructional_units)
         
-        # After export, reload and verify
-        try:
-            exported_library = load_unit_library(Path(output_dir))
-            actual_unit_count = len(exported_library.instructional_units)
-            
-            if actual_unit_count == 0:
-                console.print()
-                console.print("[red bold]ERROR: Export succeeded but 0 instructional units were created![/red bold]")
-                console.print("[dim]Possible causes:[/dim]")
-                console.print("  - All units were filtered out (check filter level)")
-                console.print("  - All units were fallback units (strict mode)")
-                console.print("  - No concepts were mapped from the PDF")
-                raise typer.Exit(1)
-            
+        if actual_unit_count == 0:
             console.print()
-            console.print(f"[green bold]✓ Successfully exported {actual_unit_count} instructional units[/green bold]")
-            
-        except typer.Exit:
-            raise
-        except Exception as e:
-            console.print(f"[yellow]Warning: Could not verify exported library: {e}[/yellow]")
+            console.print("[red bold]ERROR: Export succeeded but 0 instructional units were created![/red bold]")
+            console.print("[dim]Possible causes:[/dim]")
+            console.print("  - All units were filtered out (check filter level)")
+            console.print("  - All units were fallback units (strict mode)")
+            console.print("  - No concepts were mapped from the PDF")
+            raise typer.Exit(1)
+        
+        console.print()
+        console.print(f"[green bold]✓ Successfully exported {actual_unit_count} instructional units[/green bold]")
+        
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not verify exported library: {e}[/yellow]")
 
 
 def _extract_page_count(pdf_path: Path) -> int:

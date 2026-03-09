@@ -1773,7 +1773,15 @@ class TestUnitLibraryPipeline:
     """End-to-end tests for the new unit-library pipeline."""
     
     def test_process_command_creates_units(self, tmp_path):
-        """Test that 'algl-pdf process' creates real instructional units."""
+        """Test that 'algl-pdf process' creates real instructional units.
+        
+        This is a strengthened end-to-end guard test that verifies:
+        1. Exit code is 0 only when units were actually exported
+        2. instructional_units.jsonl exists and has > 0 lines
+        3. source_spans.jsonl has > 0 lines
+        4. export_manifest.json statistics show exported_units > 0
+        5. fallback_units == 0 for golden fixture in production mode
+        """
         import subprocess
         import json
         
@@ -1800,20 +1808,40 @@ class TestUnitLibraryPipeline:
         
         # Check output files exist
         assert (output_dir / "instructional_units.jsonl").exists()
+        assert (output_dir / "source_spans.jsonl").exists()
         assert (output_dir / "concept_graph.json").exists()
         assert (output_dir / "quality_report.json").exists()
         assert (output_dir / "export_manifest.json").exists()
         
+        # Verify 1: Exit code is 0 only when units were actually exported
         # Count units in JSONL
         units_file = output_dir / "instructional_units.jsonl"
         units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
         
-        # Should have units
-        assert len(units) > 0, "No instructional units exported"
+        # Verify 2: instructional_units.jsonl has > 0 lines
+        assert len(units) > 0, "No instructional units exported (instructional_units.jsonl is empty)"
         
-        # Check manifest
+        # Verify 3: source_spans.jsonl has > 0 lines
+        spans_file = output_dir / "source_spans.jsonl"
+        spans = [json.loads(line) for line in spans_file.read_text().strip().split('\n') if line]
+        assert len(spans) > 0, "No source spans exported (source_spans.jsonl is empty)"
+        
+        # Verify 4 & 5: export_manifest.json statistics
         manifest = json.loads((output_dir / "export_manifest.json").read_text())
-        assert manifest["statistics"]["instructional_units"] > 0
+        stats = manifest.get("statistics", {})
+        
+        # exported_units > 0
+        exported_units = stats.get("instructional_units", 0)
+        assert exported_units > 0, f"export_manifest.json shows exported_units={exported_units}, expected > 0"
+        
+        # fallback_units == 0 for golden fixture in production mode
+        fallback_units = stats.get("fallback_units", 0)
+        assert fallback_units == 0, f"export_manifest.json shows fallback_units={fallback_units}, expected 0 in production mode"
+        
+        # Additional: Verify exported_units count matches actual file line count
+        assert exported_units == len(units), (
+            f"Manifest reports {exported_units} units but instructional_units.jsonl has {len(units)} lines"
+        )
         
         # Check L1-L4 variants exist
         stages = set(u.get("target_stage") for u in units)
@@ -1847,6 +1875,64 @@ class TestUnitLibraryPipeline:
             if units_file.exists():
                 units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
                 assert len(units) > 0, "Strict mode succeeded but exported 0 units"
+
+    def test_process_command_fails_when_zero_units_exported(self, tmp_path, monkeypatch):
+        """Negative test: If exported units == 0, CLI exits nonzero.
+        
+        This prevents false-success states where the process exits 0 with 0 exported units.
+        """
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Create a minimal concepts config with no valid pages to force 0 units
+        empty_concepts_dir = tmp_path / "empty_concepts"
+        empty_concepts_dir.mkdir()
+        empty_concepts_file = empty_concepts_dir / "concepts.yaml"
+        empty_concepts_file.write_text("""
+concepts:
+  fake-concept-not-in-pdf:
+    title: "Fake Concept"
+    definition: "Not in PDF"
+    difficulty: beginner
+    estimatedReadTime: 5
+    sections:
+      definition: [999]  # Page that doesn't exist
+      examples: [999]
+    relatedConcepts: []
+    tags: ["fake"]
+""")
+        
+        # Run with strict mode on concepts that don't exist in PDF
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "strict",
+                "--concepts-config", str(empty_concepts_file),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # If export_manifest exists with 0 units, exit code MUST be non-zero
+        manifest_file = output_dir / "export_manifest.json"
+        if manifest_file.exists():
+            manifest = json.loads(manifest_file.read_text())
+            stats = manifest.get("statistics", {})
+            exported = stats.get("instructional_units", 0)
+            
+            if exported == 0:
+                assert result.returncode != 0, (
+                    f"CLI exited 0 but exported {exported} units. "
+                    f"Expected non-zero exit code when no units are exported.\n"
+                    f"stderr: {result.stderr}"
+                )
 
 
 if __name__ == "__main__":

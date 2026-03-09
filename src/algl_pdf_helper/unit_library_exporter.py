@@ -884,7 +884,7 @@ class UnitLibraryExporter:
                 "total_units": len(library.instructional_units),
                 "generated_units": generated_units,
                 "filtered_out": filtered_out,
-                "exported_units": exported_units,
+                "instructional_units": exported_units,
                 "fallback_units": fallback_units,
                 "concepts_covered": len(units_per_concept),
                 "units_per_concept": dict(units_per_concept),
