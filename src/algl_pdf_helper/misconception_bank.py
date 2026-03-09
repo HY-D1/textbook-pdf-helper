@@ -1075,6 +1075,501 @@ COMMON_MISCONCEPTIONS: list[MisconceptionPattern] = [
         ],
         related_patterns=["where_having_confusion_v1"],
     ),
+    
+    # =========================================================================
+    # Constraints Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="foreign_key_violation_v1",
+        error_subtype_id="constraint_violation",
+        concept_id="constraints",
+        pattern_name="Foreign Key Constraint Violation",
+        learner_symptom="Foreign key constraint violation error when inserting data",
+        likely_prereq_failure="joins-intro",
+        sql_pattern=r"INSERT\s+INTO.*VALUES",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO orders (id, customer_id) VALUES (1, 999);  -- customer_id 999 doesn't exist",
+        example_good_sql="INSERT INTO orders (id, customer_id) VALUES (1, 5);  -- valid customer_id",
+        common_error_messages=[
+            "foreign key constraint violation",
+            "violates foreign key constraint",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="null_constraint_violation_v1",
+        error_subtype_id="null_in_constraint_column",
+        concept_id="constraints",
+        pattern_name="NOT NULL Constraint Violation",
+        learner_symptom="Column cannot be null error during INSERT",
+        likely_prereq_failure="null-handling",
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s*\([^)]*\)\s*VALUES\s*\([^)]*\)",
+        remediation_order=1,
+        example_bad_sql="INSERT INTO users (id) VALUES (1);  -- name is NOT NULL",
+        example_good_sql="INSERT INTO users (id, name) VALUES (1, 'John');",
+        common_error_messages=[
+            "column cannot be null",
+            "violates not-null constraint",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="unique_constraint_violation_v1",
+        error_subtype_id="constraint_violation",
+        concept_id="constraints",
+        pattern_name="Unique Constraint Violation",
+        learner_symptom="Duplicate key value violates unique constraint",
+        likely_prereq_failure=None,
+        sql_pattern=r"INSERT\s+INTO.*VALUES|UPDATE\s+\w+\s+SET",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO users (email) VALUES ('john@example.com');  -- email already exists",
+        example_good_sql="UPDATE users SET name = 'John Doe' WHERE email = 'john@example.com';",
+        common_error_messages=[
+            "duplicate key value violates unique constraint",
+            "unique constraint violation",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Data Types Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="string_number_comparison_v1",
+        error_subtype_id="string_number_mismatch",
+        concept_id="data-types",
+        pattern_name="String vs Number Comparison Mismatch",
+        learner_symptom="Unexpected results when comparing string column to number",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+\w+\s*[=<>]\s*'\d+'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM users WHERE age > '50';  -- age is VARCHAR, comparing string to number",
+        example_good_sql="SELECT * FROM users WHERE CAST(age AS INT) > 50;",
+        common_error_messages=[
+            "operator does not exist",
+            "invalid input syntax",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="date_format_confusion_v1",
+        error_subtype_id="date_format_error",
+        concept_id="data-types",
+        pattern_name="Date Format Confusion",
+        learner_symptom="Date format is not recognized or invalid date value",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+\w+\s*=\s*'\d{2}[/-]\d{2}[/-]\d{2,4}'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM orders WHERE order_date = '01/15/2023';  -- wrong format",
+        example_good_sql="SELECT * FROM orders WHERE order_date = '2023-01-15';  -- ISO format",
+        common_error_messages=[
+            "date format is not recognized",
+            "invalid date value",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="implicit_type_conversion_v1",
+        error_subtype_id="implicit_type_conversion",
+        concept_id="data-types",
+        pattern_name="Unexpected Implicit Type Conversion",
+        learner_symptom="Query returns unexpected results due to type coercion",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"SELECT\s+.*\w+\s*\+\s*\w+.*FROM",
+        remediation_order=3,
+        example_bad_sql="SELECT '10' + 5 FROM dual;  -- Results in 15, not '105'",
+        example_good_sql="SELECT CONCAT('10', '5') FROM dual;  -- Results in '105'",
+        common_error_messages=[
+            "implicit conversion",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Indexes Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="function_on_indexed_column_v1",
+        error_subtype_id="missing_index_optimization",
+        concept_id="indexes",
+        pattern_name="Function on Indexed Column Prevents Index Usage",
+        learner_symptom="Query is slow despite index existing on column",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+(YEAR|MONTH|UPPER|LOWER)\s*\(\s*\w+\s*\)",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM orders WHERE YEAR(order_date) = 2023;  -- function prevents index use",
+        example_good_sql="SELECT * FROM orders WHERE order_date >= '2023-01-01' AND order_date < '2024-01-01';",
+        common_error_messages=[
+            "query performance issue",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="leading_wildcard_index_v1",
+        error_subtype_id="missing_index_optimization",
+        concept_id="indexes",
+        pattern_name="Leading Wildcard Prevents Index Usage",
+        learner_symptom="LIKE query with leading % is slow even with index",
+        likely_prereq_failure="pattern-matching",
+        sql_pattern=r"LIKE\s+'%[^']*'",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM users WHERE name LIKE '%Smith';  -- leading wildcard",
+        example_good_sql="SELECT * FROM users WHERE name LIKE 'Smith%';  -- trailing wildcard uses index",
+        common_error_messages=[
+            "query performance issue",
+        ],
+        related_patterns=["like_wildcard_confusion_v1"],
+    ),
+    
+    # =========================================================================
+    # Transactions Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="missing_transaction_boundaries_v1",
+        error_subtype_id="missing_transaction_boundaries",
+        concept_id="transactions",
+        pattern_name="Missing Transaction Boundaries",
+        learner_symptom="Partial updates occur when errors happen mid-operation",
+        likely_prereq_failure=None,
+        sql_pattern=r"UPDATE\s+\w+.*;\s*UPDATE\s+\w+",
+        remediation_order=2,
+        example_bad_sql="UPDATE account SET balance = balance - 100 WHERE id = 1; UPDATE account SET balance = balance + 100 WHERE id = 2;  -- not atomic",
+        example_good_sql="BEGIN; UPDATE account SET balance = balance - 100 WHERE id = 1; UPDATE account SET balance = balance + 100 WHERE id = 2; COMMIT;",
+        common_error_messages=[
+            "inconsistent data state",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="missing_commit_v1",
+        error_subtype_id="missing_transaction_boundaries",
+        concept_id="transactions",
+        pattern_name="Missing COMMIT After Changes",
+        learner_symptom="Changes not visible to other sessions after update",
+        likely_prereq_failure=None,
+        sql_pattern=r"BEGIN.*(?!COMMIT)",
+        remediation_order=1,
+        example_bad_sql="BEGIN; UPDATE users SET status = 'active' WHERE id = 1;  -- forgot COMMIT",
+        example_good_sql="BEGIN; UPDATE users SET status = 'active' WHERE id = 1; COMMIT;",
+        common_error_messages=[
+            "uncommitted transaction",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Views Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="view_as_table_insert_v1",
+        error_subtype_id="view_table_confusion",
+        concept_id="views",
+        pattern_name="Trying to Insert Into Non-Updatable View",
+        learner_symptom="View is not updatable error when trying to insert",
+        likely_prereq_failure="insert-statement",
+        sql_pattern=r"INSERT\s+INTO\s+\w+\s+VALUES",
+        remediation_order=2,
+        example_bad_sql="INSERT INTO high_earners VALUES (...);  -- view with GROUP BY",
+        example_good_sql="INSERT INTO employees VALUES (...);  -- insert into base table",
+        common_error_messages=[
+            "view is not updatable",
+            "cannot insert into view",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="view_column_ambiguous_v1",
+        error_subtype_id="view_column_reference_error",
+        concept_id="views",
+        pattern_name="Ambiguous Column Reference in View",
+        learner_symptom="Column reference is ambiguous in view query",
+        likely_prereq_failure="joins-intro",
+        sql_pattern=r"CREATE\s+VIEW.*AS\s+SELECT.*FROM.*JOIN",
+        remediation_order=2,
+        example_bad_sql="CREATE VIEW emp_dept AS SELECT id, name FROM employees e JOIN departments d ON e.dept_id = d.id;  -- ambiguous id",
+        example_good_sql="CREATE VIEW emp_dept AS SELECT e.id AS emp_id, e.name FROM employees e JOIN departments d ON e.dept_id = d.id;",
+        common_error_messages=[
+            "column reference is ambiguous",
+        ],
+        related_patterns=["ambiguous_column_reference_v1"],
+    ),
+    
+    # =========================================================================
+    # Window Functions Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="window_in_where_v1",
+        error_subtype_id="window_function_in_where",
+        concept_id="window-functions",
+        pattern_name="Window Function in WHERE Clause",
+        learner_symptom="Window functions are not allowed in WHERE clause",
+        likely_prereq_failure="where-clause",
+        sql_pattern=r"WHERE\s+.*(RANK|ROW_NUMBER|DENSE_RANK|LEAD|LAG)\s*\(",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM employees WHERE RANK() OVER (ORDER BY salary) <= 10;",
+        example_good_sql="WITH ranked AS (SELECT *, RANK() OVER (ORDER BY salary) as r FROM employees) SELECT * FROM ranked WHERE r <= 10;",
+        common_error_messages=[
+            "window functions are not allowed in WHERE",
+            "window function not allowed",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="missing_partition_clause_v1",
+        error_subtype_id="missing_partition_clause",
+        concept_id="window-functions",
+        pattern_name="Missing PARTITION BY When Grouping Needed",
+        learner_symptom="Window function ranks entire result set instead of groups",
+        likely_prereq_failure="group-by",
+        sql_pattern=r"(RANK|ROW_NUMBER|DENSE_RANK)\s*\(\s*\)\s+OVER\s*\(\s*ORDER\s+BY",
+        remediation_order=2,
+        example_bad_sql="SELECT dept, RANK() OVER (ORDER BY salary) FROM employees;  -- ranks globally",
+        example_good_sql="SELECT dept, RANK() OVER (PARTITION BY dept ORDER BY salary) FROM employees;  -- ranks per department",
+        common_error_messages=[
+            "unexpected ranking results",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="window_function_in_group_by_v1",
+        error_subtype_id="window_function_with_group_by",
+        concept_id="window-functions",
+        pattern_name="Window Function with GROUP BY Confusion",
+        learner_symptom="Cannot use window function with GROUP BY",
+        likely_prereq_failure="group-by",
+        sql_pattern=r"GROUP\s+BY.*(RANK|ROW_NUMBER|SUM|AVG)\s*\(\s*\)\s+OVER",
+        remediation_order=3,
+        example_bad_sql="SELECT dept, RANK() OVER (ORDER BY AVG(salary)) FROM employees GROUP BY dept;",
+        example_good_sql="SELECT dept, AVG(salary) as avg_sal, RANK() OVER (ORDER BY AVG(salary)) FROM employees GROUP BY dept;",
+        common_error_messages=[
+            "window function not allowed in GROUP BY",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Isolation Levels Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="dirty_read_risk_v1",
+        error_subtype_id="isolation_level_risk",
+        concept_id="isolation-levels",
+        pattern_name="Dirty Read Risk with Low Isolation",
+        learner_symptom="Reading uncommitted data that may be rolled back",
+        likely_prereq_failure="transactions",
+        sql_pattern=r"SET\s+TRANSACTION\s+ISOLATION\s+LEVEL\s+READ\s+UNCOMMITTED",
+        remediation_order=2,
+        example_bad_sql="SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SELECT * FROM accounts WHERE id = 1;  -- may read dirty data",
+        example_good_sql="SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SELECT * FROM accounts WHERE id = 1;  -- only committed data",
+        common_error_messages=[
+            "dirty read detected",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="lost_update_risk_v1",
+        error_subtype_id="isolation_level_risk",
+        concept_id="isolation-levels",
+        pattern_name="Lost Update Risk",
+        learner_symptom="Concurrent updates overwrite each other",
+        likely_prereq_failure="transactions",
+        sql_pattern=r"BEGIN.*SELECT.*UPDATE",
+        remediation_order=3,
+        example_bad_sql="BEGIN; SELECT balance FROM accounts WHERE id = 1; -- balance=100 -- (in another session: update to 120) UPDATE accounts SET balance = 110 WHERE id = 1; COMMIT;  -- lost the 120 update",
+        example_good_sql="BEGIN; SELECT balance FROM accounts WHERE id = 1 FOR UPDATE; UPDATE accounts SET balance = 110 WHERE id = 1; COMMIT;  -- locks row during read",
+        common_error_messages=[
+            "lost update",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Stored Procedures Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="procedure_parameter_confusion_v1",
+        error_subtype_id="procedure_parameter_error",
+        concept_id="stored-procedures",
+        pattern_name="Stored Procedure Parameter Order Confusion",
+        learner_symptom="Procedure executed with wrong parameter values",
+        likely_prereq_failure=None,
+        sql_pattern=r"CALL\s+\w+\s*\([^)]+\)",
+        remediation_order=2,
+        example_bad_sql="CALL transfer_money(100, 5, 10);  -- which is source, which is target?",
+        example_good_sql="CALL transfer_money(amount => 100, from_account => 5, to_account => 10);  -- named parameters",
+        common_error_messages=[
+            "wrong number of parameters",
+            "parameter type mismatch",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="missing_procedure_error_handling_v1",
+        error_subtype_id="procedure_error_handling",
+        concept_id="stored-procedures",
+        pattern_name="Missing Error Handling in Procedure",
+        learner_symptom="Procedure fails without proper error handling or rollback",
+        likely_prereq_failure="transactions",
+        sql_pattern=r"CREATE\s+(?:PROCEDURE|FUNCTION).*BEGIN.*(?!EXCEPTION|CATCH|HANDLER)",
+        remediation_order=3,
+        example_bad_sql="CREATE PROCEDURE transfer_money(IN amount DECIMAL) BEGIN UPDATE accounts SET balance = balance - amount; UPDATE accounts SET balance = balance + amount; END;  -- no error handling",
+        example_good_sql="CREATE PROCEDURE transfer_money(IN amount DECIMAL) BEGIN DECLARE EXIT HANDLER FOR SQLEXCEPTION ROLLBACK; START TRANSACTION; UPDATE accounts SET balance = balance - amount; UPDATE accounts SET balance = balance + amount; COMMIT; END;",
+        common_error_messages=[
+            "procedure execution failed",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Triggers Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="trigger_mutating_table_v1",
+        error_subtype_id="trigger_mutating_table_error",
+        concept_id="triggers",
+        pattern_name="Mutating Table Error in Trigger",
+        learner_symptom="Table is mutating, trigger may not see it error",
+        likely_prereq_failure="constraints",
+        sql_pattern=r"CREATE\s+TRIGGER.*SELECT.*FROM.*NEW|OLD",
+        remediation_order=3,
+        example_bad_sql="CREATE TRIGGER check_total AFTER INSERT ON order_items FOR EACH ROW BEGIN SELECT SUM(quantity) FROM order_items WHERE order_id = NEW.order_id; END;  -- mutating table",
+        example_good_sql="CREATE TRIGGER check_total AFTER INSERT ON order_items FOR EACH ROW BEGIN -- Use a separate table or avoid querying the mutating table -- Consider using a view or computed column instead END;",
+        common_error_messages=[
+            "table is mutating",
+            "trigger may not see it",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="trigger_row_statement_confusion_v1",
+        error_subtype_id="trigger_timing_error",
+        concept_id="triggers",
+        pattern_name="Row vs Statement Trigger Confusion",
+        learner_symptom="Trigger fires unexpectedly or only once for multiple rows",
+        likely_prereq_failure=None,
+        sql_pattern=r"CREATE\s+TRIGGER.*FOR\s+EACH\s+STATEMENT",
+        remediation_order=2,
+        example_bad_sql="CREATE TRIGGER log_changes AFTER UPDATE ON users FOR EACH STATEMENT INSERT INTO audit_log VALUES (NOW(), 'users updated');  -- fires once per statement",
+        example_good_sql="CREATE TRIGGER log_changes AFTER UPDATE ON users FOR EACH ROW INSERT INTO audit_log VALUES (NOW(), NEW.id, 'user updated');  -- fires once per row",
+        common_error_messages=[
+            "trigger fired unexpectedly",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Subquery in SELECT Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="scalar_subquery_multiple_rows_v1",
+        error_subtype_id="scalar_subquery_multiple_rows",
+        concept_id="subquery-in-select",
+        pattern_name="Scalar Subquery Returns Multiple Rows",
+        learner_symptom="Subquery returns more than one row in SELECT clause",
+        likely_prereq_failure="subqueries-intro",
+        sql_pattern=r"SELECT\s+.*\(\s*SELECT.*FROM",
+        remediation_order=2,
+        example_bad_sql="SELECT name, (SELECT dept_name FROM departments) FROM employees;  -- multiple rows",
+        example_good_sql="SELECT name, (SELECT dept_name FROM departments WHERE id = e.dept_id) FROM employees e;",
+        common_error_messages=[
+            "subquery returns more than one row",
+        ],
+        related_patterns=["subquery_multiple_rows_v1"],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="correlated_subquery_no_reference_v1",
+        error_subtype_id="correlated_subquery_reference_error",
+        concept_id="subquery-in-select",
+        pattern_name="Correlated Subquery Missing Outer Reference",
+        learner_symptom="Subquery returns same value for all rows",
+        likely_prereq_failure="correlated-subquery",
+        sql_pattern=r"SELECT\s+.*\(\s*SELECT\s+\w+\s+FROM\s+\w+\s+WHERE",
+        remediation_order=2,
+        example_bad_sql="SELECT e.name, (SELECT AVG(salary) FROM employees WHERE dept_id = dept_id) FROM employees e;  -- ambiguous dept_id",
+        example_good_sql="SELECT e.name, (SELECT AVG(salary) FROM employees WHERE dept_id = e.dept_id) FROM employees e;  -- references outer table",
+        common_error_messages=[
+            "unexpected same values",
+        ],
+        related_patterns=[],
+    ),
+    
+    # =========================================================================
+    # Subquery in WHERE Errors
+    # =========================================================================
+    
+    MisconceptionPattern(
+        pattern_id="in_subquery_null_handling_v1",
+        error_subtype_id="in_subquery_null_issue",
+        concept_id="subquery-in-where",
+        pattern_name="IN Subquery with NULL Values",
+        learner_symptom="IN subquery returns unexpected results due to NULL",
+        likely_prereq_failure="null-handling",
+        sql_pattern=r"WHERE\s+\w+\s+IN\s*\(\s*SELECT",
+        remediation_order=3,
+        example_bad_sql="SELECT * FROM employees WHERE manager_id IN (SELECT manager_id FROM departments WHERE location IS NULL);  -- NULL in result",
+        example_good_sql="SELECT * FROM employees WHERE manager_id IN (SELECT manager_id FROM departments WHERE location IS NULL) OR manager_id IS NULL;",
+        common_error_messages=[
+            "unexpected exclusion of rows",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="not_in_with_null_v1",
+        error_subtype_id="not_in_null_issue",
+        concept_id="subquery-in-where",
+        pattern_name="NOT IN with NULL Returns No Rows",
+        learner_symptom="NOT IN subquery returns empty result unexpectedly",
+        likely_prereq_failure="null-handling",
+        sql_pattern=r"WHERE\s+\w+\s+NOT\s+IN\s*\(\s*SELECT",
+        remediation_order=3,
+        example_bad_sql="SELECT * FROM employees WHERE dept_id NOT IN (SELECT dept_id FROM inactive_departments);  -- returns nothing if inactive_departments has NULL",
+        example_good_sql="SELECT * FROM employees e WHERE NOT EXISTS (SELECT 1 FROM inactive_departments i WHERE i.dept_id = e.dept_id);  -- use NOT EXISTS instead",
+        common_error_messages=[
+            "NOT IN returns unexpected empty result",
+        ],
+        related_patterns=[],
+    ),
+    
+    MisconceptionPattern(
+        pattern_id="correlated_subquery_exists_confusion_v1",
+        error_subtype_id="exists_subquery_confusion",
+        concept_id="subquery-in-where",
+        pattern_name="EXISTS vs IN Subquery Confusion",
+        learner_symptom="Using IN when EXISTS would be more appropriate",
+        likely_prereq_failure="exists-operator",
+        sql_pattern=r"WHERE\s+\w+\s+IN\s*\(\s*SELECT\s+1\s+FROM",
+        remediation_order=2,
+        example_bad_sql="SELECT * FROM departments d WHERE d.id IN (SELECT 1 FROM employees e WHERE e.dept_id = d.dept_id);  -- using IN with constant",
+        example_good_sql="SELECT * FROM departments d WHERE EXISTS (SELECT 1 FROM employees e WHERE e.dept_id = d.dept_id);  -- semantically correct",
+        common_error_messages=[
+            "performance issue",
+        ],
+        related_patterns=["exists_with_columns_v1"],
+    ),
 ]
 
 
@@ -1179,6 +1674,49 @@ ERROR_SUBTYPE_TO_CONCEPT: dict[str, str] = {
     # drop-table
     "drop_table_if_exists": "drop-table",
     "drop_table_dependencies": "drop-table",
+    
+    # constraints
+    "constraint_violation": "constraints",
+    "null_in_constraint_column": "constraints",
+    
+    # data-types
+    "string_number_mismatch": "data-types",
+    "date_format_error": "data-types",
+    "implicit_type_conversion": "data-types",
+    
+    # indexes
+    "missing_index_optimization": "indexes",
+    
+    # transactions
+    "missing_transaction_boundaries": "transactions",
+    
+    # views
+    "view_table_confusion": "views",
+    "view_column_reference_error": "views",
+    
+    # window-functions
+    "window_function_in_where": "window-functions",
+    "missing_partition_clause": "window-functions",
+    "window_function_with_group_by": "window-functions",
+    
+    # isolation-levels
+    "isolation_level_risk": "isolation-levels",
+    
+    # stored-procedures
+    "procedure_parameter_error": "stored-procedures",
+    "procedure_error_handling": "stored-procedures",
+    
+    # triggers
+    "trigger_mutating_table_error": "triggers",
+    "trigger_timing_error": "triggers",
+    
+    # subquery-in-select
+    "scalar_subquery_multiple_rows": "subquery-in-select",
+    
+    # subquery-in-where
+    "in_subquery_null_issue": "subquery-in-where",
+    "not_in_null_issue": "subquery-in-where",
+    "exists_subquery_confusion": "subquery-in-where",
 }
 
 
