@@ -56,12 +56,15 @@ from .instructional_models import (
     UnitLibraryExport,
 )
 from .section_extractor import SectionExtractor, ContentBlock, ContentFilter, BlockType
+from .pedagogy_extractor import PedagogyExtractor, PedagogyIntegrator
+from .pedagogy_models import NavigationIndex
 from .sql_ontology import ConceptOntology
 from .unit_generator import UnitGenerator, GenerationConfig as UnitGenerationConfig
 from .misconception_bank import MisconceptionBank, GenerationConfig as MisconceptionConfig
 from .reinforcement_bank import ReinforcementBank, ReinforcementConfig
 from .sql_validator import SQLValidator
 from .learning_quality_gates import LearningQualityGates, Severity
+from .ollama_repair import OllamaRepair
 from .export_filters import (
     ExportFilterEngine, 
     PRODUCTION_FILTERS, 
@@ -95,6 +98,7 @@ class PipelineStage(Enum):
     EXTRACTION = auto()              # PDF text extraction
     SEGMENTATION = auto()            # Content block segmentation
     CONTENT_FILTERING = auto()       # Filtering teaching content
+    PEDAGOGY_EXTRACTION = auto()     # Extract chapter/exercise/example structure
     CONCEPT_MAPPING = auto()         # Mapping blocks to concepts
     UNIT_GENERATION = auto()         # Generating instructional units
     MISCONCEPTION_GENERATION = auto()  # Creating misconception bank
@@ -268,6 +272,10 @@ class PipelineResult:
         filtered_units: List of unit IDs that were filtered out
         blocked_units_with_reasons: List of (unit_id, reasons) tuples for blocked units
         repaired_units: List of unit IDs that were repaired by Ollama
+        chapters: Extracted chapter structure (new)
+        exercises: Extracted exercises (new)
+        examples: Extracted examples (new)
+        navigation: Navigation index for cross-referencing (new)
     """
     
     success: bool = False
@@ -282,6 +290,12 @@ class PipelineResult:
     filtered_units: list[str] = field(default_factory=list)
     blocked_units_with_reasons: list[tuple[str, list[str]]] = field(default_factory=list)
     repaired_units: list[str] = field(default_factory=list)
+    cache_stats: dict[str, Any] = field(default_factory=dict)
+    # Pedagogy data (new)
+    chapters: list[Any] = field(default_factory=list)
+    exercises: list[Any] = field(default_factory=list)
+    examples: list[Any] = field(default_factory=list)
+    navigation: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -298,6 +312,7 @@ class PipelineResult:
             "filtered_units": self.filtered_units,
             "blocked_units_with_reasons": self.blocked_units_with_reasons,
             "repaired_units": self.repaired_units,
+            "cache_stats": self.cache_stats,
         }
     
     def get_summary(self) -> str:
@@ -359,6 +374,8 @@ class PipelineProgressTracker:
     STAGE_DURATIONS: dict[PipelineStage, float] = {
         PipelineStage.EXTRACTION: 5.0,
         PipelineStage.SEGMENTATION: 10.0,
+        PipelineStage.CONTENT_FILTERING: 3.0,
+        PipelineStage.PEDAGOGY_EXTRACTION: 5.0,
         PipelineStage.CONCEPT_MAPPING: 15.0,
         PipelineStage.UNIT_GENERATION: 60.0,
         PipelineStage.MISCONCEPTION_GENERATION: 30.0,
@@ -505,6 +522,10 @@ class InstructionalPipeline:
         self._filter_engine: ExportFilterEngine | None = None
         self._exporter: UnitLibraryExporter | None = None
         
+        # Run-level Ollama availability tracking (one-time check)
+        self._ollama_preflight_done = False
+        self._ollama_available = False
+        
         # Store intermediate results
         self._raw_text: str = ""
         self._extraction_metadata: dict[str, Any] = {}
@@ -520,6 +541,11 @@ class InstructionalPipeline:
         self._filtered_library: UnitLibraryExport | None = None
         self._generation_stats: dict[str, int] = {}
         self._rejected_units: list[tuple[str, list[str]]] = []
+        # Pedagogy data (new)
+        self._chapters: list[Any] = []
+        self._exercises: list[Any] = []
+        self._examples: list[Any] = []
+        self._navigation_index: NavigationIndex = NavigationIndex()
         
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
@@ -884,7 +910,7 @@ class InstructionalPipeline:
         # Initialize Ollama repair if enabled
         ollama_repair = None
         if self.config.use_ollama_repair:
-            from .ollama_repair import OllamaRepair
+            # Create repair instance
             ollama_repair = OllamaRepair(
                 model=self.config.ollama_model,
                 host=self.config.ollama_host,
@@ -892,7 +918,7 @@ class InstructionalPipeline:
             if ollama_repair.available:
                 self._logger.info(f"Ollama repair enabled with model: {self.config.ollama_model}")
             else:
-                self._logger.warning("Ollama repair enabled but server not available")
+                # Log already handled by class-level check, just note repair is disabled
                 ollama_repair = None
         
         self._instructional_units = []
@@ -1598,9 +1624,10 @@ class InstructionalPipeline:
     
     def _export(self, library: UnitLibraryExport | None = None) -> Path:
         """
-        Stage 11: Export the final unit library.
+        Stage 12: Export the final unit library.
         
-        Writes all content to output directory in JSON/JSONL format.
+        Writes all content to output directory in JSON/JSONL format,
+        including pedagogy structure exports.
         
         Args:
             library: Optional library to export (uses filtered library if None)
@@ -1608,12 +1635,25 @@ class InstructionalPipeline:
         Returns:
             Path to output directory
         """
-        self._logger.info("Stage 11: Exporting final library")
+        self._logger.info("Stage 12: Exporting final library")
         
         if library is None:
             library = self._apply_export_filters()
         
         self._exporter = UnitLibraryExporter()
+        
+        # Set pedagogy data for export
+        if self._chapters or self._exercises or self._examples:
+            self._exporter.set_pedagogy_data(
+                chapters=self._chapters,
+                exercises=self._exercises,
+                examples=self._examples,
+                navigation=self._navigation_index,
+            )
+            self._logger.info(
+                f"Including pedagogy data: {len(self._chapters)} chapters, "
+                f"{len(self._exercises)} exercises, {len(self._examples)} examples"
+            )
         
         # Mark library as already filtered to prevent double-filtering in exporter
         library._pre_filtered = True
@@ -1710,6 +1750,7 @@ class InstructionalPipeline:
         - exported_instructional_units: Units actually exported (after filtering)
         - filtered_out_units: Units removed by quality/export filters
         - fallback_units: Units that failed generation and used fallback content
+        - chapters, exercises, examples: Pedagogy structure statistics
         """
         # Use stored generation stats if available, otherwise compute from current state
         stats = getattr(self, '_generation_stats', {})
@@ -1727,6 +1768,12 @@ class InstructionalPipeline:
         fallback_count = len(getattr(self, '_fallback_unit_ids', []))
         repaired_count = len(getattr(self, '_repaired_unit_ids', []))
         
+        # Pedagogy statistics (new)
+        chapters = getattr(self, '_chapters', [])
+        exercises = getattr(self, '_exercises', [])
+        examples = getattr(self, '_examples', [])
+        navigation = getattr(self, '_navigation_index', NavigationIndex())
+        
         return {
             "extraction_blocks": len(self._content_blocks),
             "teaching_blocks": len(self._teaching_blocks),
@@ -1743,6 +1790,19 @@ class InstructionalPipeline:
             "fallback_units": fallback_count,
             "repaired_units": repaired_count,
             "stage_timings": self.progress.get_stage_durations(),
+            # Pedagogy statistics (new)
+            "chapters": len(chapters),
+            "exercises": len(exercises),
+            "textbook_examples": len(examples),
+            "navigation_index": {
+                "concepts": len(navigation.by_concept),
+                "chapters": len(navigation.by_chapter),
+                "paths": {
+                    "developer": len(navigation.by_path.get("developer", [])),
+                    "admin": len(navigation.by_path.get("admin", [])),
+                    "design": len(navigation.by_path.get("design", [])),
+                },
+            },
         }
 
 

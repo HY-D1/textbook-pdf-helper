@@ -12,7 +12,7 @@ The repair pass is designed to:
 - Fall back gracefully if Ollama is unavailable
 
 Usage:
-    from algl_pdf_helper.ollama_repair import OllamaRepair, SelectiveRepairPass
+    from algl_pdf_helper.ollama_repair import OllamaRepair, SelectiveRepairPass, RepairCache
     
     repair = OllamaRepair(model="qwen2.5:3b")
     if repair.available:
@@ -25,21 +25,174 @@ Usage:
     # Or use the selective repair pass for automatic detection
     selective_pass = SelectiveRepairPass(repair)
     repair_result = selective_pass.repair_if_needed(unit, source_blocks)
+    
+    # Cache management
+    cache = RepairCache()
+    cache.clear_cache()  # Clear all cached repairs
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .instructional_models import InstructionalUnit
 
 
 logger = logging.getLogger(__name__)
+
+# Prompt version for cache invalidation - bump when prompt changes
+REPAIR_PROMPT_VERSION = "v1.0.0"
+
+
+class RepairCache:
+    """
+    Cache for Ollama-repaired units.
+    
+    Caches successful repairs to avoid regenerating the same content
+    across pipeline runs. Cache keys are based on concept_id, stage,
+    model, evidence hash, and prompt version for cache invalidation.
+    
+    Attributes:
+        cache_dir: Directory where cache files are stored
+        hits: Number of cache hits (for statistics)
+        misses: Number of cache misses (for statistics)
+    
+    Example:
+        >>> cache = RepairCache()
+        >>> cached = cache.get_cached_repair("joins", "L3", "qwen2.5:3b", "abc123", "v1.0")
+        >>> if cached:
+        ...     print("Cache hit!")
+        >>> else:
+        ...     # Generate repair, then cache it
+        ...     cache.cache_repair("joins", "L3", "qwen2.5:3b", "abc123", "v1.0", repaired_content)
+    """
+    
+    def __init__(self, cache_dir: Path | None = None):
+        """
+        Initialize the repair cache.
+        
+        Args:
+            cache_dir: Directory for cache files (default: ~/.cache/algl_pdf_helper/repairs)
+        """
+        self.cache_dir = cache_dir or Path.home() / ".cache" / "algl_pdf_helper" / "repairs"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.hits = 0
+        self.misses = 0
+        self._logger = logging.getLogger(__name__)
+    
+    def _get_cache_key(
+        self,
+        concept_id: str,
+        stage: str,
+        model: str,
+        evidence_hash: str,
+        prompt_version: str,
+    ) -> str:
+        """Generate cache key from repair parameters."""
+        key_data = f"{concept_id}:{stage}:{model}:{evidence_hash}:{prompt_version}"
+        return hashlib.sha256(key_data.encode()).hexdigest()[:16]
+    
+    def get_cached_repair(
+        self,
+        concept_id: str,
+        stage: str,
+        model: str,
+        evidence_hash: str,
+        prompt_version: str = REPAIR_PROMPT_VERSION,
+    ) -> dict[str, Any] | None:
+        """
+        Get cached repair if available.
+        
+        Returns:
+            Cached repair content dict, or None if not in cache
+        """
+        cache_key = self._get_cache_key(concept_id, stage, model, evidence_hash, prompt_version)
+        cache_file = self.cache_dir / f"{cache_key}.json"
+        
+        if cache_file.exists():
+            try:
+                with open(cache_file, encoding="utf-8") as f:
+                    cached = json.load(f)
+                self.hits += 1
+                self._logger.debug(f"Cache hit for {concept_id}/{stage}: {cache_key}")
+                return cached
+            except (json.JSONDecodeError, IOError) as e:
+                self._logger.warning(f"Failed to read cache file {cache_file}: {e}")
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
+        
+        self.misses += 1
+        return None
+    
+    def cache_repair(
+        self,
+        concept_id: str,
+        stage: str,
+        model: str,
+        evidence_hash: str,
+        prompt_version: str,
+        repaired_content: dict[str, Any],
+    ) -> Path:
+        """Cache a successful repair."""
+        cache_key = self._get_cache_key(concept_id, stage, model, evidence_hash, prompt_version)
+        cache_file = self.cache_dir / f"{cache_key}.json"
+        
+        cache_entry = {
+            "_cache_metadata": {
+                "concept_id": concept_id,
+                "stage": stage,
+                "model": model,
+                "prompt_version": prompt_version,
+                "cache_key": cache_key,
+            },
+            **repaired_content,
+        }
+        
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache_entry, f, indent=2)
+            self._logger.debug(f"Cached repair for {concept_id}/{stage}: {cache_key}")
+            return cache_file
+        except IOError as e:
+            self._logger.warning(f"Failed to write cache file {cache_file}: {e}")
+            return cache_file
+    
+    def clear_cache(self) -> int:
+        """Clear all cached repairs."""
+        count = 0
+        if self.cache_dir.exists():
+            for cache_file in self.cache_dir.glob("*.json"):
+                try:
+                    cache_file.unlink()
+                    count += 1
+                except OSError as e:
+                    self._logger.warning(f"Failed to remove cache file {cache_file}: {e}")
+        
+        self._logger.info(f"Cleared {count} cached repairs from {self.cache_dir}")
+        return count
+    
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        cache_files = list(self.cache_dir.glob("*.json")) if self.cache_dir.exists() else []
+        total_size = sum(f.stat().st_size for f in cache_files)
+        
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0,
+            "cached_files": len(cache_files),
+            "cache_dir": str(self.cache_dir),
+            "total_size_bytes": total_size,
+        }
 
 
 class OllamaRepair:
@@ -66,11 +219,17 @@ class OllamaRepair:
         ...     )
     """
     
+    # Class-level cache for availability check (one-time per run)
+    _availability_checked = False
+    _availability_result: bool | None = None
+    _availability_logged = False
+    
     def __init__(
         self,
         model: str = "qwen2.5:3b",
         host: str = "http://localhost:11434",
         timeout: int = 30,
+        cache: RepairCache | None = None,
     ):
         """
         Initialize OllamaRepair with model and host configuration.
@@ -79,16 +238,57 @@ class OllamaRepair:
             model: The Ollama model name to use for repairs
             host: The Ollama API host URL
             timeout: Request timeout in seconds
+            cache: Optional RepairCache instance for caching repairs
         """
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
-        self.available = self._check_availability()
+        self.cache = cache
+        
+        # Use cached availability check (one-time per process)
+        self.available = self._check_availability_cached()
         
         if self.available:
-            logger.info(f"OllamaRepair initialized with model: {model}")
+            if not OllamaRepair._availability_logged:
+                logger.info(f"OllamaRepair initialized with model: {model}")
+                OllamaRepair._availability_logged = True
         else:
-            logger.warning(f"Ollama not available at {host} - repair pass will be skipped")
+            if not OllamaRepair._availability_logged:
+                logger.warning(f"Ollama not available at {host} - repair pass will be skipped")
+                OllamaRepair._availability_logged = True
+    
+    @classmethod
+    def _check_availability_cached(cls) -> bool:
+        """
+        Check Ollama availability with class-level caching.
+        
+        This ensures the availability check (and warning) only happens
+        once per process, reducing log noise.
+        
+        Returns:
+            True if Ollama is available, False otherwise
+        """
+        if not cls._availability_checked:
+            # Create a temporary instance to check availability
+            temp_instance = object.__new__(cls)
+            temp_instance.host = "http://localhost:11434"
+            temp_instance.model = "qwen2.5:3b"
+            cls._availability_result = temp_instance._check_availability()
+            cls._availability_checked = True
+        return cls._availability_result or False
+    
+    @classmethod
+    def reset_availability_cache(cls) -> None:
+        """
+        Reset the class-level availability cache.
+        
+        This is useful for testing or when the Ollama server status
+        may have changed during process execution.
+        """
+        cls._availability_checked = False
+        cls._availability_result = None
+        cls._availability_logged = False
+        logger.debug("Ollama availability cache reset")
     
     def _check_availability(self) -> bool:
         """
@@ -952,6 +1152,9 @@ __all__ = [
     "OllamaRepair",
     "SelectiveRepairPass",
     "RepairResult",
+    "RepairCache",
     # Factory function
     "create_ollama_repair_if_enabled",
+    # Constants
+    "REPAIR_PROMPT_VERSION",
 ]
