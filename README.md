@@ -69,8 +69,11 @@ algl-pdf inspect ./output/ --concept select-basic
 algl-pdf process ./textbook.pdf \
   --output-dir ./output \
   --filter-level strict \
+  --export-mode student_ready \
   --llm-provider kimi \
   --llm-model kimi-k2-5 \
+  --use-ollama-repair \
+  --ollama-model qwen2.5:3b \
   --skip-reinforcement \
   --skip-misconceptions \
   --min-quality-score 0.8
@@ -79,8 +82,11 @@ algl-pdf process ./textbook.pdf \
 Available options:
 - `--output-dir, -o` - Output directory for the unit library (required)
 - `--filter-level` - Export filter level: `strict` (production-ready), `production` (validated), `development` (all content)
+- `--export-mode` - Export mode: `prototype` (allows placeholders) or `student_ready` (strict, blocks weak content)
 - `--llm-provider` - LLM provider: `kimi`, `openai`, or `ollama`
 - `--llm-model` - LLM model to use (default: `kimi-k2-5`)
+- `--use-ollama-repair/--no-ollama-repair` - Use Ollama to repair weak L3 content (default: enabled)
+- `--ollama-model` - Ollama model for repair (default: `qwen2.5:3b`)
 - `--skip-reinforcement` - Skip generating reinforcement items
 - `--skip-misconceptions` - Skip generating misconception units
 - `--validate-sql/--no-validate-sql` - Validate SQL examples (default: enabled)
@@ -220,6 +226,7 @@ This project is grounded in established learning science:
 
 | Document | Purpose |
 |----------|---------|
+| **[Usage Guide](docs/USAGE.md)** | Comprehensive CLI usage with examples |
 | **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
 | **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
 
