@@ -1146,6 +1146,7 @@ try:
         process_command as _process_cmd,
         validate_command as _validate_cmd,
         inspect_command as _inspect_cmd,
+        diagnose_command as _diagnose_cmd,
         filter_command as _filter_cmd,
         export_legacy_command as _export_legacy_cmd,
     )
@@ -1339,6 +1340,36 @@ try:
             algl-pdf inspect ./output/unit-library/ -c join-operations --no-show-sql
         """
         _inspect_cmd(library_dir=library_dir, concept=concept, show_sql=show_sql)
+
+    @app.command(name="diagnose")
+    def diagnose(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        detailed: bool = typer.Option(
+            False,
+            "--detailed",
+            help="Show detailed diagnostic report",
+        ),
+    ):
+        """Diagnose content gaps and quality issues in a unit library.
+        
+        Analyzes the library and reports:
+        - L3 coverage gaps (concepts missing explanations)
+        - L2 units using default examples
+        - Unresolved practice links
+        - Heading-like content in why_it_matters
+        - Missing evidence spans
+        
+        Example:
+            algl-pdf diagnose ./output/unit-library/
+            algl-pdf diagnose ./output/unit-library/ --detailed
+        """
+        _diagnose_cmd(library_dir=library_dir, detailed=detailed)
 
     @app.command()
     def filter(

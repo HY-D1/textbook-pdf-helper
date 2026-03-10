@@ -1378,6 +1378,66 @@ def _check_insufficient_evidence_spans(unit: InstructionalUnit) -> tuple[bool, s
     return True, f"Sufficient evidence spans ({len(evidence_spans)})"
 
 
+def _check_ontology_fallback_definition(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if L3 unit uses ontology fallback definition (not extracted from source).
+    
+    Blocks L3 units where the definition came from ontology fallback rather than
+    being extracted from the textbook source material. This ensures student-facing
+    content is grounded in actual textbook content.
+    
+    Only applies to L3_explanation units.
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"Ontology fallback check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check definition source"
+    
+    # Get metadata
+    metadata = content.get("_metadata", {})
+    
+    # Check for definition source markers
+    definition_source = metadata.get("definition_source", "")
+    content_source = metadata.get("content_source", "")
+    
+    # Block if definition is from ontology fallback
+    if definition_source in ("ontology", "default"):
+        return False, f"L3 definition is from {definition_source} fallback, not extracted from source"
+    
+    # Also check for curated content (which is acceptable)
+    if content_source == "curated":
+        return True, "Curated content - ontology fallback check waived"
+    
+    # Check if definition has generic fallback patterns
+    definition = _get_unit_definition(unit)
+    generic_patterns = [
+        r"is an important SQL concept\.?$",
+        r"is a crucial SQL concept\.?$",
+        r"is an essential SQL concept\.?$",
+        r"is a fundamental SQL concept\.?$",
+    ]
+    
+    is_generic = any(
+        re.search(pattern, definition, re.IGNORECASE)
+        for pattern in generic_patterns
+    )
+    
+    if is_generic:
+        # Check if we have real examples to compensate
+        examples = _get_unit_examples(unit)
+        has_real_examples = any(
+            not ex.get("is_synthetic", False) if isinstance(ex, dict) else True
+            for ex in examples
+        )
+        
+        if not has_real_examples:
+            return False, "L3 has generic ontology fallback definition with no real examples"
+    
+    return True, "L3 definition appears to be extracted or curated"
+
+
 def _check_generic_boilerplate(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check for generic boilerplate text that shouldn't be in student content.
     
@@ -2142,6 +2202,14 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         description="why_it_matters looks like a heading ('How to...', 'Chapter X', etc.)",
         check_fn=_check_heading_like_why_it_matters,
         error_message="why_it_matters appears to be a heading, not instructional content"
+    ),
+    # Block L3 with ontology fallback definitions (not extracted from source)
+    ExportRule(
+        rule_id="ontology_fallback_definition",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L3 definition is from ontology fallback, not extracted",
+        check_fn=_check_ontology_fallback_definition,
+        error_message="L3 definition is ontology fallback, not grounded in textbook source"
     ),
     # Block units with too few evidence spans (weak grounding)
     ExportRule(
