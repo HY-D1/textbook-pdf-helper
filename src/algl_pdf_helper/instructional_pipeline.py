@@ -1311,6 +1311,9 @@ class InstructionalPipeline:
             llm_provider=self.config.llm_provider,
             model_name=self.config.llm_model,
             allow_synthetic_examples=self.config.allow_synthetic_examples,
+            enable_ollama_repair=self.config.use_ollama_repair,
+            repair_threshold=self.config.ollama_repair_threshold,
+            ollama_model=self.config.ollama_model,
         )
         
         # Initialize misconception bank for error subtype lookup
