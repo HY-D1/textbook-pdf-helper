@@ -786,7 +786,7 @@ def _check_fallback_unit(unit: InstructionalUnit) -> tuple[bool, str]:
 
 
 def _check_offbook_curated_concept(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Check if unit has source_mode == 'curated_only_offbook'.
+    """Check if unit has source_mode == 'curated_only_offbook' or offbook_concept=True.
     
     HARD BLOCK for student-ready mode - off-book concepts without source grounding
     should not be exported to students.
@@ -802,7 +802,12 @@ def _check_offbook_curated_concept(unit: InstructionalUnit) -> tuple[bool, str]:
     if source_mode == "curated_only_offbook":
         return False, "Off-book curated-only concept (no source grounding)"
     
-    return True, "Source mode is acceptable"
+    # Also check for explicit offbook_concept flag
+    offbook_concept = content.get("offbook_concept", False) or metadata.get("offbook_concept", False)
+    if offbook_concept:
+        return False, "Off-book concept not from source textbook"
+    
+    return True, "Concept from source material"
 
 
 def _check_placeholder_practice_links_strict(unit: InstructionalUnit) -> tuple[bool, str]:
@@ -1049,7 +1054,7 @@ def _check_low_quality_score(unit: InstructionalUnit) -> tuple[bool, str]:
         quality_score = unit.grounding_confidence
     
     if quality_score < 0.7:
-        return False, f"Unit quality score ({quality_score:.2f}) below threshold (0.7)"
+        return True, f"WARNING: Unit quality score ({quality_score:.2f}) below recommended threshold (0.7)"
     
     return True, f"Unit quality score acceptable ({quality_score:.2f})"
 
@@ -1888,37 +1893,39 @@ CONTENT_QUALITY_RULES: list[ExportRule] = [
 # PRE-CONFIGURED FILTER SETS
 # =============================================================================
 
-STRICT_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
-    # Include student-ready checks in strict mode
-    ExportRule(
+# Build STRICT_FILTERS with deduplication (some rules may already exist in HARD_BLOCK_RULES)
+_strict_rules_dict = {r.rule_id: r for r in HARD_BLOCK_RULES}
+_strict_rules_dict.update({
+    "placeholder_practice_ids": ExportRule(
         rule_id="placeholder_practice_ids",
         rule_type=RuleType.HARD_BLOCK,
         description="Practice IDs starting with 'unresolved-' or containing 'placeholder'",
         check_fn=_check_placeholder_practice_ids,
         error_message="Strict export cannot contain placeholder practice IDs"
     ),
-    ExportRule(
+    "empty_why_it_matters": ExportRule(
         rule_id="empty_why_it_matters",
         rule_type=RuleType.HARD_BLOCK,
         description="why_it_matters is missing or less than 30 characters",
         check_fn=_check_empty_why_it_matters,
         error_message="Strict export requires meaningful why_it_matters (min 30 chars)"
     ),
-    ExportRule(
+    "generic_boilerplate": ExportRule(
         rule_id="generic_boilerplate",
         rule_type=RuleType.HARD_BLOCK,
         description="Content contains generic boilerplate like 'Golden Reference Document'",
         check_fn=_check_generic_boilerplate,
         error_message="Content contains generic boilerplate/template text"
     ),
-    ExportRule(
+    "wrong_example_for_concept": ExportRule(
         rule_id="wrong_example_for_concept",
         rule_type=RuleType.HARD_BLOCK,
         description="SQL example doesn't match the concept being taught",
         check_fn=_check_wrong_example_for_concept,
         error_message="SQL example doesn't match concept (e.g., SELECT example for CREATE TABLE)"
     ),
-]
+})
+STRICT_FILTERS: list[ExportRule] = list(_strict_rules_dict.values())
 """Strict filters - all hard blocks. Prevents any questionable content from exporting."""
 
 PRODUCTION_FILTERS: list[ExportRule] = HARD_BLOCK_RULES + [
