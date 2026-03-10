@@ -274,7 +274,7 @@ class GenerationConfig:
     base_url: str | None = None
     timeout_seconds: int = 60
     allow_synthetic_examples: bool = False  # Default to False for production
-    enable_ollama_repair: bool = True  # Enable selective Ollama repair by default
+    enable_ollama_repair: bool = False  # Default to disabled, let caller enable
     repair_threshold: float = 0.6  # Quality threshold for triggering repair
     ollama_model: str = "qwen2.5:3b"  # Default Ollama model for repairs
     
@@ -938,7 +938,7 @@ SQL_OPTIONAL_CONCEPTS = {
 # Threshold for accepting extracted SQL examples for L2 content
 # SQL concepts (non-optional) require strong evidence (2.5) to ensure quality
 # Temporarily lowered for debugging to see if ANY extraction works
-EXAMPLE_MATCH_THRESHOLD = 0.5  # Very low for testing - raise back to 2.5 after verification
+EXAMPLE_MATCH_THRESHOLD = 2.5
 
 # Lower threshold for SQL-optional concepts (theory/design topics)
 # These concepts don't require executable SQL, so we accept lower match scores (1.0)
@@ -1014,8 +1014,13 @@ class UnitGenerator:
         Returns:
             True if Ollama repair is available, False otherwise
         """
+        # Early exit if disabled
         if not config.enable_ollama_repair:
+            print("[Ollama] Repair disabled by configuration")
+            self._ollama_repair = None
             return False
+        
+        # Only then proceed with initialization
         
         if self._ollama_repair is None:
             # Run preflight check first (without creating instance) to avoid warning when unavailable
@@ -2092,6 +2097,10 @@ class UnitGenerator:
         # DEBUG LOGGING START
         print(f"[SQL SCORE] Scoring SQL for concept '{concept_id}':")
         print(f"[SQL SCORE]   SQL (first 60 chars): {sql[:60]}...")
+        
+        # Additional debug for key concepts
+        if concept_id in ('select-basic', 'joins-intro', 'group-by'):
+            print(f"[SQL SCORE] {concept_id}: SQL='{sql[:40]}...' -> score pending...")
         # DEBUG LOGGING END
         
         # Base score and matched signals tracking
@@ -2544,6 +2553,10 @@ class UnitGenerator:
         
         # DEBUG LOGGING START
         print(f"[SQL SCORE]   FINAL: score={score:.2f}, signals={matched_signals if matched_signals else ['none']}")
+        
+        # Additional debug for key concepts - show final score
+        if concept_id in ('select-basic', 'joins-intro', 'group-by'):
+            print(f"[SQL SCORE] {concept_id}: SQL='{sql[:40]}...' -> score={score:.2f}")
         # DEBUG LOGGING END
         
         return score, matched_signals
@@ -4299,14 +4312,45 @@ class UnitGenerator:
         })
         print(f"[L2 BUILD] Added DEFAULT candidate with score 0.5")
         
-        # Sort by: score (desc), then source preference (extracted > curated > default)
-        source_preference = {'extracted': 0, 'curated': 1, 'default': 2}
-        candidates.sort(key=lambda x: (-x['score'], source_preference[x['source_type']]))
+        # ===================================================================
+        # EXTRACTED PREFERENCE BIAS: Boost extracted when scores are close
+        # ===================================================================
+        # Give source type bonuses: extracted gets +1.0, curated +0.5, default +0.0
+        # This ensures extracted is preferred when within 1.0 of fallback scores
+        source_bonus = {'extracted': 1.0, 'curated': 0.5, 'default': 0.0}
+        
+        def sort_key(c):
+            boosted_score = c['score'] + source_bonus.get(c['source_type'], 0)
+            return -boosted_score  # Negative for descending sort
+        
+        candidates.sort(key=sort_key)
         
         # Debug: Show candidates after sorting
-        print(f"[L2 BUILD] Candidates after sorting by score (desc) then source preference:")
+        print(f"[L2 BUILD] Candidates after sorting with source bonus (extracted +1.0, curated +0.5):")
         for i, c in enumerate(candidates):
-            print(f"[L2 BUILD]   #{i}: {c['source_type']:12} score={c['score']:5.2f} signals={c.get('matched_signals', [])[:3]}...")
+            boosted = c['score'] + source_bonus.get(c['source_type'], 0)
+            print(f"[L2 BUILD]   #{i}: {c['source_type']:12} raw_score={c['score']:5.2f} boosted={boosted:5.2f} signals={c.get('matched_signals', [])[:3]}...")
+        
+        # ===================================================================
+        # EXPLICIT DEBUG LOGGING FOR KEY CONCEPTS
+        # ===================================================================
+        if concept_id in ('select-basic', 'joins-intro', 'group-by', 'where-clause'):
+            print(f"\n{'='*70}")
+            print(f"[L2 CANDIDATE DUMP] Concept: {concept_id}")
+            print(f"[L2 CANDIDATE DUMP] Threshold: {threshold}")
+            print(f"[L2 CANDIDATE DUMP] Total candidates: {len(candidates)}")
+            print("-" * 70)
+            
+            # Sort by score for display
+            sorted_candidates = sorted(candidates, key=lambda x: -x['score'])
+            for i, c in enumerate(sorted_candidates):
+                marker = " <-- SELECTED" if i == 0 else ""
+                print(f"  #{i}: {c['source_type']:12} score={c['score']:.2f} "
+                      f"signals={c.get('matched_signals', [])[:3]}{marker}")
+                if c['source_type'] == 'extracted':
+                    sql_preview = c.get('sql', '')[:50]
+                    print(f"       SQL: {sql_preview}...")
+            print(f"{'='*70}\n")
         
         # Select best candidate that meets threshold
         best_candidate = None
