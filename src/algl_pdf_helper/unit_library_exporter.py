@@ -805,10 +805,13 @@ class UnitLibraryExporter:
     ) -> None:
         """Write misconception units as JSONL."""
         filepath = output_dir / self.MISCONCEPTIONS_FILE
+        count = 0
         with open(filepath, "w", encoding="utf-8") as f:
             for unit in units:
                 record = unit.model_dump()
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                count += 1
+        self._logger.info(f"Exported {count} misconception units to {filepath.name}")
     
     def _write_reinforcement_bank_jsonl(
         self,
@@ -817,21 +820,49 @@ class UnitLibraryExporter:
     ) -> None:
         """Write reinforcement items as JSONL."""
         filepath = output_dir / self.REINFORCEMENT_FILE
+        count = 0
         with open(filepath, "w", encoding="utf-8") as f:
             for item in items:
                 record = item.model_dump()
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                count += 1
+        self._logger.info(f"Exported {count} reinforcement items to {filepath.name}")
     
     def _write_example_bank_jsonl(
         self,
         examples: list[ValidatedSQLExample],
         output_dir: Path,
     ) -> None:
-        """Write SQL examples with validation status as JSONL."""
+        """Write SQL examples with validation status and provenance as JSONL."""
         filepath = output_dir / self.EXAMPLES_FILE
+        
+        # Get example provenance from pedagogy data if available
+        example_provenance: dict[str, dict[str, Any]] = {}
+        if self._pedagogy_data and self._pedagogy_data.get("examples"):
+            for ex in self._pedagogy_data["examples"]:
+                if hasattr(ex, 'example_id'):
+                    example_provenance[ex.example_id] = {
+                        "chapter": ex.chapter_number,
+                        "page": ex.page_number,
+                        "title": getattr(ex, 'title', ""),
+                    }
+        
         with open(filepath, "w", encoding="utf-8") as f:
             for example in examples:
                 record = example.to_dict()
+                
+                # Add provenance if available from pedagogy data
+                if example.example_id in example_provenance:
+                    prov = example_provenance[example.example_id]
+                    record["chapter"] = prov.get("chapter")
+                    record["page"] = prov.get("page")
+                    if prov.get("title"):
+                        record["title"] = prov["title"]
+                
+                # Ensure source_type is set
+                if "source_type" not in record:
+                    record["source_type"] = "extracted"
+                
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
     
     def _write_practice_links(
@@ -911,6 +942,12 @@ class UnitLibraryExporter:
         filter_level = stats.get("filter_level", config.filter_level.value)
         export_filter_pass_rate = exported_units / max(generated_units, 1)
         
+        # Get misconception and reinforcement generation stats
+        generated_misconceptions = stats.get("generated_misconceptions", len(library.misconception_bank))
+        exported_misconceptions = len(library.misconception_bank)
+        generated_reinforcement = stats.get("generated_reinforcement", len(library.reinforcement_bank))
+        exported_reinforcement = len(library.reinforcement_bank)
+        
         # Build filter results with real counts
         filter_results = {
             "filter_level": filter_level,
@@ -979,8 +1016,16 @@ class UnitLibraryExporter:
                 "units_per_concept": dict(units_per_concept),
                 "export_filter_pass_rate": export_filter_pass_rate,
                 "quality_gate_pass_rate": quality_pass_rate,
-                "total_misconceptions": len(library.misconception_bank),
-                "total_reinforcement": len(library.reinforcement_bank),
+                "misconceptions": {
+                    "generated": generated_misconceptions,
+                    "exported": exported_misconceptions,
+                },
+                "reinforcement": {
+                    "generated": generated_reinforcement,
+                    "exported": exported_reinforcement,
+                },
+                "total_misconceptions": exported_misconceptions,
+                "total_reinforcement": exported_reinforcement,
             },
             "provenance": provenance,
             "validation_results": validation_results,
@@ -1056,16 +1101,37 @@ class UnitLibraryExporter:
                     "subsection_ids": topic_dict.get("subsection_ids", []),
                 })
             
-            entry = ChapterGraphEntry(
-                chapter_number=chapter_dict.get("chapter_number", 0),
-                title=chapter_dict.get("chapter_title", ""),
-                page_range=list(chapter_dict.get("page_range", [0, 0])),
-                topics=topics,
-                exercises=chapter_dict.get("exercises", []),
-                path_type=chapter_dict.get("path_type", "general"),
-                objectives=chapter_dict.get("objectives", []),
-            )
-            entries.append(entry.model_dump())
+            # Build sections list for chapter graph
+            sections = []
+            for topic in topics:
+                sections.append({
+                    "title": topic["title"],
+                    "page": topic.get("subsection_ids", [0])[0] if topic.get("subsection_ids") else 0,
+                })
+            
+            # Determine concepts covered from topics
+            concepts_covered = []
+            for topic in topics:
+                concepts_covered.extend(topic.get("concepts", []))
+            concepts_covered = list(set(concepts_covered))  # Deduplicate
+            
+            entry = {
+                "number": chapter_dict.get("chapter_number", 0),
+                "title": chapter_dict.get("chapter_title", ""),
+                "page_range": list(chapter_dict.get("page_range", [0, 0])),
+                "sections": sections,
+                "concepts_covered": concepts_covered,
+                "exercises": chapter_dict.get("exercises", []),
+                "prerequisites": chapter_dict.get("prerequisites", []),
+                "next_chapters": [],  # Will be populated based on chapter number
+            }
+            
+            # Infer next chapters (sequential)
+            chapter_num = chapter_dict.get("chapter_number", 0)
+            if chapter_num > 0:
+                entry["next_chapters"] = [chapter_num + 1]
+            
+            entries.append(entry)
         
         output = {
             "version": "1.0.0",
@@ -1097,21 +1163,38 @@ class UnitLibraryExporter:
             for exercise in exercises:
                 if hasattr(exercise, 'to_dict'):
                     ex_dict = exercise.to_dict()
+                elif hasattr(exercise, 'exercise_id'):
+                    # ExerciseInfo dataclass
+                    ex_dict = {
+                        "exercise_id": exercise.exercise_id,
+                        "chapter": exercise.chapter,
+                        "number": exercise.number,
+                        "text": exercise.text,
+                        "solution_sql": exercise.solution_sql,
+                        "solution_text": exercise.solution_text,
+                        "concepts_tested": exercise.concepts_tested,
+                        "difficulty": exercise.difficulty,
+                        "exercise_type": exercise.exercise_type,
+                        "page": exercise.page,
+                        "hints": exercise.hints,
+                    }
                 else:
                     ex_dict = exercise
                 
-                entry = ExerciseBankEntry(
-                    exercise_id=ex_dict.get("exercise_id", ""),
-                    chapter=ex_dict.get("chapter", 0),
-                    exercise_number=ex_dict.get("exercise_number", 0),
-                    problem=ex_dict.get("problem", ""),
-                    solution=ex_dict.get("solution"),
-                    concepts=ex_dict.get("concepts", []),
-                    difficulty=ex_dict.get("difficulty", "beginner"),
-                    exercise_type=ex_dict.get("exercise_type", "coding"),
-                    page=ex_dict.get("page"),
-                )
-                f.write(json.dumps(entry.model_dump(), ensure_ascii=False) + "\n")
+                # Build standardized exercise entry
+                entry = {
+                    "exercise_id": ex_dict.get("exercise_id", ""),
+                    "chapter": ex_dict.get("chapter", 0),
+                    "number": str(ex_dict.get("number", ex_dict.get("exercise_number", ""))),
+                    "text": ex_dict.get("text", ex_dict.get("problem", ex_dict.get("problem_text", ""))),
+                    "solution_sql": ex_dict.get("solution_sql") or ex_dict.get("solution"),
+                    "concepts_tested": ex_dict.get("concepts_tested", ex_dict.get("concepts", [])),
+                    "difficulty": ex_dict.get("difficulty", "beginner"),
+                    "exercise_type": ex_dict.get("exercise_type", "coding"),
+                    "page": ex_dict.get("page"),
+                }
+                
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         
         self._logger.info(f"Wrote exercise bank: {len(exercises)} exercises")
     

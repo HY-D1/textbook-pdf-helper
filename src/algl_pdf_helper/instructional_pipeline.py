@@ -40,6 +40,8 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -165,7 +167,7 @@ class PipelineConfig:
     allow_synthetic_examples: bool = False  # Default to False for production
     
     # Off-book curated content configuration
-    allow_offbook_curated: bool = True  # Default True for prototype, set False for student_ready
+    allow_offbook_curated: bool = False  # Default False - must explicitly opt-in for off-book concepts
     
     # Ollama repair configuration
     use_ollama_repair: bool = True
@@ -180,6 +182,13 @@ class PipelineConfig:
         "openai": "gpt-4",
         "ollama": "llama3.2:3b",
     }
+    
+    # Range and caching configuration
+    page_range: tuple[int, int] | list[int] | None = None
+    chapter_range: tuple[int, int] | list[int] | None = None
+    resume_from_checkpoint: bool = False
+    cache_extraction: bool = True
+    checkpoint_dir: Path | None = None
     
     def __post_init__(self):
         """Validate configuration and set defaults."""
@@ -202,6 +211,12 @@ class PipelineConfig:
         # Check PDF exists
         if not self.pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {self.pdf_path}")
+        
+        # Set checkpoint directory
+        if self.checkpoint_dir is None:
+            self.checkpoint_dir = self.output_dir / ".checkpoints"
+        elif isinstance(self.checkpoint_dir, str):
+            self.checkpoint_dir = Path(self.checkpoint_dir)
         
         # Resolve provider-specific default model
         if self.llm_model is None:
@@ -491,6 +506,95 @@ class PipelineProgressTracker:
 # INSTRUCTIONAL PIPELINE
 # =============================================================================
 
+class CheckpointManager:
+    """Manages pipeline checkpoints for resumable processing.
+    
+    Saves and loads checkpoint state to enable resuming interrupted runs.
+    """
+    
+    def __init__(self, checkpoint_dir: Path, doc_id: str):
+        self.checkpoint_dir = checkpoint_dir
+        self.doc_id = doc_id
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _get_checkpoint_path(self) -> Path:
+        """Get the checkpoint file path for this document."""
+        return self.checkpoint_dir / f"{self.doc_id}.checkpoint.json"
+    
+    def _get_cache_path(self, pdf_hash: str) -> Path:
+        """Get the extraction cache file path for this PDF hash."""
+        return self.checkpoint_dir / f"extraction_{pdf_hash[:16]}.cache.json"
+    
+    def save_checkpoint(self, state: dict[str, Any]) -> None:
+        """Save the current pipeline state to checkpoint file."""
+        checkpoint_path = self._get_checkpoint_path()
+        checkpoint_data = {
+            "doc_id": self.doc_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "version": "1.0.0",
+            **state,
+        }
+        with open(checkpoint_path, "w", encoding="utf-8") as f:
+            json.dump(checkpoint_data, f, indent=2)
+    
+    def load_checkpoint(self) -> dict[str, Any] | None:
+        """Load checkpoint state if it exists."""
+        checkpoint_path = self._get_checkpoint_path()
+        if checkpoint_path.exists():
+            with open(checkpoint_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    
+    def clear_checkpoint(self) -> None:
+        """Clear the checkpoint file."""
+        checkpoint_path = self._get_checkpoint_path()
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+    
+    def save_extraction_cache(
+        self, 
+        pdf_hash: str, 
+        pages: list[tuple[int, str]], 
+        metadata: dict[str, Any]
+    ) -> None:
+        """Save extracted pages to cache."""
+        cache_path = self._get_cache_path(pdf_hash)
+        cache_data = {
+            "pdf_hash": pdf_hash,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "pages": pages,
+            "metadata": metadata,
+        }
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, indent=2)
+    
+    def load_extraction_cache(self, pdf_hash: str) -> tuple[list[tuple[int, str]], dict[str, Any]] | None:
+        """Load cached extraction if it exists and hash matches."""
+        cache_path = self._get_cache_path(pdf_hash)
+        if cache_path.exists():
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+                if cache_data.get("pdf_hash") == pdf_hash:
+                    pages = [(p[0], p[1]) for p in cache_data["pages"]]
+                    return pages, cache_data.get("metadata", {})
+        return None
+    
+    def clear_extraction_cache(self, pdf_hash: str) -> None:
+        """Clear the extraction cache for a given PDF hash."""
+        cache_path = self._get_cache_path(pdf_hash)
+        if cache_path.exists():
+            cache_path.unlink()
+
+
+def compute_pdf_hash(pdf_path: Path) -> str:
+    """Compute SHA256 hash of PDF file for cache validation."""
+    sha256 = hashlib.sha256()
+    with open(pdf_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
 class InstructionalPipeline:
     """
     Main orchestrator for the PDF → grounded instructional unit graph pipeline.
@@ -556,8 +660,30 @@ class InstructionalPipeline:
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
         
+        # Initialize checkpoint manager
+        self._checkpoint_manager = CheckpointManager(
+            checkpoint_dir=config.checkpoint_dir or config.output_dir / ".checkpoints",
+            doc_id=config.doc_id or "unknown",
+        )
+        
+        # Track checkpoint state
+        self._checkpoint_state: dict[str, Any] = {
+            "completed_stages": [],
+            "processed_concepts": [],
+            "current_page": 0,
+            "pdf_hash": None,
+        }
+        
         # Control whether to log detailed filter results (set to True when CLI handles output)
         self._quiet_filter_logging = False
+        
+        # Cache stats for reporting
+        self._cache_stats: dict[str, Any] = {
+            "extraction_cache_hit": False,
+            "extraction_cache_saved": False,
+            "pages_from_cache": 0,
+            "pages_extracted": 0,
+        }
     
     def run(self) -> PipelineResult:
         """
@@ -566,58 +692,151 @@ class InstructionalPipeline:
         Runs all stages sequentially with error handling. If a stage fails,
         returns partial results with error information.
         
+        Supports resuming from checkpoints if --resume is enabled.
+        
         Returns:
             PipelineResult with success status and all outputs
         """
         start_time = time.time()
         result = PipelineResult()
         
+        # Load checkpoint if resuming
+        checkpoint = None
+        if self.config.resume_from_checkpoint:
+            checkpoint = self._checkpoint_manager.load_checkpoint()
+            if checkpoint:
+                self._logger.info(f"Resuming from checkpoint: {checkpoint.get('timestamp')}")
+                self._checkpoint_state["completed_stages"] = checkpoint.get("completed_stages", [])
+                self._checkpoint_state["processed_concepts"] = checkpoint.get("processed_concepts", [])
+                self._checkpoint_state["current_page"] = checkpoint.get("current_page", 0)
+        
+        # Compute PDF hash for cache validation
+        pdf_hash = compute_pdf_hash(self.config.pdf_path)
+        self._checkpoint_state["pdf_hash"] = pdf_hash
+        
         try:
-            # Stage 1: Document Extraction
-            self._run_stage(PipelineStage.EXTRACTION, self._extract_pdf, result)
+            # Stage 1: Document Extraction (skip if cached and not resumed)
+            if (PipelineStage.EXTRACTION.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.EXTRACTION, self._extract_pdf, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.EXTRACTION.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping EXTRACTION stage (already completed)")
+                result.stages_completed.append(PipelineStage.EXTRACTION)
             
             # Stage 2: Section Segmentation
-            self._run_stage(PipelineStage.SEGMENTATION, self._segment_content, result)
+            if (PipelineStage.SEGMENTATION.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.SEGMENTATION, self._segment_content, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.SEGMENTATION.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping SEGMENTATION stage (already completed)")
+                result.stages_completed.append(PipelineStage.SEGMENTATION)
             
             # Stage 3: Content Filtering
-            self._run_stage(PipelineStage.CONTENT_FILTERING, self._filter_teaching_content, result)
+            if (PipelineStage.CONTENT_FILTERING.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.CONTENT_FILTERING, self._filter_teaching_content, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.CONTENT_FILTERING.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping CONTENT_FILTERING stage (already completed)")
+                result.stages_completed.append(PipelineStage.CONTENT_FILTERING)
             
             # Stage 4: Concept Mapping
-            self._run_stage(PipelineStage.CONCEPT_MAPPING, self._map_to_concepts, result)
+            if (PipelineStage.CONCEPT_MAPPING.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.CONCEPT_MAPPING, self._map_to_concepts, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.CONCEPT_MAPPING.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping CONCEPT_MAPPING stage (already completed)")
+                result.stages_completed.append(PipelineStage.CONCEPT_MAPPING)
             
             # Stage 5: Unit Generation
-            self._run_stage(PipelineStage.UNIT_GENERATION, self._generate_units, result)
+            if (PipelineStage.UNIT_GENERATION.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.UNIT_GENERATION, self._generate_units, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.UNIT_GENERATION.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping UNIT_GENERATION stage (already completed)")
+                result.stages_completed.append(PipelineStage.UNIT_GENERATION)
             
             # Stage 6: Misconception Bank
             if not self.config.skip_misconceptions:
-                self._run_stage(
-                    PipelineStage.MISCONCEPTION_GENERATION, 
-                    self._generate_misconceptions, 
-                    result
-                )
+                if (PipelineStage.MISCONCEPTION_GENERATION.name not in self._checkpoint_state["completed_stages"] or 
+                    not self.config.resume_from_checkpoint):
+                    self._run_stage(
+                        PipelineStage.MISCONCEPTION_GENERATION, 
+                        self._generate_misconceptions, 
+                        result
+                    )
+                    self._checkpoint_state["completed_stages"].append(PipelineStage.MISCONCEPTION_GENERATION.name)
+                    self._save_checkpoint()
+                else:
+                    self._logger.info("Skipping MISCONCEPTION_GENERATION stage (already completed)")
+                    result.stages_completed.append(PipelineStage.MISCONCEPTION_GENERATION)
             
             # Stage 7: Reinforcement Bank
             if not self.config.skip_reinforcement:
-                self._run_stage(
-                    PipelineStage.REINFORCEMENT_GENERATION,
-                    self._generate_reinforcement,
-                    result
-                )
+                if (PipelineStage.REINFORCEMENT_GENERATION.name not in self._checkpoint_state["completed_stages"] or 
+                    not self.config.resume_from_checkpoint):
+                    self._run_stage(
+                        PipelineStage.REINFORCEMENT_GENERATION,
+                        self._generate_reinforcement,
+                        result
+                    )
+                    self._checkpoint_state["completed_stages"].append(PipelineStage.REINFORCEMENT_GENERATION.name)
+                    self._save_checkpoint()
+                else:
+                    self._logger.info("Skipping REINFORCEMENT_GENERATION stage (already completed)")
+                    result.stages_completed.append(PipelineStage.REINFORCEMENT_GENERATION)
             
             # Stage 8: SQL Validation
             if self.config.validate_sql:
-                self._run_stage(PipelineStage.VALIDATION, self._validate_sql_examples, result)
+                if (PipelineStage.VALIDATION.name not in self._checkpoint_state["completed_stages"] or 
+                    not self.config.resume_from_checkpoint):
+                    self._run_stage(PipelineStage.VALIDATION, self._validate_sql_examples, result)
+                    self._checkpoint_state["completed_stages"].append(PipelineStage.VALIDATION.name)
+                    self._save_checkpoint()
+                else:
+                    self._logger.info("Skipping VALIDATION stage (already completed)")
+                    result.stages_completed.append(PipelineStage.VALIDATION)
             
             # Stage 9: Quality Gates
-            self._run_stage(PipelineStage.QUALITY_GATES, self._run_quality_gates, result)
+            if (PipelineStage.QUALITY_GATES.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.QUALITY_GATES, self._run_quality_gates, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.QUALITY_GATES.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping QUALITY_GATES stage (already completed)")
+                result.stages_completed.append(PipelineStage.QUALITY_GATES)
             
             # Stage 10: Export Filtering
-            self._run_stage(PipelineStage.FILTERING, self._apply_export_filters, result)
+            if (PipelineStage.FILTERING.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                self._run_stage(PipelineStage.FILTERING, self._apply_export_filters, result)
+                self._checkpoint_state["completed_stages"].append(PipelineStage.FILTERING.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping FILTERING stage (already completed)")
+                result.stages_completed.append(PipelineStage.FILTERING)
             
             # Stage 11: Export
-            export_path = self._run_stage(PipelineStage.EXPORT, self._export, result)
-            if export_path:
-                result.output_path = export_path
+            if (PipelineStage.EXPORT.name not in self._checkpoint_state["completed_stages"] or 
+                not self.config.resume_from_checkpoint):
+                export_path = self._run_stage(PipelineStage.EXPORT, self._export, result)
+                if export_path:
+                    result.output_path = export_path
+                self._checkpoint_state["completed_stages"].append(PipelineStage.EXPORT.name)
+                self._save_checkpoint()
+            else:
+                self._logger.info("Skipping EXPORT stage (already completed)")
+                result.stages_completed.append(PipelineStage.EXPORT)
             
             result.success = len(result.stages_failed) == 0
             
@@ -636,10 +855,22 @@ class InstructionalPipeline:
             result.blocked_units_with_reasons = getattr(self, '_rejected_units', [])
             result.repaired_units = getattr(self, '_repaired_unit_ids', [])
             result.repair_status = getattr(self, '_repair_status', {})
+            result.cache_stats = self._cache_stats
+            
+            # Clear checkpoint on successful completion
+            if result.success and self.config.resume_from_checkpoint:
+                self._checkpoint_manager.clear_checkpoint()
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
         return result
+    
+    def _save_checkpoint(self) -> None:
+        """Save current checkpoint state."""
+        try:
+            self._checkpoint_manager.save_checkpoint(self._checkpoint_state)
+        except Exception as e:
+            self._logger.warning(f"Failed to save checkpoint: {e}")
     
     def _run_stage(
         self, 
@@ -656,7 +887,9 @@ class InstructionalPipeline:
         try:
             result_value = stage_fn()
             self.progress.end_stage(stage, success=True)
-            result.stages_completed.append(stage)
+            # Only append if not already added (e.g., during resume)
+            if stage not in result.stages_completed:
+                result.stages_completed.append(stage)
             return result_value
         except Exception as e:
             self.progress.end_stage(stage, success=False)
@@ -670,23 +903,144 @@ class InstructionalPipeline:
     
     def _extract_pdf(self) -> tuple[str, dict]:
         """
-        Stage 1: Extract raw text from PDF.
+        Stage 1: Extract raw text from PDF with caching and page range support.
         
         Uses SectionExtractor to extract text with layout preservation.
+        Supports extraction caching and page range filtering.
         
         Returns:
             Tuple of (raw_text, metadata)
         """
         self._logger.info("Stage 1: Extracting PDF content")
         
+        # Check extraction cache if enabled
+        pdf_hash = self._checkpoint_state.get("pdf_hash")
+        if self.config.cache_extraction and pdf_hash:
+            cached = self._checkpoint_manager.load_extraction_cache(pdf_hash)
+            if cached:
+                pages, cache_metadata = cached
+                self._logger.info(f"Using cached extraction: {len(pages)} pages")
+                self._cache_stats["extraction_cache_hit"] = True
+                self._cache_stats["pages_from_cache"] = len(pages)
+                # Convert cached pages to blocks
+                return self._process_extracted_pages(pages, from_cache=True)
+        
         self._extractor = SectionExtractor()
         
-        # For now, we extract blocks which gives us text content
-        blocks = self._extractor.extract_blocks(
-            self.config.pdf_path,
-            self.config.doc_id
-        )
+        # Extract with page range support if specified
+        page_range = self.config.page_range
+        chapter_range = self.config.chapter_range
         
+        if page_range or chapter_range:
+            # If chapter range is specified, we need to resolve it to page numbers
+            if chapter_range and not page_range:
+                page_range = self._resolve_chapter_range(chapter_range)
+                self._logger.info(f"Resolved chapter range to pages: {page_range}")
+            
+            # Extract specific pages
+            blocks = self._extractor.extract_blocks(
+                self.config.pdf_path,
+                self.config.doc_id,
+                page_range=page_range,
+            )
+            self._logger.info(f"Extracted with page range: {page_range}")
+        else:
+            # Extract all pages
+            blocks = self._extractor.extract_blocks(
+                self.config.pdf_path,
+                self.config.doc_id
+            )
+        
+        return self._process_extracted_blocks(blocks)
+    
+    def _resolve_chapter_range(
+        self, 
+        chapter_range: tuple[int, int] | list[int]
+    ) -> tuple[int, int] | list[int]:
+        """Resolve chapter numbers to page numbers using PDF bookmarks.
+        
+        Args:
+            chapter_range: Chapter numbers (e.g., (1, 5) or [1, 3, 5])
+            
+        Returns:
+            Corresponding page numbers
+            
+        Note:
+            This requires the PDF to have bookmarks/table of contents.
+            If bookmarks are not available, raises an error.
+        """
+        try:
+            import fitz
+            doc = fitz.open(self.config.pdf_path)
+            
+            # Get bookmarks/outline
+            toc = doc.get_toc()
+            if not toc:
+                doc.close()
+                raise ValueError(
+                    "PDF has no bookmarks/table of contents. "
+                    "Cannot resolve chapter numbers to pages. "
+                    "Use --page-range instead."
+                )
+            
+            # Build chapter -> page mapping from bookmarks
+            # TOC format: [(level, title, page), ...]
+            chapter_pages = {}
+            chapter_num = 0
+            for level, title, page in toc:
+                # Look for chapter indicators in title
+                if level == 1:  # Top-level entries are usually chapters
+                    chapter_num += 1
+                    chapter_pages[chapter_num] = page
+            
+            doc.close()
+            
+            if not chapter_pages:
+                raise ValueError(
+                    "Could not identify chapters in PDF bookmarks. "
+                    "Use --page-range instead."
+                )
+            
+            # Resolve chapter numbers to pages
+            if isinstance(chapter_range, tuple):
+                start_ch, end_ch = chapter_range
+                start_page = chapter_pages.get(start_ch)
+                end_page = chapter_pages.get(end_ch)
+                
+                if start_page is None:
+                    raise ValueError(f"Chapter {start_ch} not found in PDF")
+                if end_page is None:
+                    # Use start of next chapter - 1, or end of document
+                    next_page = chapter_pages.get(end_ch + 1)
+                    if next_page:
+                        end_page = next_page - 1
+                    else:
+                        # Get total page count
+                        import fitz
+                        doc = fitz.open(self.config.pdf_path)
+                        end_page = len(doc)
+                        doc.close()
+                
+                return (start_page, end_page)
+            else:
+                # List of chapters
+                pages = []
+                for ch in chapter_range:
+                    page = chapter_pages.get(ch)
+                    if page is None:
+                        raise ValueError(f"Chapter {ch} not found in PDF")
+                    pages.append(page)
+                return pages
+                
+        except ImportError:
+            raise RuntimeError("PyMuPDF (fitz) is required for chapter resolution")
+        except Exception as e:
+            if "no bookmarks" in str(e).lower() or "not found" in str(e).lower():
+                raise
+            raise ValueError(f"Failed to resolve chapter range: {e}")
+    
+    def _process_extracted_blocks(self, blocks: list[ContentBlock]) -> tuple[str, dict]:
+        """Process extracted blocks and create metadata."""
         # Combine all text content
         text_parts = []
         for block in blocks:
@@ -701,7 +1055,56 @@ class InstructionalPipeline:
         }
         
         self._logger.info(f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks")
+        
+        # Save to cache if enabled
+        if self.config.cache_extraction and self._checkpoint_state.get("pdf_hash"):
+            # Convert blocks to pages format for caching
+            pages = self._blocks_to_pages(blocks)
+            if pages:
+                self._checkpoint_manager.save_extraction_cache(
+                    self._checkpoint_state["pdf_hash"],
+                    pages,
+                    self._extraction_metadata
+                )
+                self._cache_stats["extraction_cache_saved"] = True
+                self._logger.info(f"Saved extraction cache: {len(pages)} pages")
+        
         return self._raw_text, self._extraction_metadata
+    
+    def _process_extracted_pages(
+        self, 
+        pages: list[tuple[int, str]], 
+        from_cache: bool = False
+    ) -> tuple[str, dict]:
+        """Process cached pages and reconstruct blocks."""
+        # For cached pages, we need to re-create blocks
+        # This is simplified - in production, you'd store block structure in cache
+        self._extractor = SectionExtractor()
+        
+        # Re-extract to get proper block structure
+        blocks = self._extractor.extract_blocks(
+            self.config.pdf_path,
+            self.config.doc_id,
+            page_range=[p[0] for p in pages] if pages else None,
+        )
+        
+        return self._process_extracted_blocks(blocks)
+    
+    def _blocks_to_pages(self, blocks: list[ContentBlock]) -> list[tuple[int, str]]:
+        """Convert blocks back to page format for caching."""
+        pages_dict: dict[int, list[str]] = {}
+        for block in blocks:
+            page = getattr(block, 'page_number', 0) or 0
+            if page not in pages_dict:
+                pages_dict[page] = []
+            pages_dict[page].append(block.text_content)
+        
+        pages = []
+        for page_num in sorted(pages_dict.keys()):
+            text = "\n\n".join(pages_dict[page_num])
+            pages.append((page_num, text))
+        
+        return pages
     
     def _segment_content(self, raw_text: str | None = None) -> list[ContentBlock]:
         """
@@ -1018,12 +1421,16 @@ class InstructionalPipeline:
         curated_only_concepts = concepts_with_curated - concepts_with_blocks
         
         # Determine if off-book curated content should be included
-        # In student_ready mode: skip off-book concepts entirely
-        # In prototype mode: include if allow_offbook_curated is True
+        # Off-book concepts are opt-in via --allow-offbook-curated flag
+        # Always skip in student_ready mode regardless of flag
         skip_offbook_curated = (
             self.config.export_mode == "student_ready" 
             or not self.config.allow_offbook_curated
         )
+        
+        # Track off-book concepts for manifest reporting
+        offbook_included: list[str] = []
+        offbook_excluded: list[str] = []
         
         if skip_offbook_curated and curated_only_concepts:
             self._logger.info(
@@ -1040,6 +1447,7 @@ class InstructionalPipeline:
             
             # Skip off-book curated content in student_ready mode or when disabled
             if skip_offbook_curated:
+                offbook_excluded.append(concept_id)
                 continue
             
             # Get prerequisites from ontology
@@ -1072,13 +1480,21 @@ class InstructionalPipeline:
                     l3_unit.content["_metadata"]["exclude_from_coverage"] = True
                     
                     self._instructional_units.append(l3_unit)
+                    offbook_included.append(concept_id)
                     self._logger.info(
                         f"Generated L3 for {concept_id} from off-book curated content "
                         f"(marked for review)"
                     )
             except Exception as e:
                 self._logger.warning(f"Failed to generate curated L3 for {concept_id}: {e}")
+                offbook_excluded.append(concept_id)
                 continue
+        
+        # Store off-book tracking for manifest
+        self._offbook_tracking = {
+            "included": offbook_included,
+            "excluded": offbook_excluded,
+        }
         
         self._logger.info(f"Generated {len(self._instructional_units)} instructional units")
         
@@ -1680,6 +2096,10 @@ class InstructionalPipeline:
             "exported_units": exported_count,
             "fallback_units": len(getattr(self, '_fallback_unit_ids', [])),
             "filter_level": self.config.filter_level,
+            "generated_misconceptions": len(self._misconception_units),
+            "exported_misconceptions": len(misconception_units),
+            "generated_reinforcement": len(self._reinforcement_items),
+            "exported_reinforcement": len(reinforcement_items),
         }
         
         # Store quality report paths for exporter
@@ -1688,12 +2108,26 @@ class InstructionalPipeline:
             "exported": "quality_report_exported.json",
         }
         
+        # Add augmentation tracking to manifest (off-book concepts)
+        offbook_tracking = getattr(self, '_offbook_tracking', {})
+        filtered_library.export_manifest["augmentation"] = {
+            "offbook_curated_allowed": self.config.allow_offbook_curated,
+            "offbook_concepts_included": offbook_tracking.get("included", []),
+            "offbook_concepts_excluded": offbook_tracking.get("excluded", []),
+            "offbook_count_included": len(offbook_tracking.get("included", [])),
+            "offbook_count_excluded": len(offbook_tracking.get("excluded", [])),
+        }
+        
         # Store filtered library and stats for _gather_statistics()
         self._filtered_library = filtered_library
         self._generation_stats = {
             "generated_units": generated_count,
             "filtered_out": filtered_out_count,
             "exported_units": exported_count,
+            "generated_misconceptions": len(self._misconception_units),
+            "exported_misconceptions": len(misconception_units),
+            "generated_reinforcement": len(self._reinforcement_items),
+            "exported_reinforcement": len(reinforcement_items),
         }
         
         self._logger.info(
