@@ -167,10 +167,11 @@ class ExampleMetadata(BaseModel):
 class L2Content(BaseModel):
     """Content for L2 hint+example stage - brief with example."""
     hint_text: str = Field(..., max_length=300, description="Brief hint")
-    example_sql: str = Field(..., max_length=500, description="Minimal worked example")
+    example_sql: str = Field(..., max_length=500, description="Minimal worked example (practice schema)")
     example_explanation: str = Field(..., max_length=300, description="Quick explanation")
     common_pitfall: str = Field(default="", max_length=200, description="One thing to watch")
     example_metadata: ExampleMetadata | None = Field(default=None, description="Metadata about example selection")
+    source_sql: str = Field(default="", max_length=500, description="Original SQL from source (preserved)")
 
 
 class L3Content(BaseModel):
@@ -1398,12 +1399,39 @@ class UnitGenerator:
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
         
+        # Build content dict and add metadata about example source
+        content_dict = content.model_dump()
+        
+        # Track if using default example for student-ready filtering
+        if content.example_metadata and content.example_metadata.source_type == "default":
+            content_dict["_used_default_example"] = True
+            content_dict["_metadata"] = {
+                "content_source": "default",
+                "example_source": "default",
+                "review_needed": True,
+                "content_quality": "needs_improvement",
+            }
+        elif content.example_metadata and content.example_metadata.source_type == "extracted":
+            content_dict["_metadata"] = {
+                "content_source": "extracted",
+                "example_source": "extracted",
+                "review_needed": False,
+                "content_quality": "good",
+            }
+        elif content.example_metadata and content.example_metadata.source_type == "curated":
+            content_dict["_metadata"] = {
+                "content_source": "curated",
+                "example_source": "curated",
+                "review_needed": False,
+                "content_quality": "curated",
+            }
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L2_hint_plus_example",
             concept_id=concept_id,
             unit_type="hint",
             target_stage="L2_hint_plus_example",
-            content=content.model_dump(),
+            content=content_dict,
             error_subtypes=error_subtypes or [],
             prerequisites=prerequisites or [],
             difficulty="beginner",
@@ -2078,14 +2106,80 @@ class UnitGenerator:
         
         # Transactions: detect BEGIN/COMMIT/ROLLBACK
         if concept_id == "transactions":
-            if re.search(r'\b(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION)\b', sql_upper):
+            if re.search(r'\b(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|SAVEPOINT)\b', sql_upper):
                 score += 5.0
+            if 'TRANSACTION' in sql_upper:
+                score += 3.0
         
         # Stored procedures: detect CREATE PROCEDURE/FUNCTION
         if concept_id == "stored-procedures":
             if re.search(r'CREATE\s+(PROCEDURE|FUNCTION|PROC)', sql_upper):
                 score += 5.0
             if 'CALL' in sql_upper:
+                score += 3.0
+            if 'DELIMITER' in sql_upper:
+                score += 3.0
+            if 'BEGIN' in sql_upper and 'END' in sql_upper:
+                score += 2.0
+        
+        # Data types: enhanced detection for CREATE TABLE with type declarations
+        if concept_id == "data-types":
+            if re.search(r'CREATE\s+TABLE', sql_upper):
+                score += 3.0
+            # Count data type declarations
+            type_keywords = ['VARCHAR', 'INT', 'DECIMAL', 'TIMESTAMP', 'BOOLEAN', 
+                           'TEXT', 'FLOAT', 'DOUBLE', 'BIGINT', 'SMALLINT',
+                           'CHAR', 'DATE', 'DATETIME', 'TIME', 'BLOB']
+            for t in type_keywords:
+                if t in sql_upper:
+                    score += 1.0
+        
+        # String functions: detect function calls
+        if concept_id == "string-functions":
+            func_calls = ['CONCAT(', 'SUBSTRING(', 'TRIM(', 'LENGTH(', 'REPLACE(',
+                         'UPPER(', 'LOWER(', 'LEFT(', 'RIGHT(', 'INSTR(', 'CHAR_LENGTH(',
+                         'LPAD(', 'RPAD(', 'LTRIM(', 'RTRIM(', 'REVERSE(', 'FORMAT(']
+            for func in func_calls:
+                if func.upper() in sql_upper:
+                    score += 5.0
+                    break  # Only give bonus once
+            if 'LIKE' in sql_upper and ('%' in sql or '_' in sql):
+                score += 3.0
+        
+        # Date functions: detect function calls
+        if concept_id == "date-functions":
+            func_calls = ['CURRENT_DATE', 'CURRENT_TIMESTAMP', 'DATE_ADD', 'DATE_SUB',
+                         'EXTRACT(', 'DATEDIFF', 'DATE_FORMAT', 'NOW(', 'CURDATE(',
+                         'YEAR(', 'MONTH(', 'DAY(', 'DATE_DIFF', 'TIMESTAMPDIFF',
+                         'DATE(', 'TIME(', 'HOUR(', 'MINUTE(', 'SECOND(']
+            for func in func_calls:
+                if func.upper() in sql_upper:
+                    score += 5.0
+                    break  # Only give bonus once
+        
+        # Normalization: detect normalization-related content
+        if concept_id == "normalization":
+            norm_terms = ['NORMAL FORM', '1NF', '2NF', '3NF', 'BCNF', 
+                         'FUNCTIONAL DEPENDENCY', 'PARTIAL DEPENDENCY', 
+                         'TRANSITIVE DEPENDENCY', 'ATOMIC', 'REPEATING GROUP']
+            for term in norm_terms:
+                if term in sql_upper:
+                    score += 5.0
+        
+        # Outer join: enhanced detection
+        if concept_id == "outer-join":
+            if re.search(r'\b(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN\b', sql_upper):
+                score += 5.0
+            if 'LEFT JOIN' in sql_upper and 'ON' in sql_upper:
+                score += 3.0
+        
+        # Self-join: enhanced detection for same-table patterns
+        if concept_id == "self-join":
+            # Look for same table with different aliases
+            if re.search(r'FROM\s+\w+\s+\w+.*JOIN\s+\w+', sql_upper):
+                score += 5.0
+            # Look for table alias pattern
+            if re.search(r'\w+\.\w+\s*=\s*\w+\.\w+', sql):
                 score += 3.0
         
         return score
@@ -3564,12 +3658,19 @@ class UnitGenerator:
                 selection_method="curated_pack",
             )
             
+            # Transform SQL to practice schema but preserve source
+            source_example_sql = example_sql
+            practice_example_sql = self.transformer.transform_to_practice_schema(
+                example_sql, ["Sailors", "Boats", "Reserves"]
+            ) if example_sql else ""
+            
             return L2Content(
                 hint_text=curated_l2.get("hint_text", l1_hint)[:300],
-                example_sql=example_sql[:500],
+                example_sql=practice_example_sql[:500],
                 example_explanation=curated_l2.get("example_explanation", "")[:300],
                 common_pitfall=curated_l2.get("common_pitfall", "")[:200],
                 example_metadata=example_metadata,
+                source_sql=source_example_sql[:500],
             )
         
         # Extract SQL examples from blocks
@@ -3588,7 +3689,9 @@ class UnitGenerator:
                 best_page = ex["page"]
         
         # Determine final example and explanation with metadata tracking
-        EXAMPLE_MATCH_THRESHOLD = 1.0
+        # Raised threshold from 0.3 to 2.5 to ensure only high-quality matches
+        # are accepted as extracted examples, reducing default fallback
+        EXAMPLE_MATCH_THRESHOLD = 2.5
         example_metadata: ExampleMetadata | None = None
         
         if best_example and best_score >= EXAMPLE_MATCH_THRESHOLD:
@@ -3612,15 +3715,41 @@ class UnitGenerator:
                     selection_method="curated_fallback",
                 )
             else:
-                # Fall back to concept-appropriate default example as last resort
-                example_sql = self._get_default_example_sql(concept_id)
-                example_explanation = "Basic usage example."
-                example_metadata = ExampleMetadata(
-                    match_score=best_score if best_score > 0 else 0.0,
-                    source_type="default",
-                    selection_method="fallback_threshold",
-                    is_default_fallback=True,
-                )
+                # Before falling back to default, try to use ANY extracted SQL
+                # even if score is low - it's better than generic defaults
+                if sql_examples:
+                    # Use the first extracted SQL even with low score
+                    best_example = sql_examples[0]["sql"]
+                    best_page = sql_examples[0].get("page", 0)
+                    example_sql = best_example
+                    example_explanation = f"Example extracted from source text (page {best_page})."
+                    example_metadata = ExampleMetadata(
+                        match_score=best_score if best_score > 0 else 0.1,
+                        source_type="extracted",
+                        selection_method="low_score_fallback",
+                    )
+                else:
+                    # Truly no extracted SQL - use curated if available
+                    curated_l3 = self._load_curated_l3_content(concept_id)
+                    if curated_l3 and curated_l3.get("examples"):
+                        curated_example = curated_l3["examples"][0]
+                        example_sql = curated_example.get("sql", self._get_default_example_sql(concept_id))
+                        example_explanation = curated_example.get("explanation", "Curated example from instructional content.")
+                        example_metadata = ExampleMetadata(
+                            match_score=0.8,
+                            source_type="curated",
+                            selection_method="curated_l3_fallback",
+                        )
+                    else:
+                        # Last resort: concept-appropriate default example
+                        example_sql = self._get_default_example_sql(concept_id)
+                        example_explanation = "Basic usage example."
+                        example_metadata = ExampleMetadata(
+                            match_score=best_score if best_score > 0 else 0.0,
+                            source_type="default",
+                            selection_method="fallback_threshold",
+                            is_default_fallback=True,
+                        )
         
         # Transform SQL to practice schema
         example_sql = self.transformer.transform_to_practice_schema(
@@ -3711,10 +3840,13 @@ class UnitGenerator:
         quality_score = self._assess_l3_quality(extracted_content)
         curated_used = False
         
-        # If weak or missing, try curated fallback
-        if quality_score < 0.5:
-            curated_full = self._load_curated_l3_content(concept_id)
-            if curated_full:
+        # Try curated fallback if:
+        # 1. Quality is low (< 0.7), OR
+        # 2. Curated content is available (prefer it over extracted)
+        curated_full = self._load_curated_l3_content(concept_id)
+        use_curated = (quality_score < 0.7) or (curated_full is not None and quality_score < 0.9)
+        
+        if use_curated and curated_full:
                 # Access the nested content structure (curated_full has "content" key)
                 curated = curated_full.get("content", curated_full)
                 print(f"[Generate L3] {concept_id}: merging with curated content")
