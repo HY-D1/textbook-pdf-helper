@@ -81,6 +81,7 @@ class FilterResult:
         student_ready_passed: Whether all units passed student-ready checks
         blocked_by_student_ready: List of unit IDs blocked by student-ready rules
         quality_warnings: List of quality warnings even for passed units
+        library_validation: Library-level validation results
     """
     can_export: bool
     blocked_by: list[str] = field(default_factory=list)
@@ -90,6 +91,7 @@ class FilterResult:
     student_ready_passed: bool = field(default=True)
     blocked_by_student_ready: list[str] = field(default_factory=list)
     quality_warnings: list[str] = field(default_factory=list)
+    library_validation: dict[str, Any] = field(default_factory=dict)
     
     @property
     def total_units(self) -> int:
@@ -762,6 +764,109 @@ def _check_synthetic_only_examples(unit: InstructionalUnit) -> tuple[bool, str]:
 # =============================================================================
 # STUDENT-READY CHECK FUNCTIONS (Strict Mode)
 # =============================================================================
+
+
+def _check_fallback_unit(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit is a fallback unit (is_fallback=True in metadata).
+    
+    HARD BLOCK for student-ready mode - fallback units indicate extraction failures.
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check fallback status"
+    
+    # Check for fallback flag in content or metadata
+    metadata = content.get("_metadata", {})
+    is_fallback = content.get("is_fallback", False) or metadata.get("is_fallback", False)
+    
+    if is_fallback:
+        return False, "Unit is a fallback unit (extraction failed)"
+    
+    return True, "Unit is not a fallback"
+
+
+def _check_offbook_curated_concept(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit has source_mode == 'curated_only_offbook'.
+    
+    HARD BLOCK for student-ready mode - off-book concepts without source grounding
+    should not be exported to students.
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check source mode"
+    
+    # Check for source_mode in content or metadata
+    metadata = content.get("_metadata", {})
+    source_mode = content.get("source_mode", "") or metadata.get("source_mode", "")
+    
+    if source_mode == "curated_only_offbook":
+        return False, "Off-book curated-only concept (no source grounding)"
+    
+    return True, "Source mode is acceptable"
+
+
+def _check_placeholder_practice_links_strict(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check for placeholder practice links with needs_resolution=true.
+    
+    HARD BLOCK for student-ready mode - blocks if ANY practice link has
+    needs_resolution=True, indicating unresolved placeholder links.
+    """
+    # Only check L3 explanation units
+    if unit.target_stage != "L3_explanation":
+        return True, f"Practice link check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check practice links"
+    
+    practice_links = content.get("practice_links", [])
+    if not practice_links:
+        return True, "No practice links present"
+    
+    # Track placeholder status
+    needs_resolution_count = 0
+    
+    for link in practice_links:
+        if isinstance(link, dict):
+            needs_resolution = link.get("needs_resolution", False)
+        else:
+            needs_resolution = getattr(link, "needs_resolution", False)
+        
+        if needs_resolution:
+            needs_resolution_count += 1
+    
+    if needs_resolution_count > 0:
+        return False, f"Practice links with needs_resolution=true ({needs_resolution_count} links)"
+    
+    return True, "All practice links are resolved"
+
+
+def _check_default_example_no_source_evidence(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if L2 unit uses default example with no source evidence.
+    
+    HARD BLOCK for student-ready mode - blocks if L2 unit uses a default/generic
+    example AND has no proper source evidence spans.
+    """
+    # Only check L2 units
+    if unit.target_stage != "L2_hint_plus_example":
+        return True, f"Default example check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check example"
+    
+    # Check if using default example
+    metadata = content.get("_metadata", {})
+    used_default = content.get("_used_default_example", False) or metadata.get("_used_default_example", False)
+    
+    if not used_default:
+        return True, "L2 unit does not use default example"
+    
+    # Check for source evidence
+    if not unit.evidence_spans or len(unit.evidence_spans) < 2:
+        return False, "L2 uses default example with insufficient source evidence"
+    
+    return True, "L2 has default example but has source evidence"
 
 
 def _check_placeholder_practice_links(unit: InstructionalUnit) -> tuple[bool, str]:
@@ -1761,6 +1866,7 @@ def _check_placeholder_practice_links_warn(unit: InstructionalUnit) -> tuple[boo
             problem_ids = link.get("problem_ids", [])
             metadata = link.get("metadata", {})
         else:
+            # Handle PracticeLink objects
             needs_resolution = getattr(link, "needs_resolution", False)
             problem_ids = getattr(link, "problem_ids", [])
             metadata = getattr(link, "metadata", {}) or {}
@@ -1806,6 +1912,52 @@ This is the default mode for backward compatibility.
 """
 
 STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
+    # === NEW STRICT RULES FOR STUDENT_READY MODE ===
+    
+    # 1. Fallback L2 units - any unit with is_fallback=True in metadata
+    ExportRule(
+        rule_id="fallback_unit",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Unit is a fallback unit (is_fallback=True in metadata)",
+        check_fn=_check_fallback_unit,
+        error_message="Student-ready export cannot contain fallback units (extraction failed)"
+    ),
+    
+    # 2. Off-book curated-only concepts - source_mode == "curated_only_offbook"
+    ExportRule(
+        rule_id="offbook_curated_concept",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Off-book curated-only concept (source_mode == curated_only_offbook)",
+        check_fn=_check_offbook_curated_concept,
+        error_message="Student-ready export cannot contain off-book curated-only concepts"
+    ),
+    
+    # 3. Placeholder practice links with needs_resolution=true
+    ExportRule(
+        rule_id="placeholder_practice_links_strict",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Practice links with needs_resolution=true",
+        check_fn=_check_placeholder_practice_links_strict,
+        error_message="Student-ready export cannot contain unresolved practice links (needs_resolution=true)"
+    ),
+    
+    # 4. Heading-like L3 definitions (already covered by heading_like_definition, but explicit here)
+    # Note: heading_like_definition in HARD_BLOCK_RULES already handles this
+    
+    # 5. Default-only examples with no source evidence
+    ExportRule(
+        rule_id="default_example_no_source_evidence",
+        rule_type=RuleType.HARD_BLOCK,
+        description="L2 uses default example with no source evidence",
+        check_fn=_check_default_example_no_source_evidence,
+        error_message="L2 uses default example with insufficient source evidence"
+    ),
+    
+    # 6. Broken SQL examples (already covered by broken_sql_example in HARD_BLOCK_RULES)
+    # Note: broken_sql_example in HARD_BLOCK_RULES already handles this
+    
+    # === EXISTING STUDENT-READY RULES ===
+    
     # Hard block: Practice links contain placeholders (unresolved-*, problem-*)
     # This rule blocks if ANY placeholder practice links are found
     ExportRule(
@@ -1906,6 +2058,10 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
 """Student-ready filters - strict mode for production learner content.
 
 Blocks:
+- Fallback units (is_fallback=True)
+- Off-book curated-only concepts (source_mode == curated_only_offbook)
+- Placeholder practice links with needs_resolution=true
+- Default-only examples without source evidence
 - Placeholder practice links (unresolved-*, problem-*)
 - L2 units using default examples
 - Purely synthetic L3 without source grounding
@@ -2023,6 +2179,7 @@ class ExportFilterEngine:
         filtered_units: list[str] = []
         passed_units: list[str] = []
         student_ready_blocked: list[str] = []
+        library_validation: dict[str, Any] = {}
         
         for unit in library.instructional_units:
             unit_result = self._filter_single_unit(unit)
@@ -2053,6 +2210,13 @@ class ExportFilterEngine:
                         if unit.unit_id not in filtered_units:
                             filtered_units.append(unit.unit_id)
         
+        # Run library-level validation for student_ready mode
+        if self.export_mode == "student_ready":
+            library_validation = self._validate_library_level(library)
+            # If library-level validation fails, mark student_ready as failed
+            if not library_validation.get("valid", True):
+                student_ready_blocked.extend(passed_units)
+        
         # Deduplicate
         blocked_by = list(set(blocked_by))
         warnings = list(set(warnings))
@@ -2069,7 +2233,112 @@ class ExportFilterEngine:
             student_ready_passed=student_ready_passed,
             blocked_by_student_ready=student_ready_blocked,
             quality_warnings=quality_warnings,
+            library_validation=library_validation,
         )
+    
+    def _validate_library_level(self, library: UnitLibraryExport) -> dict[str, Any]:
+        """
+        Run library-level validation checks for student_ready mode.
+        
+        Checks:
+        - L2 coverage: at least 80% of concepts have L2 units
+        - L3 coverage: at least 80% of concepts have L3 units
+        - Fallback ratio: less than 10% of units are fallback
+        - Off-book concepts: no off-book curated-only concepts
+        
+        Returns:
+            Dictionary with validation results
+        """
+        units = library.instructional_units
+        if not units:
+            return {"valid": False, "reason": "No units in library"}
+        
+        # Collect statistics
+        all_concepts: set[str] = set()
+        concepts_with_l2: set[str] = set()
+        concepts_with_l3: set[str] = set()
+        fallback_count = 0
+        offbook_concepts: list[str] = []
+        
+        for unit in units:
+            all_concepts.add(unit.concept_id)
+            
+            # Check L2/L3 coverage
+            if unit.target_stage == "L2_hint_plus_example":
+                concepts_with_l2.add(unit.concept_id)
+            elif unit.target_stage == "L3_explanation":
+                concepts_with_l3.add(unit.concept_id)
+            
+            # Check for fallback units
+            content = unit.content or {}
+            if isinstance(content, dict):
+                metadata = content.get("_metadata", {})
+                is_fallback = content.get("is_fallback", False) or metadata.get("is_fallback", False)
+                if is_fallback:
+                    fallback_count += 1
+                
+                # Check for off-book curated-only
+                source_mode = content.get("source_mode", "") or metadata.get("source_mode", "")
+                if source_mode == "curated_only_offbook":
+                    if unit.concept_id not in offbook_concepts:
+                        offbook_concepts.append(unit.concept_id)
+        
+        total_concepts = len(all_concepts)
+        if total_concepts == 0:
+            return {"valid": False, "reason": "No concepts found in library"}
+        
+        # Calculate metrics
+        l2_coverage = len(concepts_with_l2) / total_concepts if total_concepts > 0 else 0.0
+        l3_coverage = len(concepts_with_l3) / total_concepts if total_concepts > 0 else 0.0
+        fallback_ratio = fallback_count / len(units) if units else 0.0
+        
+        # Validate against thresholds
+        validation_errors: list[str] = []
+        
+        if l2_coverage < 0.8:
+            validation_errors.append(
+                f"L2 coverage too low: {len(concepts_with_l2)}/{total_concepts} concepts "
+                f"({l2_coverage:.1%}, min 80%)"
+            )
+        
+        if l3_coverage < 0.8:
+            validation_errors.append(
+                f"L3 coverage too low: {len(concepts_with_l3)}/{total_concepts} concepts "
+                f"({l3_coverage:.1%}, min 80%)"
+            )
+        
+        if fallback_ratio > 0.1:
+            validation_errors.append(
+                f"Fallback ratio too high: {fallback_count}/{len(units)} units "
+                f"({fallback_ratio:.1%}, max 10%)"
+            )
+        
+        if offbook_concepts:
+            validation_errors.append(
+                f"Off-book curated-only concepts present: {', '.join(offbook_concepts[:5])}"
+                + (f" and {len(offbook_concepts) - 5} more" if len(offbook_concepts) > 5 else "")
+            )
+        
+        return {
+            "valid": len(validation_errors) == 0,
+            "l2_coverage": {
+                "count": len(concepts_with_l2),
+                "total": total_concepts,
+                "ratio": l2_coverage,
+            },
+            "l3_coverage": {
+                "count": len(concepts_with_l3),
+                "total": total_concepts,
+                "ratio": l3_coverage,
+            },
+            "fallback_ratio": {
+                "count": fallback_count,
+                "total": len(units),
+                "ratio": fallback_ratio,
+            },
+            "offbook_concepts": offbook_concepts,
+            "errors": validation_errors,
+        }
     
     def _filter_single_unit(self, unit: InstructionalUnit) -> UnitFilterResult:
         """
@@ -2295,6 +2564,27 @@ class ExportFilterEngine:
             print(f"   Blocked for Student-Ready: {len(result.blocked_by_student_ready)} units")
             if result.blocked_by_student_ready:
                 print(f"   Student-Ready Pass Rate: {result.student_ready_pass_rate:.1%}")
+            
+            # Show library-level validation results
+            if result.library_validation:
+                print(f"\n📚 Library-Level Validation:")
+                l2_cov = result.library_validation.get("l2_coverage", {})
+                l3_cov = result.library_validation.get("l3_coverage", {})
+                fallback = result.library_validation.get("fallback_ratio", {})
+                offbook = result.library_validation.get("offbook_concepts", [])
+                
+                print(f"   L2 Coverage: {l2_cov.get('count', 0)}/{l2_cov.get('total', 0)} concepts ({l2_cov.get('ratio', 0):.1%})")
+                print(f"   L3 Coverage: {l3_cov.get('count', 0)}/{l3_cov.get('total', 0)} concepts ({l3_cov.get('ratio', 0):.1%})")
+                print(f"   Fallback Ratio: {fallback.get('count', 0)}/{fallback.get('total', 0)} units ({fallback.get('ratio', 0):.1%})")
+                if offbook:
+                    print(f"   Off-book Concepts: {len(offbook)} found")
+                
+                if not result.library_validation.get("valid", True):
+                    print(f"\n   ❌ Library Validation FAILED:")
+                    for error in result.library_validation.get("errors", []):
+                        print(f"      • {error}")
+                else:
+                    print(f"\n   ✅ Library Validation PASSED")
         
         if result.can_export:
             print(f"\n   ✅ Can export: YES")
@@ -2335,7 +2625,7 @@ class ExportFilterEngine:
                     # Highlight student-ready specific rules
                     is_student_rule = any(
                         sr in reason.lower() 
-                        for sr in ["placeholder", "default", "synthetic", "curated"]
+                        for sr in ["placeholder", "default", "synthetic", "curated", "fallback", "offbook"]
                     )
                     prefix = "   🎯" if is_student_rule else "      •"
                     print(f"{prefix} {reason}")
@@ -2478,4 +2768,8 @@ __all__ = [
     "_check_wrong_example_for_concept",
     "_check_missing_l3_for_core_concepts",
     "_check_low_quality_score",
+    "_check_fallback_unit",
+    "_check_offbook_curated_concept",
+    "_check_placeholder_practice_links_strict",
+    "_check_default_example_no_source_evidence",
 ]

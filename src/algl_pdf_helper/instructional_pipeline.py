@@ -140,7 +140,7 @@ class PipelineConfig:
         validate_sql: Whether to validate SQL examples
         min_quality_score: Minimum quality score for export (0.0-1.0)
         use_ollama_repair: Whether to use Ollama for repairing weak L3 content
-        ollama_model: Ollama model for repair (qwen2.5:3b recommended for M1 Pro)
+        ollama_model: Ollama model for repair (qwen3.5:9b-q8_0 recommended for RTX 4080)
         ollama_repair_threshold: Confidence threshold below which to trigger repair
         ollama_host: Ollama API host URL
     """
@@ -164,11 +164,15 @@ class PipelineConfig:
     min_quality_score: float = 0.7
     allow_synthetic_examples: bool = False  # Default to False for production
     
+    # Off-book curated content configuration
+    allow_offbook_curated: bool = True  # Default True for prototype, set False for student_ready
+    
     # Ollama repair configuration
     use_ollama_repair: bool = True
-    ollama_model: str = "qwen2.5:3b"  # Good for M1 Pro
+    ollama_model: str = "qwen2.5:3b"  # Default for MacBook (small, fast)
     ollama_repair_threshold: float = 0.6  # Confidence below this triggers repair
     ollama_host: str = "http://localhost:11434"
+    ollama_auto_fallback: bool = True  # Auto-fallback to available models
     
     # Provider-specific default models
     PROVIDER_DEFAULT_MODELS: ClassVar[dict[str, str]] = {
@@ -272,6 +276,7 @@ class PipelineResult:
         filtered_units: List of unit IDs that were filtered out
         blocked_units_with_reasons: List of (unit_id, reasons) tuples for blocked units
         repaired_units: List of unit IDs that were repaired by Ollama
+        repair_status: Detailed repair status information
         chapters: Extracted chapter structure (new)
         exercises: Extracted exercises (new)
         examples: Extracted examples (new)
@@ -290,6 +295,7 @@ class PipelineResult:
     filtered_units: list[str] = field(default_factory=list)
     blocked_units_with_reasons: list[tuple[str, list[str]]] = field(default_factory=list)
     repaired_units: list[str] = field(default_factory=list)
+    repair_status: dict[str, Any] = field(default_factory=dict)
     cache_stats: dict[str, Any] = field(default_factory=dict)
     # Pedagogy data (new)
     chapters: list[Any] = field(default_factory=list)
@@ -629,6 +635,7 @@ class InstructionalPipeline:
             result.fallback_units = getattr(self, '_fallback_unit_ids', [])
             result.blocked_units_with_reasons = getattr(self, '_rejected_units', [])
             result.repaired_units = getattr(self, '_repaired_unit_ids', [])
+            result.repair_status = getattr(self, '_repair_status', {})
             
             self._logger.info(f"Pipeline completed in {result.elapsed_time_seconds:.2f}s")
         
@@ -907,19 +914,41 @@ class InstructionalPipeline:
         if self._misconception_bank is None:
             self._misconception_bank = MisconceptionBank.load_default()
         
-        # Initialize Ollama repair if enabled
+        # Initialize Ollama repair if enabled - ONE preflight check
         ollama_repair = None
+        self._repair_status = {
+            "enabled": self.config.use_ollama_repair,
+            "available": False,
+            "disabled_reason": None,
+            "model": self.config.ollama_model,
+            "repaired_units": [],
+            "failed_repairs": [],
+            "repair_attempts": 0,
+        }
+        
         if self.config.use_ollama_repair:
-            # Create repair instance
-            ollama_repair = OllamaRepair(
+            from .ollama_repair import create_ollama_repair_if_enabled
+            
+            ollama_repair, repair_info = create_ollama_repair_if_enabled(
+                enabled=True,
                 model=self.config.ollama_model,
                 host=self.config.ollama_host,
+                auto_fallback=self.config.ollama_auto_fallback,
             )
-            if ollama_repair.available:
-                self._logger.info(f"Ollama repair enabled with model: {self.config.ollama_model}")
-            else:
-                # Log already handled by class-level check, just note repair is disabled
-                ollama_repair = None
+            
+            # Update repair status with results
+            self._repair_status["available"] = repair_info["available"]
+            self._repair_status["disabled_reason"] = repair_info["disabled_reason"]
+            self._repair_status["model"] = repair_info["model"]
+            
+            if ollama_repair and ollama_repair.available:
+                self._logger.info(f"Ollama repair enabled with model: {repair_info['model']}")
+            elif repair_info["disabled_reason"]:
+                # Only log once that repair is unavailable - subsequent units skip silently
+                self._logger.info(
+                    f"Ollama repair unavailable ({repair_info['disabled_reason']}), "
+                    "skipping repair pass"
+                )
         
         self._instructional_units = []
         self._fallback_unit_ids = []
@@ -973,6 +1002,7 @@ class InstructionalPipeline:
                         # Track repaired units
                         if unit.content.get("_repaired_by_ollama"):
                             self._repaired_unit_ids.append(unit.unit_id)
+                            self._repair_status["repaired_units"].append(unit.unit_id)
                 
             except Exception as e:
                 self._logger.warning(f"Failed to generate units for {concept_id}: {e}")
@@ -987,9 +1017,29 @@ class InstructionalPipeline:
         # Find concepts that have curated content but weren't generated (no blocks)
         curated_only_concepts = concepts_with_curated - concepts_with_blocks
         
+        # Determine if off-book curated content should be included
+        # In student_ready mode: skip off-book concepts entirely
+        # In prototype mode: include if allow_offbook_curated is True
+        skip_offbook_curated = (
+            self.config.export_mode == "student_ready" 
+            or not self.config.allow_offbook_curated
+        )
+        
+        if skip_offbook_curated and curated_only_concepts:
+            self._logger.info(
+                f"Skipping {len(curated_only_concepts)} off-book curated concepts: "
+                f"{sorted(curated_only_concepts)} "
+                f"(export_mode={self.config.export_mode}, "
+                f"allow_offbook_curated={self.config.allow_offbook_curated})"
+            )
+        
         for concept_id in curated_only_concepts:
             # Only generate L3_explanation from curated content
             if "L3_explanation" not in self.config.generate_variants:
+                continue
+            
+            # Skip off-book curated content in student_ready mode or when disabled
+            if skip_offbook_curated:
                 continue
             
             # Get prerequisites from ontology
@@ -1006,19 +1056,40 @@ class InstructionalPipeline:
                     config=gen_config,
                     prerequisites=prereqs,
                     error_subtypes=error_subtypes,
+                    source_mode="curated_only_offbook",  # Mark as off-book
                 )
                 
                 if l3_unit:
+                    # Mark as needing review since it's off-book
+                    if l3_unit.content is None:
+                        l3_unit.content = {}
+                    if "_metadata" not in l3_unit.content:
+                        l3_unit.content["_metadata"] = {}
+                    l3_unit.content["_metadata"]["review_needed"] = True
+                    l3_unit.content["_metadata"]["offbook_concept"] = True
+                    l3_unit.content["_metadata"]["source_mode"] = "curated_only_offbook"
+                    # Exclude from coverage metrics
+                    l3_unit.content["_metadata"]["exclude_from_coverage"] = True
+                    
                     self._instructional_units.append(l3_unit)
-                    self._logger.info(f"Generated L3 for {concept_id} from curated content")
+                    self._logger.info(
+                        f"Generated L3 for {concept_id} from off-book curated content "
+                        f"(marked for review)"
+                    )
             except Exception as e:
                 self._logger.warning(f"Failed to generate curated L3 for {concept_id}: {e}")
                 continue
         
         self._logger.info(f"Generated {len(self._instructional_units)} instructional units")
         
-        if self._repaired_unit_ids:
-            self._logger.info(f"Repaired {len(self._repaired_unit_ids)} units with Ollama")
+        # Log repair summary (only if repair was attempted)
+        if self._repair_status.get("available"):
+            repaired = len(self._repair_status.get("repaired_units", []))
+            failed = len(self._repair_status.get("failed_repairs", []))
+            if repaired > 0 or failed > 0:
+                self._logger.info(
+                    f"Ollama repair: {repaired} repaired, {failed} failed"
+                )
         
         # Fail strict mode if fallback units exist
         if self.config.filter_level == "strict" and self._fallback_unit_ids:
@@ -1118,12 +1189,14 @@ class InstructionalPipeline:
                     # Create updated unit
                     from dataclasses import replace
                     unit = replace(unit, content=new_content)
-                    self._logger.info(f"Repaired L3 content for {concept_id}")
+                    # Don't log per-unit success - only log summary at end
                 else:
-                    self._logger.warning(f"Ollama repair returned no result for {concept_id}")
+                    # Track failed repair
+                    self._repair_status["failed_repairs"].append(concept_id)
                     
             except Exception as e:
-                self._logger.warning(f"Ollama repair failed for {concept_id}: {e}")
+                # Track failed repair but don't log (summary logged at end)
+                self._repair_status["failed_repairs"].append(concept_id)
         
         return unit
     
@@ -1589,6 +1662,15 @@ class InstructionalPipeline:
             "original_unit_count": generated_count,
             "filtered_unit_count": filtered_out_count,
             "exportable_unit_count": exported_count,
+            # Add repair status to manifest
+            "repair_status": {
+                "enabled": self._repair_status.get("enabled", False),
+                "available": self._repair_status.get("available", False),
+                "disabled_reason": self._repair_status.get("disabled_reason"),
+                "model": self._repair_status.get("model"),
+                "repaired_units": len(self._repair_status.get("repaired_units", [])),
+                "failed_repairs": len(self._repair_status.get("failed_repairs", [])),
+            },
         })
         
         # Store generation stats for exporter manifest
