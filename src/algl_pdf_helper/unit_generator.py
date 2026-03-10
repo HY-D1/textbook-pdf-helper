@@ -2778,6 +2778,42 @@ class UnitGenerator:
                 if len(sentence.strip()) < 40:
                     continue
                 
+                # REJECT: Definitions shorter than 5 words (likely fragments)
+                word_count = len(sentence.split())
+                if word_count < 5:
+                    continue
+                
+                # REJECT: Starts with "Chapter", "Section", "Part" (heading patterns)
+                if re.match(r'^(Chapter|Section|Part)\s+', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: Starts with "How to", "Using", "Working with" (procedure headings)
+                if re.match(r'^(How\s+to|Using|Working\s+with|Understanding)\s+', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: ALL CAPS text (definitely a heading)
+                if sentence.isupper():
+                    continue
+                
+                # REJECT: Title case without small words AND no verb (heading indicator)
+                words = sentence.split()
+                if words and all(w[0].isupper() for w in words if w and w[0].isalpha()):
+                    small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by', 'as']
+                    if not any(w.lower() in small_words for w in words):
+                        # No small words - likely a title/heading
+                        continue
+                
+                # REQUIRE: At least one complete sentence structure (subject + verb)
+                # Simple heuristic: must have a verb-like word
+                verb_indicators = ['is', 'are', 'was', 'were', 'be', 'been', 'being',
+                                   'has', 'have', 'had', 'do', 'does', 'did',
+                                   'can', 'could', 'will', 'would', 'may', 'might',
+                                   'allows', 'enables', 'provides', 'returns', 'creates',
+                                   'modifies', 'deletes', 'retrieves', 'stores', 'uses']
+                has_verb = any(v in sentence_lower for v in verb_indicators)
+                if not has_verb:
+                    continue
+                
                 # Check for definitional patterns
                 score = 0
                 
@@ -2945,6 +2981,27 @@ class UnitGenerator:
                     'fundamental concept',
                 ]
                 if any(phrase in sentence_lower for phrase in generic_phrases):
+                    continue
+                
+                # REJECT: Heading fragments (starts with procedure words)
+                if re.match(r'^(How\s+to|Using|Working\s+with|Understanding)\s+', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: Example captions (contains Figure, Example X, Listing)
+                if re.search(r'\b(Figure|Example|Listing)\s+\d+', sentence, re.IGNORECASE):
+                    continue
+                
+                # REJECT: Pure bullet points without explanatory prose
+                # Check if it's just a short fragment without proper sentence structure
+                if len(sentence) < 30 and not any(c in sentence for c in ['.', '!', '?']):
+                    continue
+                
+                # REJECT: Very short text (minimum 20 characters required)
+                if len(sentence.strip()) < 20:
+                    continue
+                
+                # REJECT: Text that is very similar to the definition (duplicate)
+                if definition and self._text_similarity(sentence, definition) > 0.7:
                     continue
                 
                 # Check for why-it-matters patterns
@@ -3184,22 +3241,46 @@ class UnitGenerator:
         """Score L3 content quality 0-1."""
         # If curated content was used, it's high quality
         if content.get("_used_curated_fallback"):
-            return 0.8  # Curated content is high quality
+            return 0.85  # Curated content is high quality
         
         score = 0.0
         
+        # Definition quality (0-0.4)
         definition = content.get("definition", "")
-        if len(definition) > 80 and "important" not in definition.lower():
+        if len(definition) > 100:
             score += 0.4
+        elif len(definition) > 60:
+            score += 0.3
+        elif len(definition) > 30:
+            score += 0.1
         
+        # Penalize generic definitions
+        generic_phrases = ["is an important", "is a crucial", "is an essential", "is a fundamental"]
+        if any(p in definition.lower() for p in generic_phrases):
+            score -= 0.2
+        
+        # Examples quality (0-0.4)
         examples = content.get("examples", [])
         real_examples = sum(1 for ex in examples if not ex.get("is_synthetic", True))
-        score += min(real_examples * 0.2, 0.4)
-        
-        if content.get("why_it_matters") and len(content["why_it_matters"]) > 50:
+        if real_examples >= 2:
+            score += 0.4
+        elif real_examples == 1:
             score += 0.2
+        elif examples:  # Synthetic examples only
+            score += 0.1
         
-        return score
+        # Why it matters quality (0-0.2)
+        why = content.get("why_it_matters", "")
+        if len(why) > 80:
+            score += 0.2
+        elif len(why) > 40:
+            score += 0.1
+        
+        # Penalize heading-like why_it_matters
+        if why and self._is_heading_like_definition(why):
+            score -= 0.3
+        
+        return max(0.0, min(1.0, score))
 
     def generate_l3_from_curated(
         self,
@@ -3694,9 +3775,13 @@ class UnitGenerator:
         EXAMPLE_MATCH_THRESHOLD = 2.5
         example_metadata: ExampleMetadata | None = None
         
+        # Track both source SQL (original) and practice SQL (transformed)
+        source_sql = ""
+        practice_sql = ""
+        
         if best_example and best_score >= EXAMPLE_MATCH_THRESHOLD:
             # Use the best matched example from source
-            example_sql = best_example
+            source_sql = best_example
             example_explanation = f"Example from page {best_page}."
             example_metadata = ExampleMetadata(
                 match_score=best_score,
@@ -3707,7 +3792,7 @@ class UnitGenerator:
             # Check if curated content exists before using generic defaults
             curated_l2 = self._load_curated_l2_content(concept_id)
             if curated_l2 and curated_l2.get("example_sql"):
-                example_sql = curated_l2["example_sql"]
+                source_sql = curated_l2["example_sql"]
                 example_explanation = curated_l2.get("example_explanation", "Curated example.")
                 example_metadata = ExampleMetadata(
                     match_score=best_score if best_score > 0 else 0.0,
@@ -3715,13 +3800,20 @@ class UnitGenerator:
                     selection_method="curated_fallback",
                 )
             else:
+                # Check if this is a theoretical/design concept that doesn't need executable SQL
+                theoretical_concepts = [
+                    "normalization", "database-design", "er-diagrams", "relational-model",
+                    "acid-properties", "cap-theorem", "data-integrity", "schema-design"
+                ]
+                is_theoretical = concept_id in theoretical_concepts
+                
                 # Before falling back to default, try to use ANY extracted SQL
                 # even if score is low - it's better than generic defaults
-                if sql_examples:
+                if sql_examples and not is_theoretical:
                     # Use the first extracted SQL even with low score
                     best_example = sql_examples[0]["sql"]
                     best_page = sql_examples[0].get("page", 0)
-                    example_sql = best_example
+                    source_sql = best_example
                     example_explanation = f"Example extracted from source text (page {best_page})."
                     example_metadata = ExampleMetadata(
                         match_score=best_score if best_score > 0 else 0.1,
@@ -3733,16 +3825,27 @@ class UnitGenerator:
                     curated_l3 = self._load_curated_l3_content(concept_id)
                     if curated_l3 and curated_l3.get("examples"):
                         curated_example = curated_l3["examples"][0]
-                        example_sql = curated_example.get("sql", self._get_default_example_sql(concept_id))
+                        source_sql = curated_example.get("sql", "")
                         example_explanation = curated_example.get("explanation", "Curated example from instructional content.")
                         example_metadata = ExampleMetadata(
                             match_score=0.8,
                             source_type="curated",
                             selection_method="curated_l3_fallback",
                         )
+                    elif is_theoretical:
+                        # For theoretical concepts, use concept explanation as L2 instead of SQL
+                        ontology = self._get_ontology_info(concept_id)
+                        concept_def = ontology.get("definition", "")
+                        source_sql = f"-- {concept_id}: Conceptual knowledge\n-- See explanation for design principles"
+                        example_explanation = concept_def if concept_def else f"{concept_id.replace('-', ' ').title()} involves database design principles and theoretical concepts."
+                        example_metadata = ExampleMetadata(
+                            match_score=0.5,
+                            source_type="curated",
+                            selection_method="theoretical_concept",
+                        )
                     else:
                         # Last resort: concept-appropriate default example
-                        example_sql = self._get_default_example_sql(concept_id)
+                        source_sql = self._get_default_example_sql(concept_id)
                         example_explanation = "Basic usage example."
                         example_metadata = ExampleMetadata(
                             match_score=best_score if best_score > 0 else 0.0,
@@ -3751,9 +3854,9 @@ class UnitGenerator:
                             is_default_fallback=True,
                         )
         
-        # Transform SQL to practice schema
-        example_sql = self.transformer.transform_to_practice_schema(
-            example_sql, ["Sailors", "Boats", "Reserves"]
+        # Transform SQL to practice schema (preserving original)
+        practice_sql = self.transformer.transform_to_practice_schema(
+            source_sql, ["Sailors", "Boats", "Reserves"]
         )
         
         # Get pitfall from ontology or default
@@ -3766,10 +3869,11 @@ class UnitGenerator:
         
         return L2Content(
             hint_text=l1_hint[:300],
-            example_sql=example_sql[:500],
+            example_sql=practice_sql[:500],
             example_explanation=example_explanation[:300],
             common_pitfall=common_pitfall[:200],
             example_metadata=example_metadata,
+            source_sql=source_sql[:500],
         )
     
     def _extract_l3_from_blocks(self, blocks: list[ContentBlock], concept_id: str) -> dict:
@@ -3882,6 +3986,7 @@ class UnitGenerator:
         
         # Build definition: Try extracted/merged first, then ontology, then default
         definition = extracted_content.get("definition")
+        definition_source = "extracted" if definition else None
         
         # REJECT bad definitions explicitly
         bad_definition_patterns = [
@@ -3907,12 +4012,15 @@ class UnitGenerator:
         
         # Check if extracted definition is heading-like or bad - if so, fall back
         if definition and (self._is_heading_like_definition(definition) or is_bad_definition):
+            print(f"[L3 Quality] {concept_id}: rejecting heading-like or bad definition: {definition[:60]}...")
             definition = None  # Force fallback
         
         # Fallback chain for definition
         if not definition:
             if ontology.get("definition"):
                 definition = ontology["definition"]
+                definition_source = "ontology"
+                print(f"[L3 Quality] {concept_id}: using ontology fallback for definition")
             else:
                 first_sentence = self._get_first_sentence_from_blocks(blocks)
                 # Also check if first sentence is heading-like
@@ -3920,40 +4028,90 @@ class UnitGenerator:
                     # Check first sentence against bad patterns too
                     if not any(re.search(p, first_sentence, re.IGNORECASE) for p in bad_definition_patterns):
                         definition = first_sentence
+                        definition_source = "first_sentence"
         
         # If extraction failed or returned bad/short content, use defaults
         if not definition or len(definition) < 30:
             definition = self._get_default_definition(concept_id)
+            definition_source = "default"
+            print(f"[L3 Quality] {concept_id}: using default definition")
         
         # Final safety check - never leave definition empty
         if not definition or len(definition.strip()) == 0:
             definition = f"{concept_id.replace('-', ' ').title()} is a SQL concept for working with database data."
+            definition_source = "fallback"
         
         # Build why it matters: Try extracted/merged first, then extract fresh, then ontology, then default
         # Pass definition to avoid duplication
         why_it_matters = extracted_content.get("why_it_matters")
+        why_source = "extracted" if why_it_matters else None
         
         if not why_it_matters:
             why_it_matters = self._extract_why_it_matters(blocks, definition=definition)
+            why_source = "fresh_extraction" if why_it_matters else None
+        
+        # REJECT: why_it_matters that looks like a heading
+        if why_it_matters and self._is_heading_like_definition(why_it_matters):
+            print(f"[L3 Quality] {concept_id}: rejecting heading-like why_it_matters: {why_it_matters[:60]}...")
+            why_it_matters = None
+            why_source = None
         
         if not why_it_matters:
             if ontology.get("use_when"):
                 why_it_matters = f"Use this when {ontology['use_when']}"
+                why_source = "ontology"
             else:
                 # Generate a specific "why" that's different from definition
                 why_it_matters = self._get_default_why_it_matters(concept_id)
+                why_source = "default"
+                print(f"[L3 Quality] {concept_id}: using default why_it_matters")
         
         # Final check: ensure why_it_matters differs significantly from definition
         if why_it_matters and self._text_similarity(why_it_matters, definition) > 0.6:
             # They're too similar - use ontology or generate different text
+            print(f"[L3 Quality] {concept_id}: why_it_matters too similar to definition, regenerating")
             if ontology.get("use_when"):
                 why_it_matters = f"This is essential when {ontology['use_when']}"
+                why_source = "ontology"
             else:
                 why_it_matters = self._get_default_why_it_matters(concept_id)
+                why_source = "default"
         
         # Final safety check - never leave why_it_matters empty
         if not why_it_matters or len(why_it_matters.strip()) == 0:
             why_it_matters = f"Understanding {concept_id.replace('-', ' ')} helps you write more effective SQL queries."
+            why_source = "fallback"
+        
+        # QUALITY GATE: Don't allow learner-facing L3 when:
+        # 1. Definition only exists due to ontology fallback (not extracted)
+        # 2. why_it_matters is heading-like (checked above)
+        # 3. Examples are missing AND curated fallback is weak
+        has_real_examples = bool(extracted_content.get("examples"))
+        has_curated_fallback = curated_used or curated_full is not None
+        
+        # Track quality issues for logging
+        quality_issues = []
+        if definition_source in ("ontology", "default", "fallback"):
+            quality_issues.append(f"definition_from_{definition_source}")
+        if why_source in ("default", "fallback"):
+            quality_issues.append(f"why_from_{why_source}")
+        if not has_real_examples and not has_curated_fallback:
+            quality_issues.append("no_examples_no_curated")
+        
+        if quality_issues:
+            print(f"[L3 Quality] {concept_id}: quality issues detected: {', '.join(quality_issues)}")
+            
+            # Try to use curated content if available and quality is low
+            if curated_full and definition_source in ("ontology", "default", "fallback"):
+                curated = curated_full.get("content", curated_full)
+                if curated.get("definition") and len(curated["definition"]) > 50:
+                    print(f"[L3 Quality] {concept_id}: replacing weak definition with curated")
+                    definition = curated["definition"]
+                    definition_source = "curated"
+                if curated.get("why_it_matters") and len(curated["why_it_matters"]) > 30:
+                    print(f"[L3 Quality] {concept_id}: replacing weak why_it_matters with curated")
+                    why_it_matters = curated["why_it_matters"]
+                    why_source = "curated"
         
         # Get learning objectives from ontology
         learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
