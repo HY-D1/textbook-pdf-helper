@@ -198,6 +198,65 @@ class PdfIndexManifest(BaseModel):
 # Textbook Static Models (New Schema v1)
 # =============================================================================
 
+class ChapterInfo(BaseModel):
+    """Chapter structure information for pedagogical organization."""
+    chapter_number: int = Field(..., ge=1, description="Chapter number (1-indexed)")
+    title: str = Field(..., min_length=1, description="Chapter title")
+    start_page: int = Field(..., ge=1, description="First page of chapter")
+    end_page: int = Field(..., ge=1, description="Last page of chapter")
+    sections: list[SectionInfo] = Field(default_factory=list, description="Sections within chapter")
+    concepts_covered: list[str] = Field(default_factory=list, description="Concept IDs covered")
+    exercises: list[str] = Field(default_factory=list, description="Exercise IDs in this chapter")
+    prerequisites: list[int] = Field(default_factory=list, description="Prerequisite chapter numbers")
+    next_chapters: list[int] = Field(default_factory=list, description="Suggested next chapters")
+    
+    @field_validator("end_page")
+    @classmethod
+    def validate_end_after_start(cls, v: int, info) -> int:
+        """Ensure end_page is >= start_page."""
+        start = info.data.get("start_page")
+        if start is not None and v < start:
+            raise ValueError("end_page must be >= start_page")
+        return v
+
+
+class SectionInfo(BaseModel):
+    """Section within a chapter."""
+    title: str = Field(..., min_length=1, description="Section title")
+    page: int = Field(..., ge=1, description="Page where section starts")
+    level: int = Field(default=1, ge=1, le=4, description="Heading level (1-4)")
+    concept_ids: list[str] = Field(default_factory=list, description="Concepts in this section")
+
+
+class ExerciseInfo(BaseModel):
+    """End-of-chapter exercise information."""
+    exercise_id: str = Field(..., min_length=1, description="Unique exercise identifier")
+    chapter: int = Field(..., ge=1, description="Chapter number")
+    number: str = Field(..., description="Exercise number within chapter (e.g., '1', '2a')")
+    text: str = Field(..., min_length=5, description="Exercise problem text")
+    solution_sql: str | None = Field(default=None, description="Solution SQL if available")
+    solution_text: str | None = Field(default=None, description="Solution explanation if available")
+    concepts_tested: list[str] = Field(default_factory=list, description="Concept IDs tested")
+    difficulty: str = Field(default="beginner", description="Difficulty level")
+    exercise_type: str = Field(default="coding", description="Type: coding, conceptual, debugging")
+    page: int | None = Field(default=None, description="Page number if known")
+    hints: list[str] = Field(default_factory=list, description="Progressive hints")
+
+
+class ExampleInfo(BaseModel):
+    """SQL example from textbook with provenance."""
+    example_id: str = Field(..., min_length=1, description="Unique example identifier")
+    chapter: int = Field(..., ge=1, description="Chapter number")
+    page: int = Field(..., ge=1, description="Page number")
+    title: str = Field(default="", description="Example title if any")
+    sql: str = Field(..., min_length=5, description="SQL code")
+    explanation: str = Field(default="", description="Explanation of the SQL")
+    concept_ids: list[str] = Field(default_factory=list, description="Related concept IDs")
+    source_type: str = Field(default="extracted", description="extracted or curated")
+    schema_context: str | None = Field(default=None, description="Database schema used")
+    expected_output: str | None = Field(default=None, description="Expected output description")
+
+
 class TextbookStaticManifest(BaseModel):
     """
     Main manifest for textbook-static output (textbook-manifest.json).
@@ -220,6 +279,10 @@ class TextbookStaticManifest(BaseModel):
     sourceDocs: list[PdfSourceDoc] = Field(default_factory=list)
     docCount: int = Field(default=0)
     chunkCount: int = Field(default=0)
+    # Pedagogical structure (new)
+    chapters: list[ChapterInfo] = Field(default_factory=list, description="Chapter structure")
+    total_exercises: int = Field(default=0, description="Total exercises extracted")
+    total_examples: int = Field(default=0, description="Total SQL examples extracted")
 
     @field_validator("schemaVersion")
     @classmethod

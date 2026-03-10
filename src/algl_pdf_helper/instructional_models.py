@@ -468,6 +468,20 @@ class InstructionalUnit(BaseModel):
         default=True,
         description="Whether to block this unit if prerequisites are unmet",
     )
+    # Chapter/section provenance (new)
+    chapter_number: int | None = Field(
+        default=None,
+        ge=1,
+        description="Chapter number where this unit's content originates",
+    )
+    section_title: str | None = Field(
+        default=None,
+        description="Section title where this unit's content originates",
+    )
+    source_examples: list[str] = Field(
+        default_factory=list,
+        description="IDs of source examples used in this unit",
+    )
     
     @field_validator("source_pages")
     @classmethod
