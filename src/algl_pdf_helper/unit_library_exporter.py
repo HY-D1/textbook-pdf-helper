@@ -96,6 +96,7 @@ class ExportConfig:
         include_provenance: Whether to include full provenance information
         include_validation_logs: Whether to include detailed validation logs
         filter_level: Content filtering strictness level
+        export_mode: Export mode - "prototype" (allows placeholders) or "student_ready" (strict)
         source_pdf_id: Identifier for the source PDF document
     """
     
@@ -104,6 +105,7 @@ class ExportConfig:
     include_provenance: bool = True
     include_validation_logs: bool = True
     filter_level: FilterLevel = FilterLevel.PRODUCTION
+    export_mode: str = "prototype"  # "prototype" or "student_ready"
     source_pdf_id: str = "unknown-source"
 
 
@@ -917,6 +919,12 @@ class UnitLibraryExporter:
             "pass_rate": export_filter_pass_rate,
         }
         
+        # Build configuration section
+        configuration = {
+            "filter_level": filter_level,
+            "export_mode": config.export_mode,
+        }
+        
         # Build provenance
         provenance = {
             "source_pdf_id": library.source_pdf_id or config.source_pdf_id,
@@ -977,6 +985,7 @@ class UnitLibraryExporter:
             "provenance": provenance,
             "validation_results": validation_results,
             "filter_results": filter_results,
+            "configuration": configuration,
             "quality_reports": quality_reports if quality_reports else {
                 "generated": None,
                 "exported": self.QUALITY_REPORT_FILE,

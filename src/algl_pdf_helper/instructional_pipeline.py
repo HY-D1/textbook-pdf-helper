@@ -1667,6 +1667,7 @@ class InstructionalPipeline:
         export_config = ExportConfig(
             output_dir=self.config.output_dir,
             filter_level=filter_level_map.get(self.config.filter_level, FilterLevel.PRODUCTION),
+            export_mode=self.config.export_mode,
             source_pdf_id=self.config.doc_id,
         )
         
