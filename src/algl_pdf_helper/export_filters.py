@@ -1297,6 +1297,87 @@ def _check_empty_why_it_matters(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, f"why_it_matters length acceptable ({len(why_stripped)} chars)"
 
 
+def _check_heading_like_why_it_matters(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if why_it_matters looks like a heading instead of instructional content.
+    
+    Rejects content that starts with:
+    - "How to..." (procedure heading)
+    - "Chapter X..." (chapter title)
+    - "Section X..." (section heading)
+    - All-caps text (heading)
+    - Very short text (title-like)
+    
+    Only applies to L3_explanation units.
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"why_it_matters heading check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check why_it_matters"
+    
+    why_it_matters = (
+        content.get("why_it_matters", "") or 
+        content.get("importance", "") or
+        content.get("relevance", "")
+    )
+    
+    if not why_it_matters or not isinstance(why_it_matters, str):
+        return True, "No why_it_matters to check"
+    
+    why_stripped = why_it_matters.strip()
+    why_lower = why_stripped.lower()
+    
+    # REJECT: Starts with "How to" (procedure heading)
+    if re.match(r'^How\s+to\s+', why_stripped, re.IGNORECASE):
+        return False, f"why_it_matters is heading-like (starts with 'How to'): {why_stripped[:50]}..."
+    
+    # REJECT: Chapter/section patterns
+    if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+', why_stripped, re.IGNORECASE):
+        return False, f"why_it_matters is heading-like (chapter/section): {why_stripped[:50]}..."
+    
+    # REJECT: All-caps (likely a heading)
+    if why_stripped.isupper():
+        return False, "why_it_matters is all uppercase (heading-like)"
+    
+    # REJECT: Title case without small words (likely a heading)
+    words = why_stripped.split()
+    if len(words) > 1 and len(words) < 10:
+        content_words = [w for w in words if w.isalpha()]
+        if content_words and all(w[0].isupper() for w in content_words):
+            small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by', 'as']
+            if not any(w.lower() in small_words for w in words):
+                return False, f"why_it_matters appears to be title-case heading: {why_stripped[:50]}..."
+    
+    # REJECT: Ends with section markers
+    if re.search(r'\s+-\s+(Examples|Overview|Summary|Details)$', why_stripped, re.IGNORECASE):
+        return False, f"why_it_matters ends with section marker: {why_stripped[:50]}..."
+    
+    return True, "why_it_matters appears to be instructional content"
+
+
+def _check_insufficient_evidence_spans(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if unit has sufficient evidence spans for source grounding.
+    
+    Requires at least 2 evidence spans for strong source grounding.
+    Curated content is exempt from this check.
+    """
+    # Curated content is always considered well-grounded
+    content = unit.content or {}
+    if isinstance(content, dict):
+        metadata = content.get("_metadata", {})
+        if metadata.get("content_source") == "curated":
+            return True, "Curated content - evidence requirement waived"
+    
+    evidence_spans = unit.evidence_spans or []
+    
+    if len(evidence_spans) < 2:
+        return False, f"Insufficient evidence spans ({len(evidence_spans)}, need 2+)"
+    
+    return True, f"Sufficient evidence spans ({len(evidence_spans)})"
+
+
 def _check_generic_boilerplate(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check for generic boilerplate text that shouldn't be in student content.
     
@@ -2053,6 +2134,22 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         description="Unit quality score below 0.7",
         check_fn=_check_low_quality_score,
         error_message="Unit quality below threshold for student-ready export"
+    ),
+    # Block heading-like why_it_matters (not instructional content)
+    ExportRule(
+        rule_id="heading_like_why_it_matters",
+        rule_type=RuleType.HARD_BLOCK,
+        description="why_it_matters looks like a heading ('How to...', 'Chapter X', etc.)",
+        check_fn=_check_heading_like_why_it_matters,
+        error_message="why_it_matters appears to be a heading, not instructional content"
+    ),
+    # Block units with too few evidence spans (weak grounding)
+    ExportRule(
+        rule_id="insufficient_evidence_spans",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Unit has fewer than 2 evidence spans (weak source grounding)",
+        check_fn=_check_insufficient_evidence_spans,
+        error_message="Unit has insufficient source evidence (need 2+ spans)"
     ),
 ]
 """Student-ready filters - strict mode for production learner content.

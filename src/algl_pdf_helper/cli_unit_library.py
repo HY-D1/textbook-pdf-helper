@@ -108,7 +108,7 @@ app = typer.Typer(
 )
 
 # Export command functions for integration with main CLI
-__all__ = ["process_command", "validate_command", "inspect_command", "filter_command", "export_legacy_command"]
+__all__ = ["process_command", "validate_command", "inspect_command", "diagnose_command", "filter_command", "export_legacy_command"]
 
 # Filter level enum for CLI
 FilterLevelCLI = typer.Option(
@@ -1200,6 +1200,94 @@ def inspect_command(
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]❌ Inspection failed:[/red] {e}")
+        raise typer.Exit(1)
+
+
+# =============================================================================
+# DIAGNOSE COMMAND
+# =============================================================================
+
+@app.command(name="diagnose")
+def diagnose_command(
+    library_dir: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        help="Path to unit library directory",
+    ),
+    detailed: bool = typer.Option(
+        False,
+        "--detailed",
+        help="Show detailed diagnostic report",
+    ),
+):
+    """
+    Diagnose content gaps and quality issues in a unit library.
+    
+    Analyzes the library and reports:
+    - L3 coverage gaps (concepts missing explanations)
+    - L2 units using default examples
+    - Unresolved practice links
+    - Heading-like content in why_it_matters
+    - Missing evidence spans
+    
+    Example:
+        algl-pdf diagnose ./output/unit-library/
+        algl-pdf diagnose ./output/unit-library/ --detailed
+    """
+    console.print(Panel(
+        f"[bold]Content Diagnostics[/bold]\n"
+        f"Library: {library_dir}/",
+        title="🔍 Diagnose",
+        border_style="blue"
+    ))
+    console.print()
+    
+    try:
+        # Import diagnostics
+        try:
+            from .content_diagnostics import ContentDiagnostics, DiagnosticReport
+            HAS_DIAGNOSTICS = True
+        except ImportError:
+            HAS_DIAGNOSTICS = False
+        
+        if not HAS_DIAGNOSTICS:
+            console.print("[red]❌ Error: Content diagnostics module not available[/red]")
+            raise typer.Exit(1)
+        
+        # Run diagnostics
+        diagnostics = ContentDiagnostics()
+        report = diagnostics.analyze_library(library_dir)
+        
+        # Display summary
+        console.print(report.summary())
+        
+        # Display detailed report if requested
+        if detailed:
+            console.print()
+            console.print(report.format_report())
+        
+        # Exit with error if not student-ready
+        summary = report.summary()
+        if "❌" in summary or "⚠️" in summary:
+            console.print()
+            console.print("[yellow]Library has issues that should be addressed before student-ready export.[/yellow]")
+            raise typer.Exit(1)
+        else:
+            console.print()
+            console.print("[green]✅ Library appears ready for student-facing use![/green]")
+            raise typer.Exit(0)
+        
+    except FileNotFoundError as e:
+        console.print(f"[red]❌ Error: Could not load library:[/red] {e}")
+        raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Diagnostics failed:[/red] {e}")
+        import traceback
+        console.print(traceback.format_exc())
         raise typer.Exit(1)
 
 
