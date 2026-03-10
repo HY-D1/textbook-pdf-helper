@@ -1216,9 +1216,9 @@ try:
             help="Use Ollama to repair weak L3 content (requires local Ollama server)",
         ),
         ollama_model: str = typer.Option(
-            "qwen2.5:3b",
+            "qwen3.5:9b-q8_0",
             "--ollama-model",
-            help="Ollama model for repair (qwen2.5:3b recommended for M1 Pro)",
+            help="Ollama model for repair (qwen3.5:9b-q8_0 recommended for RTX 4080, qwen3.5:27b-q4_K_M for better quality)",
         ),
         ollama_repair_threshold: float = typer.Option(
             0.6,
@@ -1235,7 +1235,7 @@ try:
         the grounded instructional unit graph.
         
         The Ollama repair pass automatically improves weak L3 content using
-        a local Ollama instance (requires qwen2.5:3b or similar model).
+        a local Ollama instance (requires qwen3.5:9b-q8_0 or similar model).
         
         Export Modes:
             prototype (default): Allows placeholder content with warnings.
