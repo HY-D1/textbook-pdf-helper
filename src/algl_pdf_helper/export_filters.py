@@ -289,7 +289,7 @@ def _check_heading_like_definition(unit: InstructionalUnit) -> tuple[bool, str]:
     Rejects definitions that are:
     - Chapter titles ("Chapter 5: ...")
     - Section headings ("Section 3.2 - Examples")
-    - Reference document text ("Golden Reference...")
+    - Reference document text ("Golden Reference...", "Reference Manual")
     - All-caps headings
     - Title-only text with no sentence structure
     
@@ -304,13 +304,22 @@ def _check_heading_like_definition(unit: InstructionalUnit) -> tuple[bool, str]:
         return True, "No definition to check"
     
     definition_lower = definition.lower()
+    definition_stripped = definition.strip()
     
-    # REJECT: Chapter/section patterns
-    if re.match(r'^Chapter\s+\d+', definition, re.IGNORECASE):
+    # REJECT: Chapter/section patterns with colon or hyphen
+    if re.match(r'^Chapter\s+\d+[:\-]', definition, re.IGNORECASE):
         return False, f"Definition appears to be a chapter title: {definition[:50]}"
     
-    if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+', definition, re.IGNORECASE):
+    if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+[:\-]', definition, re.IGNORECASE):
         return False, f"Definition appears to be a heading: {definition[:50]}"
+    
+    # REJECT: Just "Chapter X" or "Section X" without content
+    if re.match(r'^(Chapter|Section|Unit|Module|Lesson|Part)\s+\d+[a-z]?$', definition_stripped, re.IGNORECASE):
+        return False, f"Definition is just a heading label: {definition[:50]}"
+    
+    # REJECT: Reference Manual patterns
+    if 'reference manual' in definition_lower:
+        return False, "Definition contains 'reference manual' - appears to be reference text"
     
     # REJECT: Golden Reference / Reference Document patterns
     if 'golden reference' in definition_lower:
@@ -320,7 +329,7 @@ def _check_heading_like_definition(unit: InstructionalUnit) -> tuple[bool, str]:
         return False, "Definition contains 'reference document' - appears to be reference text"
     
     # REJECT: "References" or "Bibliography" as standalone
-    if re.match(r'^References?$', definition.strip(), re.IGNORECASE):
+    if re.match(r'^References?$', definition_stripped, re.IGNORECASE):
         return False, "Definition is just 'References' - not a valid definition"
     
     # REJECT: "X - Examples" or similar heading patterns
@@ -574,35 +583,63 @@ def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str
 
 
 def _check_broken_sql_example(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Block L2 units with broken SQL like 'SELECT;'."""
-    if unit.target_stage != "L2_hint_plus_example":
+    """Block units with broken SQL like 'SELECT;' (verb-only SQL).
+    
+    Applies to all stages that contain SQL examples (L2_hint_plus_example, L3_explanation).
+    Blocks SQL that contains:
+    - "SELECT;", "INSERT;", "UPDATE;", "DELETE;" (verb-only statements)
+    - Any SQL statement that is just the verb followed by semicolon
+    """
+    # Check applicable stages
+    applicable_stages = {"L2_hint_plus_example", "L3_explanation"}
+    if unit.target_stage not in applicable_stages:
         return True, f"Broken SQL check skipped for {unit.target_stage}"
     
     content = unit.content or {}
     if not isinstance(content, dict):
         return True, "Content is not a dict, cannot check SQL"
     
-    example_sql = content.get("example_sql", "")
-    if not example_sql:
-        return True, "No SQL example to check"
+    # Collect all SQL to check
+    sql_statements: list[str] = []
     
-    # Check for broken examples
+    # L2 style: single example_sql field
+    if "example_sql" in content:
+        sql_statements.append(content["example_sql"])
+    
+    # L3 style: list of SQLExample objects
+    examples = content.get("examples", [])
+    if isinstance(examples, list):
+        for ex in examples:
+            if isinstance(ex, dict):
+                sql = ex.get("sql", "") or ex.get("query", "")
+                if sql:
+                    sql_statements.append(sql)
+    
+    if not sql_statements:
+        return True, "No SQL examples to check"
+    
+    # Check for broken/verb-only SQL
+    # Pattern matches: SELECT; INSERT; UPDATE; DELETE; (with optional whitespace)
     broken_patterns = [
-        r"^SELECT\s*;?$",
-        r"^INSERT\s*;?$",
-        r"^UPDATE\s*;?$",
-        r"^DELETE\s*;?$",
+        r"^\s*SELECT\s*;\s*$",
+        r"^\s*INSERT\s*;\s*$",
+        r"^\s*UPDATE\s*;\s*$",
+        r"^\s*DELETE\s*;\s*$",
     ]
     
-    for pattern in broken_patterns:
-        if re.match(pattern, example_sql, re.IGNORECASE):
-            return False, f"L2 has broken SQL example: {example_sql[:30]}..."
+    for i, sql in enumerate(sql_statements):
+        if not sql or not isinstance(sql, str):
+            continue
+            
+        for pattern in broken_patterns:
+            if re.match(pattern, sql, re.IGNORECASE):
+                return False, f"Broken SQL (verb-only): {sql[:40]}..."
+        
+        # Check for too-short examples
+        if len(sql.strip()) < 25:
+            return False, f"SQL example too short to be useful: {sql[:40]}..."
     
-    # Check for too-short examples
-    if len(example_sql) < 25:
-        return False, "L2 SQL example too short to be useful"
-    
-    return True, "L2 SQL example looks valid"
+    return True, "All SQL examples look valid"
 
 
 def _check_generic_hint_text(unit: InstructionalUnit) -> tuple[bool, str]:
@@ -1123,6 +1160,292 @@ def _check_appendix_content(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, "Not appendix/admin content"
 
 
+def _check_empty_why_it_matters(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if why_it_matters field is missing or too short.
+    
+    Only applies to L3_explanation units. Requires at least 30 characters
+    to be considered meaningful instructional content.
+    """
+    # Skip for non-explanation stages
+    if unit.target_stage != "L3_explanation":
+        return True, f"why_it_matters check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check why_it_matters"
+    
+    # Get why_it_matters from various possible field names
+    why_it_matters = (
+        content.get("why_it_matters", "") or 
+        content.get("why_it_matters", "") or
+        content.get("importance", "") or
+        content.get("relevance", "")
+    )
+    
+    if not why_it_matters or not isinstance(why_it_matters, str):
+        return False, "why_it_matters is missing or empty"
+    
+    why_stripped = why_it_matters.strip()
+    if len(why_stripped) < 30:
+        return False, f"why_it_matters too short ({len(why_stripped)} chars, min 30)"
+    
+    return True, f"why_it_matters length acceptable ({len(why_stripped)} chars)"
+
+
+def _check_generic_boilerplate(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check for generic boilerplate text that shouldn't be in student content.
+    
+    Blocks content containing:
+    - "Golden Reference Document" or similar test strings
+    - Template/example text that wasn't replaced
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check for boilerplate"
+    
+    # Collect all text content to check
+    text_parts = []
+    
+    # Check common content fields
+    for field in ["definition", "explanation", "description", "why_it_matters", "title"]:
+        if field in content and isinstance(content[field], str):
+            text_parts.append(content[field])
+    
+    # Check hint text for L1
+    if "hint_text" in content and isinstance(content["hint_text"], str):
+        text_parts.append(content["hint_text"])
+    
+    # Check reflective content for L4
+    if "reflective_content" in content and isinstance(content["reflective_content"], str):
+        text_parts.append(content["reflective_content"])
+    
+    all_text = " ".join(text_parts).lower()
+    
+    # Boilerplate patterns that indicate test/template content
+    boilerplate_patterns = [
+        ("golden reference document", "Contains 'Golden Reference Document' - test/template content"),
+        ("golden reference", "Contains 'Golden Reference' - appears to be test content"),
+        ("this is a placeholder", "Contains placeholder text"),
+        ("insert content here", "Contains template text 'insert content here'"),
+        ("your content here", "Contains template text 'your content here'"),
+        ("lorem ipsum", "Contains 'lorem ipsum' placeholder text"),
+        ("example content", "Contains 'example content' - may be template text"),
+        ("sample text", "Contains 'sample text' - may be template text"),
+    ]
+    
+    for pattern, message in boilerplate_patterns:
+        if pattern in all_text:
+            return False, message
+    
+    return True, "No generic boilerplate detected"
+
+
+# Cache for tracking reflective summaries across concepts (for repeated boilerplate detection)
+_reflective_summary_cache: dict[str, list[str]] = {"summaries": [], "concepts": []}
+
+
+def _check_repeated_boilerplate(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if the same reflective summary is used across multiple concepts.
+    
+    This indicates copy-paste boilerplate rather than concept-specific content.
+    Uses a simple cache to detect duplicates across units.
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check for repeated boilerplate"
+    
+    # Only check L4 reflective notes and units with summary content
+    reflective_content = ""
+    
+    if unit.target_stage == "L4_reflective_note":
+        reflective_content = content.get("reflective_content", "") or content.get("summary", "")
+    elif "summary" in content:
+        reflective_content = content.get("summary", "")
+    elif "reflective_summary" in content:
+        reflective_content = content.get("reflective_summary", "")
+    
+    if not reflective_content or len(reflective_content) < 20:
+        return True, "No reflective content to check"
+    
+    # Normalize the content for comparison (lowercase, strip whitespace)
+    normalized = reflective_content.strip().lower()
+    
+    # Check if we've seen this exact content before for a different concept
+    cache = _reflective_summary_cache
+    
+    for i, existing in enumerate(cache["summaries"]):
+        # If content matches and it's for a different concept
+        if existing == normalized and cache["concepts"][i] != unit.concept_id:
+            return False, f"Reflective summary appears to be copy-pasted from concept '{cache['concepts'][i]}'"
+    
+    # Add to cache
+    cache["summaries"].append(normalized)
+    cache["concepts"].append(unit.concept_id)
+    
+    return True, "Reflective content appears to be concept-specific"
+
+
+def _check_wrong_example_for_concept(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check if SQL examples match the concept they are teaching.
+    
+    Detects mismatches like:
+    - SELECT examples for CREATE TABLE concept
+    - JOIN examples for WHERE clause concept
+    
+    Only applies to L2 and L3 stages that contain SQL examples.
+    """
+    # Check applicable stages
+    applicable_stages = {"L2_hint_plus_example", "L3_explanation"}
+    if unit.target_stage not in applicable_stages:
+        return True, f"Example-concept mismatch check skipped for {unit.target_stage}"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check examples"
+    
+    concept_id = unit.concept_id.lower()
+    
+    # Collect all SQL examples
+    sql_statements: list[str] = []
+    
+    # L2 style
+    if "example_sql" in content and isinstance(content["example_sql"], str):
+        sql_statements.append(content["example_sql"])
+    
+    # L3 style
+    examples = content.get("examples", [])
+    if isinstance(examples, list):
+        for ex in examples:
+            if isinstance(ex, dict):
+                sql = ex.get("sql", "") or ex.get("query", "")
+                if sql:
+                    sql_statements.append(sql)
+    
+    if not sql_statements:
+        return True, "No SQL examples to check"
+    
+    # Define concept-SQL verb mappings (concept substring -> required SQL verb)
+    concept_verb_mappings = {
+        # DDL concepts
+        "create-table": ["CREATE TABLE"],
+        "create-index": ["CREATE INDEX"],
+        "create-view": ["CREATE VIEW"],
+        "alter-table": ["ALTER TABLE"],
+        "drop-table": ["DROP TABLE"],
+        "drop-index": ["DROP INDEX"],
+        
+        # DML concepts
+        "insert": ["INSERT"],
+        "update": ["UPDATE"],
+        "delete": ["DELETE"],
+        "merge": ["MERGE"],
+        "upsert": ["UPSERT", "INSERT", "UPDATE"],
+        
+        # DQL concepts  
+        "select": ["SELECT"],
+        "where": ["SELECT"],  # WHERE is part of SELECT
+        "join": ["SELECT", "JOIN"],
+        "inner-join": ["SELECT", "JOIN"],
+        "left-join": ["SELECT", "JOIN"],
+        "right-join": ["SELECT", "JOIN"],
+        "outer-join": ["SELECT", "JOIN"],
+        "cross-join": ["SELECT", "JOIN"],
+        "self-join": ["SELECT", "JOIN"],
+        "group-by": ["SELECT"],
+        "order-by": ["SELECT"],
+        "having": ["SELECT"],
+        "limit": ["SELECT"],
+        "offset": ["SELECT"],
+        "subquery": ["SELECT"],
+        "cte": ["WITH"],
+        "common-table-expression": ["WITH"],
+        "union": ["SELECT", "UNION"],
+        "intersect": ["SELECT", "INTERSECT"],
+        "except": ["SELECT", "EXCEPT"],
+        
+        # Transaction concepts
+        "transaction": ["BEGIN", "COMMIT", "ROLLBACK", "START TRANSACTION"],
+        "commit": ["COMMIT"],
+        "rollback": ["ROLLBACK"],
+        
+        # Other
+        "grant": ["GRANT"],
+        "revoke": ["REVOKE"],
+    }
+    
+    # Find matching concept pattern
+    required_verbs: list[str] = []
+    for concept_pattern, verbs in concept_verb_mappings.items():
+        if concept_pattern in concept_id:
+            required_verbs = verbs
+            break
+    
+    if not required_verbs:
+        # Concept doesn't have a specific verb requirement
+        return True, f"No specific SQL verb requirement for concept '{concept_id}'"
+    
+    # Check each SQL example
+    for sql in sql_statements:
+        sql_upper = sql.strip().upper()
+        
+        # Skip if SQL contains any of the required verbs
+        if not any(verb in sql_upper for verb in required_verbs):
+            # Special case: WHERE clause examples might not have WHERE if they're showing
+            # the before/after or common mistakes
+            if "where" in concept_id and "SELECT" in sql_upper:
+                continue  # SELECT without explicit WHERE might be intentional
+            
+            return False, f"SQL example doesn't match concept '{concept_id}': {sql[:50]}... (expected {required_verbs})"
+    
+    return True, f"SQL examples match concept '{concept_id}'"
+
+
+def _check_placeholder_practice_ids(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Check for placeholder practice IDs in student_ready mode.
+    
+    HARD BLOCK for any ID starting with:
+    - "unresolved-"
+    - "placeholder"
+    
+    Also checks for IDs containing "placeholder" substring.
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check practice IDs"
+    
+    # Check practice_links
+    practice_links = content.get("practice_links", [])
+    if practice_links and isinstance(practice_links, list):
+        for link in practice_links:
+            problem_ids = []
+            if isinstance(link, dict):
+                problem_ids = link.get("problem_ids", [])
+            else:
+                problem_ids = getattr(link, "problem_ids", [])
+            
+            if isinstance(problem_ids, list):
+                for pid in problem_ids:
+                    if isinstance(pid, str):
+                        if pid.startswith("unresolved-"):
+                            return False, f"Placeholder practice ID found: {pid}"
+                        if pid.startswith("placeholder") or "placeholder" in pid.lower():
+                            return False, f"Placeholder practice ID found: {pid}"
+    
+    # Check for any field that might contain problem/references IDs
+    for field in ["problem_ids", "practice_ids", "exercise_ids"]:
+        if field in content:
+            ids = content[field]
+            if isinstance(ids, list):
+                for pid in ids:
+                    if isinstance(pid, str):
+                        if pid.startswith("unresolved-"):
+                            return False, f"Placeholder {field} found: {pid}"
+                        if pid.startswith("placeholder") or "placeholder" in pid.lower():
+                            return False, f"Placeholder {field} found: {pid}"
+    
+    return True, "No placeholder practice IDs found"
+
+
 # =============================================================================
 # PRE-DEFINED RULES
 # =============================================================================
@@ -1319,7 +1642,37 @@ CONTENT_QUALITY_RULES: list[ExportRule] = [
 # PRE-CONFIGURED FILTER SETS
 # =============================================================================
 
-STRICT_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy()
+STRICT_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
+    # Include student-ready checks in strict mode
+    ExportRule(
+        rule_id="placeholder_practice_ids",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Practice IDs starting with 'unresolved-' or containing 'placeholder'",
+        check_fn=_check_placeholder_practice_ids,
+        error_message="Strict export cannot contain placeholder practice IDs"
+    ),
+    ExportRule(
+        rule_id="empty_why_it_matters",
+        rule_type=RuleType.HARD_BLOCK,
+        description="why_it_matters is missing or less than 30 characters",
+        check_fn=_check_empty_why_it_matters,
+        error_message="Strict export requires meaningful why_it_matters (min 30 chars)"
+    ),
+    ExportRule(
+        rule_id="generic_boilerplate",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Content contains generic boilerplate like 'Golden Reference Document'",
+        check_fn=_check_generic_boilerplate,
+        error_message="Content contains generic boilerplate/template text"
+    ),
+    ExportRule(
+        rule_id="wrong_example_for_concept",
+        rule_type=RuleType.HARD_BLOCK,
+        description="SQL example doesn't match the concept being taught",
+        check_fn=_check_wrong_example_for_concept,
+        error_message="SQL example doesn't match concept (e.g., SELECT example for CREATE TABLE)"
+    ),
+]
 """Strict filters - all hard blocks. Prevents any questionable content from exporting."""
 
 PRODUCTION_FILTERS: list[ExportRule] = HARD_BLOCK_RULES + [
@@ -1462,6 +1815,14 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         check_fn=_check_placeholder_practice_links,
         error_message="Student-ready export cannot contain placeholder practice links"
     ),
+    # Hard block: Placeholder practice IDs anywhere
+    ExportRule(
+        rule_id="placeholder_practice_ids",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Practice IDs starting with 'unresolved-' or containing 'placeholder'",
+        check_fn=_check_placeholder_practice_ids,
+        error_message="Student-ready export cannot contain placeholder practice IDs"
+    ),
     # Block L2 units using default examples
     ExportRule(
         rule_id="default_only_l2_example",
@@ -1485,6 +1846,38 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         description="Curated fallback content appears to be placeholder text",
         check_fn=_check_weak_curated_fallback,
         error_message="Curated fallback content appears to be placeholder text"
+    ),
+    # Block empty or too-short why_it_matters
+    ExportRule(
+        rule_id="empty_why_it_matters",
+        rule_type=RuleType.HARD_BLOCK,
+        description="why_it_matters is missing or less than 30 characters",
+        check_fn=_check_empty_why_it_matters,
+        error_message="Student-ready export requires meaningful why_it_matters (min 30 chars)"
+    ),
+    # Block generic boilerplate content
+    ExportRule(
+        rule_id="generic_boilerplate",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Content contains generic boilerplate like 'Golden Reference Document'",
+        check_fn=_check_generic_boilerplate,
+        error_message="Content contains generic boilerplate/template text"
+    ),
+    # Block repeated boilerplate across concepts
+    ExportRule(
+        rule_id="repeated_boilerplate",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Same reflective summary used across multiple concepts (copy-paste)",
+        check_fn=_check_repeated_boilerplate,
+        error_message="Reflective content appears to be copy-pasted from another concept"
+    ),
+    # Block wrong example type for concept
+    ExportRule(
+        rule_id="wrong_example_for_concept",
+        rule_type=RuleType.HARD_BLOCK,
+        description="SQL example doesn't match the concept being taught",
+        check_fn=_check_wrong_example_for_concept,
+        error_message="SQL example doesn't match concept (e.g., SELECT example for CREATE TABLE)"
     ),
     # Add critical soft blocks as hard blocks
     ExportRule(
@@ -1746,6 +2139,28 @@ class ExportFilterEngine:
             violations.extend([f"WARN: {w}" for w in result.warnings])
         
         return result.can_export, violations
+    
+    def should_block_unit(self, unit: InstructionalUnit) -> tuple[bool, list[str]]:
+        """
+        Determine if a unit should be blocked from export.
+        
+        This method provides a clear API for checking if content should be
+        blocked, returning both the block decision and the reasons.
+        
+        Args:
+            unit: The InstructionalUnit to check
+            
+        Returns:
+            Tuple of (should_block, list_of_reasons)
+            - should_block: True if the unit should be blocked
+            - list_of_reasons: List of reasons why it was blocked (empty if not blocked)
+        """
+        result = self._filter_single_unit(unit)
+        
+        # Unit should be blocked if it has any hard block reasons
+        should_block = len(result.hard_block_reasons) > 0
+        
+        return should_block, result.hard_block_reasons
     
     def get_exportable_subset(self, library: UnitLibraryExport) -> UnitLibraryExport:
         """
@@ -2053,9 +2468,14 @@ __all__ = [
     
     # Student-ready check functions (for advanced use)
     "_check_placeholder_practice_links",
+    "_check_placeholder_practice_ids",
     "_check_default_only_l2_example",
     "_check_synthetic_only_l3",
+    "_check_weak_curated_fallback",
+    "_check_empty_why_it_matters",
+    "_check_generic_boilerplate",
+    "_check_repeated_boilerplate",
+    "_check_wrong_example_for_concept",
     "_check_missing_l3_for_core_concepts",
     "_check_low_quality_score",
-    "_check_weak_curated_fallback",
 ]
