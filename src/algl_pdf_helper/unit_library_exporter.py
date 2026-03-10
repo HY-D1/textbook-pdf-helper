@@ -527,8 +527,8 @@ class UnitLibraryExporter:
             metadata = content.get('example_metadata', {})
             
             # Check audit fields first
-            source_type = metadata.get('_example_source_type') or metadata.get('source_type', 'unknown')
-            used_default = metadata.get('_used_default_example', False)
+            source_type = metadata.get('example_source_type') or metadata.get('source_type', 'unknown')
+            used_default = metadata.get('used_default_example', False)
             
             if used_default or source_type == 'default':
                 stats['default_count'] += 1
@@ -604,11 +604,11 @@ class UnitLibraryExporter:
                     'concept_id': unit.concept_id,
                     'unit_id': unit.unit_id,
                     'timestamp': datetime.now(timezone.utc).isoformat(),
-                    'source_type': metadata.get('_example_source_type', 'unknown'),
-                    'match_score': metadata.get('_example_match_score', 0.0),
-                    'selection_reason': metadata.get('_example_selection_reason', ''),
-                    'matched_signals': metadata.get('_example_matched_signals', []),
-                    'used_default': metadata.get('_used_default_example', False),
+                    'source_type': metadata.get('example_source_type', 'unknown'),
+                    'match_score': metadata.get('example_match_score', 0.0),
+                    'selection_reason': metadata.get('example_selection_reason', ''),
+                    'matched_signals': metadata.get('example_matched_signals', []),
+                    'used_default': metadata.get('used_default_example', False),
                     'is_conceptual': metadata.get('is_conceptual', False),
                     'source_sql_preview': source_sql_preview,
                     'page': metadata.get('page')

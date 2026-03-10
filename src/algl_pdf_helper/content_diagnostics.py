@@ -295,7 +295,7 @@ class ContentDiagnostics:
         # Check L2 default examples
         if stage == "L2_hint_plus_example":
             metadata = content.get("_metadata", {})
-            if content.get("_used_default_example") or metadata.get("content_source") == "default":
+            if content.get("used_default_example") or metadata.get("content_source") == "default":
                 report.issues.l2_using_default.append(concept_id)
             elif content.get("example_metadata"):
                 ex_meta = content["example_metadata"]

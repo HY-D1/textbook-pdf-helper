@@ -862,7 +862,7 @@ def _check_default_example_no_source_evidence(unit: InstructionalUnit) -> tuple[
     
     # Check if using default example
     metadata = content.get("_metadata", {})
-    used_default = content.get("_used_default_example", False) or metadata.get("_used_default_example", False)
+    used_default = content.get("used_default_example", False) or metadata.get("used_default_example", False)
     
     if not used_default:
         return True, "L2 unit does not use default example"
@@ -943,7 +943,7 @@ def _check_placeholder_practice_links(unit: InstructionalUnit) -> tuple[bool, st
 def _check_default_only_l2_example(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if L2 unit uses default example instead of concept-appropriate SQL.
     
-    Blocks L2 units with _used_default_example=True in metadata.
+    Blocks L2 units with used_default_example=True in metadata.
     """
     # Only check L2 units
     if unit.target_stage != "L2_hint_plus_example":
@@ -955,7 +955,7 @@ def _check_default_only_l2_example(unit: InstructionalUnit) -> tuple[bool, str]:
     
     # Check for default example flag in content or metadata
     metadata = content.get("_metadata", {})
-    used_default = content.get("_used_default_example", False) or metadata.get("_used_default_example", False)
+    used_default = content.get("used_default_example", False) or metadata.get("used_default_example", False)
     
     if used_default:
         return False, "L2 unit uses generic default example instead of concept-appropriate SQL"

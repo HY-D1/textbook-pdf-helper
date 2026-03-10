@@ -167,11 +167,11 @@ class ExampleMetadata(BaseModel):
     block_types: list[str] = Field(default_factory=list, description="Types of blocks this example came from")
     evidence_count: int = Field(default=0, description="Number of evidence blocks supporting this example")
     # NEW AUDIT FIELDS:
-    _used_default_example: bool = Field(default=False, description="Whether a default example was used")
-    _example_source_type: str = Field(default="unknown", description="Detailed source type of the example")
-    _example_match_score: float = Field(default=0.0, description="Match score for this example")
-    _example_selection_reason: str = Field(default="", description="Reason for selecting this example")
-    _example_matched_signals: list[str] = Field(default_factory=list, description="Signals that matched for this example")
+    used_default_example: bool = Field(default=False, description="Whether a default example was used")
+    example_source_type: str = Field(default="unknown", description="Detailed source type of the example")
+    example_match_score: float = Field(default=0.0, description="Match score for this example")
+    example_selection_reason: str = Field(default="", description="Reason for selecting this example")
+    example_matched_signals: list[str] = Field(default_factory=list, description="Signals that matched for this example")
     is_conceptual: bool = Field(default=False, description="True for non-executable conceptual examples")
 
 
@@ -936,8 +936,9 @@ SQL_OPTIONAL_CONCEPTS = {
 }
 
 # Threshold for accepting extracted SQL examples for L2 content
-# Raised to 2.5 to ensure only high-quality matches are accepted for SQL concepts
-EXAMPLE_MATCH_THRESHOLD = 2.5
+# Set to 1.0 to accept extracted examples that match basic keywords
+# This ensures extracted examples are preferred over defaults
+EXAMPLE_MATCH_THRESHOLD = 1.0
 
 # Lower threshold for SQL-optional concepts (theory/design topics)
 # These concepts don't require executable SQL, so we accept lower match scores
@@ -1535,7 +1536,7 @@ class UnitGenerator:
         
         # Track if using default example for student-ready filtering
         if content.example_metadata and content.example_metadata.source_type == "default":
-            content_dict["_used_default_example"] = True
+            content_dict["used_default_example"] = True
             content_dict["_metadata"] = {
                 "content_source": "default",
                 "example_source": "default",
@@ -2152,8 +2153,34 @@ class UnitGenerator:
             ],
         }
         
-        # Get keywords for this concept, or use concept name as default
-        keywords = concept_keywords.get(concept_id, [concept_lower.replace("-", " ")])
+        # Get keywords for this concept, or derive from concept name
+        if concept_id in concept_keywords:
+            keywords = concept_keywords[concept_id]
+        else:
+            # Derive keywords from concept name: split on hyphen and use each part
+            # e.g., "select-basic" -> ["select", "basic"]
+            # Also add the full normalized name for multi-word matches
+            keywords = concept_lower.replace("-", " ").split()
+            # Add common SQL prefixes for better matching
+            if concept_lower.startswith("select"):
+                keywords.append("select")
+            elif concept_lower.startswith("where"):
+                keywords.append("where")
+            elif concept_lower.startswith("join"):
+                keywords.append("join")
+            elif concept_lower.startswith("group"):
+                keywords.append("group by")
+            elif concept_lower.startswith("order"):
+                keywords.append("order by")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_keywords = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique_keywords.append(kw)
+        keywords = unique_keywords
         
         for keyword in keywords:
             if keyword in sql_lower:
@@ -3862,10 +3889,10 @@ class UnitGenerator:
                 matched_concepts=[concept_id],
                 confidence=0.8,
                 is_conceptual=True,
-                _used_default_example=False,
-                _example_source_type='conceptual',
-                _example_match_score=0.8,
-                _example_selection_reason='SQL-optional concept: using conceptual explanation'
+                used_default_example=False,
+                example_source_type='conceptual',
+                example_match_score=0.8,
+                example_selection_reason='SQL-optional concept: using conceptual explanation'
             ),
             source_sql="",
             source_example_sql=None,
@@ -3998,10 +4025,11 @@ class UnitGenerator:
         
         # For each extracted SQL example, create a candidate
         for ex in sql_examples:
-            score, matched_signals = self._score_sql_for_concept(ex["sql"], concept_id)
+            sql_text = ex["sql"]
+            score, matched_signals = self._score_sql_for_concept(sql_text, concept_id)
             
             candidates.append({
-                'sql': ex["sql"],
+                'sql': sql_text,
                 'score': score,
                 'source_type': 'extracted',
                 'source_block_id': f"page_{ex.get('page', 0)}",
@@ -4123,11 +4151,11 @@ class UnitGenerator:
             confidence=confidence,
             block_types=["sql_code"] if best_candidate['source_type'] == 'extracted' else [best_candidate['source_type']],
             evidence_count=1 if best_candidate['source_type'] == 'extracted' else 0,
-            _used_default_example=best_candidate['source_type'] == 'default',
-            _example_source_type=best_candidate['source_type'],
-            _example_match_score=best_candidate['score'],
-            _example_selection_reason=selection_reason,
-            _example_matched_signals=matched_signals if matched_signals else [],
+            used_default_example=best_candidate['source_type'] == 'default',
+            example_source_type=best_candidate['source_type'],
+            example_match_score=best_candidate['score'],
+            example_selection_reason=selection_reason,
+            example_matched_signals=matched_signals if matched_signals else [],
             is_conceptual=is_conceptual,
         )
         

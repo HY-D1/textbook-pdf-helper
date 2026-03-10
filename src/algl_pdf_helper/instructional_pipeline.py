@@ -1657,7 +1657,7 @@ class InstructionalPipeline:
         for unit in l2_units:
             content = unit.content or {}
             metadata = content.get('example_metadata', {})
-            if metadata.get('_used_default_example', False):
+            if metadata.get('used_default_example', False):
                 default_count += 1
         
         default_pct = default_count / len(l2_units) * 100

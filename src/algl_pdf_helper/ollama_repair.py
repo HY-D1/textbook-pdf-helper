@@ -1186,7 +1186,7 @@ class SelectiveRepairPass:
         Repair triggers (unit needs repair if ANY are true):
         - Missing L3 content (no L3 unit generated)
         - Low evidence count (< 2 source blocks)
-        - Default L2 example used (has metadata flag _used_default_example)
+        - Default L2 example used (has metadata flag used_default_example)
         - Placeholder practice links (needs_resolution=True)
         - Low quality score (< repair_threshold)
         - Heading-like definition (starts with "Section" or "Chapter")
@@ -1206,7 +1206,7 @@ class SelectiveRepairPass:
             reasons.append("low_evidence_count")
         
         # Check 2: Default L2 example used
-        if content.get("_used_default_example"):
+        if content.get("used_default_example"):
             reasons.append("default_l2_example")
         
         # Check 3: Placeholder practice links
