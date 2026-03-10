@@ -61,6 +61,7 @@ algl-pdf inspect ./output/ --concept select-basic
 | `validate` | Validate an existing unit library | `algl-pdf validate ./output/` |
 | `inspect` | Inspect units for a specific concept | `algl-pdf inspect ./out/ -c select-basic` |
 | `filter` | Re-run export filters on existing library | `algl-pdf filter ./out/ --level strict` |
+| `diagnose` | Analyze unit library for content gaps | `algl-pdf diagnose ./output/` |
 | `export-legacy` | Convert old concept-map.json to new format | `algl-pdf export-legacy ./old.json -o ./new/` |
 
 ### Process Command Options
@@ -229,6 +230,7 @@ This project is grounded in established learning science:
 | **[Usage Guide](docs/USAGE.md)** | Comprehensive CLI usage with examples |
 | **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
 | **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
+| **[Quality Improvements Summary](QUALITY_IMPROVEMENTS_SUMMARY.md)** | Recent quality enhancements and improvements |
 
 ---
 
