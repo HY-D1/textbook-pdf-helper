@@ -2429,6 +2429,258 @@ class LearningQualityGates:
 
 
 # =============================================================================
+# LIBRARY-LEVEL VALIDATION
+# =============================================================================
+
+def validate_library(
+    unit_library: UnitLibraryExport,
+    min_l2_coverage: float = 0.8,
+    min_l3_coverage: float = 0.8,
+    max_fallback_ratio: float = 0.1,
+    strict_mode: bool = True,
+) -> dict[str, Any]:
+    """
+    Validate an entire unit library for student-ready deployment.
+    
+    This function performs library-level checks that cannot be determined
+    by examining individual units alone, such as coverage statistics and
+    ratios across the entire library.
+    
+    Args:
+        unit_library: The complete unit library to validate
+        min_l2_coverage: Minimum ratio of concepts that must have L2 units (default 0.8)
+        min_l3_coverage: Minimum ratio of concepts that must have L3 units (default 0.8)
+        max_fallback_ratio: Maximum ratio of units that can be fallback (default 0.1)
+        strict_mode: If True, validation fails on any off-book curated concepts
+        
+    Returns:
+        Dictionary with validation results:
+        - valid: True if library is deployable
+        - l2_coverage: {count, total, ratio, passed}
+        - l3_coverage: {count, total, ratio, passed}
+        - fallback_ratio: {count, total, ratio, passed}
+        - offbook_concepts: {list, passed}
+        - overall_status: "DEPLOYABLE" or "NOT DEPLOYABLE"
+        - reasons: List of reasons if not deployable
+    """
+    units = unit_library.instructional_units
+    
+    if not units:
+        return {
+            "valid": False,
+            "overall_status": "NOT DEPLOYABLE",
+            "reasons": ["No units in library"],
+            "l2_coverage": {"count": 0, "total": 0, "ratio": 0.0, "passed": False},
+            "l3_coverage": {"count": 0, "total": 0, "ratio": 0.0, "passed": False},
+            "fallback_ratio": {"count": 0, "total": 0, "ratio": 0.0, "passed": False},
+            "offbook_concepts": {"list": [], "passed": False},
+        }
+    
+    # Collect statistics
+    all_concepts: set[str] = set()
+    concepts_with_l2: set[str] = set()
+    concepts_with_l3: set[str] = set()
+    
+    # Run individual checks
+    l2_result = _check_l2_coverage(unit_library)
+    l3_result = _check_l3_coverage(unit_library)
+    fallback_result = _check_fallback_ratio(unit_library)
+    offbook_result = _check_offbook_concepts(unit_library, strict_mode)
+    
+    # Build reasons list if not valid
+    reasons: list[str] = []
+    
+    if not l2_result["passed"]:
+        reasons.append(
+            f"L2 coverage insufficient: {l2_result['count']}/{l2_result['total']} "
+            f"concepts ({l2_result['ratio']:.1%}, min {min_l2_coverage:.0%})"
+        )
+    
+    if not l3_result["passed"]:
+        reasons.append(
+            f"L3 coverage insufficient: {l3_result['count']}/{l3_result['total']} "
+            f"concepts ({l3_result['ratio']:.1%}, min {min_l3_coverage:.0%})"
+        )
+    
+    if not fallback_result["passed"]:
+        reasons.append(
+            f"Fallback ratio too high: {fallback_result['count']}/{fallback_result['total']} "
+            f"units ({fallback_result['ratio']:.1%}, max {max_fallback_ratio:.0%})"
+        )
+    
+    if not offbook_result["passed"]:
+        concepts_str = ", ".join(offbook_result['list'][:5])
+        if len(offbook_result['list']) > 5:
+            concepts_str += f" and {len(offbook_result['list']) - 5} more"
+        reasons.append(f"Off-book curated-only concepts present: {concepts_str}")
+    
+    valid = l2_result["passed"] and l3_result["passed"] and fallback_result["passed"] and offbook_result["passed"]
+    
+    return {
+        "valid": valid,
+        "overall_status": "DEPLOYABLE" if valid else "NOT DEPLOYABLE",
+        "reasons": reasons,
+        "l2_coverage": l2_result,
+        "l3_coverage": l3_result,
+        "fallback_ratio": fallback_result,
+        "offbook_concepts": offbook_result,
+    }
+
+
+def _check_l2_coverage(
+    unit_library: UnitLibraryExport,
+    min_coverage: float = 0.8,
+) -> dict[str, Any]:
+    """
+    Check if at least 80% of concepts have L2 (hint+example) units.
+    
+    Args:
+        unit_library: The unit library to check
+        min_coverage: Minimum required coverage ratio (default 0.8)
+        
+    Returns:
+        Dictionary with count, total, ratio, and passed status
+    """
+    units = unit_library.instructional_units
+    
+    # Get all unique concepts
+    all_concepts: set[str] = set()
+    concepts_with_l2: set[str] = set()
+    
+    for unit in units:
+        all_concepts.add(unit.concept_id)
+        if unit.target_stage == "L2_hint_plus_example":
+            concepts_with_l2.add(unit.concept_id)
+    
+    total = len(all_concepts)
+    count = len(concepts_with_l2)
+    ratio = count / total if total > 0 else 0.0
+    
+    return {
+        "count": count,
+        "total": total,
+        "ratio": ratio,
+        "passed": ratio >= min_coverage,
+    }
+
+
+def _check_l3_coverage(
+    unit_library: UnitLibraryExport,
+    min_coverage: float = 0.8,
+) -> dict[str, Any]:
+    """
+    Check if at least 80% of concepts have L3 (explanation) units.
+    
+    Args:
+        unit_library: The unit library to check
+        min_coverage: Minimum required coverage ratio (default 0.8)
+        
+    Returns:
+        Dictionary with count, total, ratio, and passed status
+    """
+    units = unit_library.instructional_units
+    
+    # Get all unique concepts
+    all_concepts: set[str] = set()
+    concepts_with_l3: set[str] = set()
+    
+    for unit in units:
+        all_concepts.add(unit.concept_id)
+        if unit.target_stage == "L3_explanation":
+            concepts_with_l3.add(unit.concept_id)
+    
+    total = len(all_concepts)
+    count = len(concepts_with_l3)
+    ratio = count / total if total > 0 else 0.0
+    
+    return {
+        "count": count,
+        "total": total,
+        "ratio": ratio,
+        "passed": ratio >= min_coverage,
+    }
+
+
+def _check_fallback_ratio(
+    unit_library: UnitLibraryExport,
+    max_ratio: float = 0.1,
+) -> dict[str, Any]:
+    """
+    Check if less than 10% of units are fallback units.
+    
+    Fallback units indicate extraction failures and should be limited
+    in student-ready exports.
+    
+    Args:
+        unit_library: The unit library to check
+        max_ratio: Maximum allowed fallback ratio (default 0.1)
+        
+    Returns:
+        Dictionary with count, total, ratio, and passed status
+    """
+    units = unit_library.instructional_units
+    
+    fallback_count = 0
+    for unit in units:
+        content = unit.content or {}
+        if isinstance(content, dict):
+            metadata = content.get("_metadata", {})
+            is_fallback = content.get("is_fallback", False) or metadata.get("is_fallback", False)
+            if is_fallback:
+                fallback_count += 1
+    
+    total = len(units)
+    ratio = fallback_count / total if total > 0 else 0.0
+    
+    return {
+        "count": fallback_count,
+        "total": total,
+        "ratio": ratio,
+        "passed": ratio <= max_ratio,
+    }
+
+
+def _check_offbook_concepts(
+    unit_library: UnitLibraryExport,
+    strict_mode: bool = True,
+) -> dict[str, Any]:
+    """
+    Check for off-book curated-only concepts.
+    
+    Off-book concepts (source_mode == "curated_only_offbook") have no
+    source grounding from the textbook and should not be in student-ready
+    exports unless explicitly allowed.
+    
+    Args:
+        unit_library: The unit library to check
+        strict_mode: If True, any off-book concept fails validation
+        
+    Returns:
+        Dictionary with list of off-book concepts and passed status
+    """
+    units = unit_library.instructional_units
+    
+    offbook_concepts: list[str] = []
+    seen_concepts: set[str] = set()
+    
+    for unit in units:
+        content = unit.content or {}
+        if isinstance(content, dict):
+            metadata = content.get("_metadata", {})
+            source_mode = content.get("source_mode", "") or metadata.get("source_mode", "")
+            
+            if source_mode == "curated_only_offbook":
+                if unit.concept_id not in seen_concepts:
+                    offbook_concepts.append(unit.concept_id)
+                    seen_concepts.add(unit.concept_id)
+    
+    return {
+        "list": offbook_concepts,
+        "passed": len(offbook_concepts) == 0 if strict_mode else True,
+    }
+
+
+# =============================================================================
 # QUALITY REPORT CLASS
 # =============================================================================
 
@@ -2602,12 +2854,61 @@ class QualityReport:
         unit_library: UnitLibraryExport,
     ) -> dict[str, QualityCheck]:
         """Run library-level checks."""
-        return {
+        # Import here to avoid circular import
+        from .learning_quality_gates import (
+            _check_l2_coverage,
+            _check_l3_coverage,
+            _check_fallback_ratio,
+            _check_offbook_concepts,
+        )
+        
+        checks = {
             "stage_variants": self.gates.validate_stage_variants(unit_library),
             "reinforcement_present": self.gates.validate_reinforcement_present(unit_library),
             "l3_for_core_concepts": self.gates.validate_l3_for_core_concepts(unit_library),
             "boilerplate_detection": self.gates.validate_boilerplate_content(unit_library),
         }
+        
+        # Add new library-level checks
+        l2_coverage = _check_l2_coverage(unit_library)
+        l3_coverage = _check_l3_coverage(unit_library)
+        fallback_ratio = _check_fallback_ratio(unit_library)
+        offbook_concepts = _check_offbook_concepts(unit_library)
+        
+        # Convert results to QualityCheck format
+        checks["l2_coverage"] = QualityCheck(
+            check_name="l2_coverage",
+            passed=l2_coverage["passed"],
+            score=l2_coverage["ratio"],
+            message=f"L2 coverage: {l2_coverage['count']}/{l2_coverage['total']} concepts ({l2_coverage['ratio']:.1%})",
+            severity=Severity.WARNING if not l2_coverage["passed"] else Severity.INFO,
+        )
+        
+        checks["l3_coverage"] = QualityCheck(
+            check_name="l3_coverage",
+            passed=l3_coverage["passed"],
+            score=l3_coverage["ratio"],
+            message=f"L3 coverage: {l3_coverage['count']}/{l3_coverage['total']} concepts ({l3_coverage['ratio']:.1%})",
+            severity=Severity.WARNING if not l3_coverage["passed"] else Severity.INFO,
+        )
+        
+        checks["fallback_ratio"] = QualityCheck(
+            check_name="fallback_ratio",
+            passed=fallback_ratio["passed"],
+            score=1.0 - fallback_ratio["ratio"],  # Higher score = less fallback
+            message=f"Fallback ratio: {fallback_ratio['count']}/{fallback_ratio['total']} units ({fallback_ratio['ratio']:.1%})",
+            severity=Severity.WARNING if not fallback_ratio["passed"] else Severity.INFO,
+        )
+        
+        checks["offbook_concepts"] = QualityCheck(
+            check_name="offbook_concepts",
+            passed=offbook_concepts["passed"],
+            score=1.0 if offbook_concepts["passed"] else 0.0,
+            message=f"Off-book concepts: {len(offbook_concepts['list'])}" if offbook_concepts["list"] else "No off-book concepts",
+            severity=Severity.WARNING if not offbook_concepts["passed"] else Severity.INFO,
+        )
+        
+        return checks
     
     def _categorize_check(self, check_name: str) -> str | None:
         """Categorize a check by type."""

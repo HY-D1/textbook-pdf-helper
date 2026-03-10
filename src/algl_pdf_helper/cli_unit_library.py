@@ -261,9 +261,9 @@ def process_command(
         help="Use Ollama to repair weak L3 content (requires local Ollama server)",
     ),
     ollama_model: str = typer.Option(
-        "qwen2.5:3b",
+        "qwen3.5:9b-q8_0",
         "--ollama-model",
-        help="Ollama model for repair (qwen2.5:3b recommended for M1 Pro)",
+        help="Ollama model for repair (qwen3.5:9b-q8_0 recommended for RTX 4080, qwen3.5:27b-q4_K_M for better quality)",
     ),
     ollama_repair_threshold: float = typer.Option(
         0.6,
@@ -286,7 +286,7 @@ def process_command(
     the grounded instructional unit graph.
     
     The Ollama repair pass automatically improves weak L3 content using
-    a local Ollama instance (requires qwen2.5:3b or similar model).
+    a local Ollama instance (requires qwen3.5:9b-q8_0 or similar model).
     
     Export Modes:
         prototype (default): Allows placeholder content with warnings.
@@ -761,6 +761,64 @@ def validate_command(
             console.print(f"[dim]Using {selected_report_name} quality report for validation[/dim]")
             console.print()
         
+        # Run library-level validation for student_ready/deployable checks
+        if HAS_LEARNING_QUALITY_GATES:
+            console.print("[bold]Library-Level Validation:[/bold]")
+            
+            # Import and run library validation
+            from .learning_quality_gates import validate_library
+            
+            lib_validation = validate_library(library)
+            
+            validation_table = Table(show_header=False, box=None)
+            validation_table.add_column("Check", style="cyan")
+            validation_table.add_column("Status", style="white")
+            
+            # L2 Coverage
+            l2_cov = lib_validation["l2_coverage"]
+            l2_status = f"[green]{l2_cov['count']}/{l2_cov['total']} ({l2_cov['ratio']:.0%})[/green]" if l2_cov["passed"] else f"[red]{l2_cov['count']}/{l2_cov['total']} ({l2_cov['ratio']:.0%})[/red]"
+            validation_table.add_row("L2 Coverage (min 80%)", l2_status)
+            
+            # L3 Coverage
+            l3_cov = lib_validation["l3_coverage"]
+            l3_status = f"[green]{l3_cov['count']}/{l3_cov['total']} ({l3_cov['ratio']:.0%})[/green]" if l3_cov["passed"] else f"[red]{l3_cov['count']}/{l3_cov['total']} ({l3_cov['ratio']:.0%})[/red]"
+            validation_table.add_row("L3 Coverage (min 80%)", l3_status)
+            
+            # Fallback Ratio
+            fallback = lib_validation["fallback_ratio"]
+            fallback_status = f"[green]{fallback['count']}/{fallback['total']} ({fallback['ratio']:.0%})[/green]" if fallback["passed"] else f"[red]{fallback['count']}/{fallback['total']} ({fallback['ratio']:.0%})[/red]"
+            validation_table.add_row("Fallback Ratio (max 10%)", fallback_status)
+            
+            # Off-book Concepts
+            offbook = lib_validation["offbook_concepts"]
+            if offbook["list"]:
+                offbook_str = f"[red]{len(offbook['list'])} found: {', '.join(offbook['list'][:3])}[/red]"
+                if len(offbook['list']) > 3:
+                    offbook_str += f" [red]and {len(offbook['list']) - 3} more[/red]"
+            else:
+                offbook_str = "[green]None[/green]"
+            validation_table.add_row("Off-book Concepts", offbook_str)
+            
+            # Overall Status
+            if lib_validation["valid"]:
+                validation_table.add_row("[bold]Overall[/bold]", "[bold green]✓ DEPLOYABLE[/bold green]")
+            else:
+                validation_table.add_row("[bold]Overall[/bold]", "[bold red]✗ NOT DEPLOYABLE[/bold red]")
+            
+            console.print(validation_table)
+            console.print()
+            
+            # Show deployment warning if not valid
+            if not lib_validation["valid"]:
+                console.print("[bold yellow]⚠️  WARNING: Library is NOT ready for deployment[/bold yellow]")
+                console.print("[dim]Reasons:[/dim]")
+                for reason in lib_validation.get("reasons", []):
+                    console.print(f"  • {reason}")
+                console.print()
+                console.print("[dim]To include weak units anyway, use:[/dim]")
+                console.print("  [cyan]algl-pdf filter ./output/unit-library/ --level development[/cyan]")
+                console.print()
+        
         # Display validation results
         console.print("[bold]File Validation:[/bold]")
         
@@ -915,14 +973,33 @@ def validate_command(
             raise typer.Exit(1)
         
         # Overall result
-        if all_passed:
-            console.print("[bold green]✅ Validation PASSED[/bold green]")
-            console.print("   All quality gates passed. Library is ready for deployment.")
-            raise typer.Exit(0)
+        if HAS_LEARNING_QUALITY_GATES:
+            from .learning_quality_gates import validate_library
+            lib_validation = validate_library(library)
+            
+            if all_passed and lib_validation["valid"]:
+                console.print("[bold green]✅ Validation PASSED[/bold green]")
+                console.print("   All quality gates passed. Library is DEPLOYABLE.")
+                raise typer.Exit(0)
+            elif all_passed and not lib_validation["valid"]:
+                console.print("[bold yellow]⚠️  Validation PASSED with WARNINGS[/bold yellow]")
+                console.print("   Unit-level checks passed but library-level checks failed.")
+                console.print("   Library is NOT DEPLOYABLE for student-ready export.")
+                console.print("   Run with --filter-level development to bypass strict checks.")
+                raise typer.Exit(1)
+            else:
+                console.print("[bold red]❌ Validation FAILED[/bold red]")
+                console.print("   Some quality checks failed. Review issues above.")
+                raise typer.Exit(1)
         else:
-            console.print("[bold red]❌ Validation FAILED[/bold red]")
-            console.print("   Some quality checks failed. Review issues above.")
-            raise typer.Exit(1)
+            if all_passed:
+                console.print("[bold green]✅ Validation PASSED[/bold green]")
+                console.print("   All quality gates passed.")
+                raise typer.Exit(0)
+            else:
+                console.print("[bold red]❌ Validation FAILED[/bold red]")
+                console.print("   Some quality checks failed. Review issues above.")
+                raise typer.Exit(1)
             
     except FileNotFoundError as e:
         console.print(f"[red]❌ Error: Could not load library:[/red] {e}")
