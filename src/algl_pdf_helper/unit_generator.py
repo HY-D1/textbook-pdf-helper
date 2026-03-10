@@ -159,19 +159,35 @@ class L1Content(BaseModel):
 
 class ExampleMetadata(BaseModel):
     """Metadata about how an example was selected for L2 content."""
-    match_score: float = Field(..., description="Relevance score from _score_sql_for_concept")
-    source_type: str = Field(..., description="Type of source: 'extracted', 'curated', or 'default'")
-    selection_method: str = Field(..., description="Method used: 'scored', 'fallback_threshold', etc.")
+    source_type: str = Field(..., description="Type of source: 'extracted', 'curated', 'default', or 'conceptual'")
+    selection_method: str = Field(..., description="Method used: 'scored', 'fallback_threshold', 'ranked_score', etc.")
+    matched_concepts: list[str] = Field(default_factory=list, description="Concept IDs this example matches")
+    page: int | None = Field(default=None, description="Source page number where example was found")
+    confidence: float = Field(default=0.0, description="Confidence score for this example (0-1)")
+    block_types: list[str] = Field(default_factory=list, description="Types of blocks this example came from")
+    evidence_count: int = Field(default=0, description="Number of evidence blocks supporting this example")
+    # NEW AUDIT FIELDS:
+    _used_default_example: bool = Field(default=False, description="Whether a default example was used")
+    _example_source_type: str = Field(default="unknown", description="Detailed source type of the example")
+    _example_match_score: float = Field(default=0.0, description="Match score for this example")
+    _example_selection_reason: str = Field(default="", description="Reason for selecting this example")
+    _example_matched_signals: list[str] = Field(default_factory=list, description="Signals that matched for this example")
+    is_conceptual: bool = Field(default=False, description="True for non-executable conceptual examples")
 
 
 class L2Content(BaseModel):
     """Content for L2 hint+example stage - brief with example."""
     hint_text: str = Field(..., max_length=300, description="Brief hint")
-    example_sql: str = Field(..., max_length=500, description="Minimal worked example (practice schema)")
+    # example_sql is the learner-facing version (typically practice schema)
+    example_sql: str = Field(..., max_length=500, description="Minimal worked example (learner-facing, practice schema)")
     example_explanation: str = Field(..., max_length=300, description="Quick explanation")
     common_pitfall: str = Field(default="", max_length=200, description="One thing to watch")
     example_metadata: ExampleMetadata | None = Field(default=None, description="Metadata about example selection")
+    # SQL PRESERVATION FIELDS:
     source_sql: str = Field(default="", max_length=500, description="Original SQL from source (preserved)")
+    source_example_sql: str | None = Field(default=None, max_length=500, description="Original SQL from textbook before transformation")
+    practice_example_sql: str | None = Field(default=None, max_length=500, description="SQL transformed for practice schemas")
+    conceptual_example: str | None = Field(default=None, max_length=1000, description="For SQL-optional concepts: conceptual explanation text")
 
 
 class L3Content(BaseModel):
@@ -894,6 +910,38 @@ CONCEPTS_WITHOUT_SQL = {
     "acid-properties",
     "cap-theorem",
 }
+
+# SQL-optional concepts: theory/design topics that don't require executable SQL
+# These use lower match thresholds (1.0 vs 2.5) and conceptual example paths
+SQL_OPTIONAL_CONCEPTS = {
+    'normalization',
+    'database-design',
+    'er-diagrams',
+    'relational-model',
+    'acid-properties',
+    'cap-theorem',
+    'data-integrity',
+    'schema-design',
+    'first-normal-form',
+    'second-normal-form',
+    'third-normal-form',
+    'bcnf',
+    'denormalization',
+    'functional-dependency',
+    'entity-relationship',
+    'erd-basics',
+    '1nf',
+    '2nf',
+    '3nf',
+}
+
+# Threshold for accepting extracted SQL examples for L2 content
+# Raised to 2.5 to ensure only high-quality matches are accepted for SQL concepts
+EXAMPLE_MATCH_THRESHOLD = 2.5
+
+# Lower threshold for SQL-optional concepts (theory/design topics)
+# These concepts don't require executable SQL, so we accept lower match scores
+EXAMPLE_MATCH_THRESHOLD_SQL_OPTIONAL = 1.0
 
 
 # L2 subtype classification
@@ -2024,18 +2072,23 @@ class UnitGenerator:
         }
         return contexts.get(concept_id, f"When working with {concept_id}")
     
-    def _score_sql_for_concept(self, sql: str, concept_id: str) -> float:
+    def _score_sql_for_concept(self, sql: str, concept_id: str) -> tuple[float, list[str]]:
         """Score how well a SQL example matches the concept.
         
         Higher scores indicate better matches between the SQL content
         and the concept being taught.
+        
+        Returns:
+            Tuple of (score, matched_signals) where matched_signals lists
+            the specific patterns that contributed to the score.
         """
         sql_lower = sql.lower()
         sql_upper = sql.upper()
         concept_lower = concept_id.lower()
         
-        # Base score
+        # Base score and matched signals tracking
         score = 0.0
+        matched_signals: list[str] = []
         
         # Concept-specific keyword matching
         concept_keywords = {
@@ -2105,11 +2158,13 @@ class UnitGenerator:
         for keyword in keywords:
             if keyword in sql_lower:
                 score += 1.0
+                matched_signals.append(f'keyword_{keyword.replace(" ", "_")}')
         
         # Bonus for matching concept name directly
         concept_normalized = concept_lower.replace("-", " ")
         if concept_normalized in sql_lower:
             score += 2.0
+            matched_signals.append('concept_name_match')
         
         # Extra bonus for strong concept indicators
         strong_indicators = {
@@ -2124,145 +2179,151 @@ class UnitGenerator:
             for indicator in strong_indicators[concept_id]:
                 if indicator in sql_lower:
                     score += 3.0
+                    matched_signals.append(f'strong_indicator_{indicator.replace(" ", "_")}')
         
-        # Special detection for self-join: same table appears twice with different aliases
-        if concept_id == "self-join":
-            # Look for pattern like "FROM employees e JOIN employees m"
-            self_join_pattern = r"from\s+(\w+)\s+\w+\s+join\s+\1\s+\w+"
-            if re.search(self_join_pattern, sql_lower):
+        # ===== EXPANDED BONUS SCORING FOR WEAK CONCEPTS =====
+        
+        # stored-procedures: detailed scoring
+        if concept_id == 'stored-procedures':
+            if re.search(r'CREATE\s+(PROCEDURE|FUNCTION|PROC|FUNC)', sql_upper):
                 score += 5.0
-        
-        # ===== EXPANDED BONUS SCORING FOR MURACH CONCEPTS =====
-        
-        # Stored procedures: bonus for CREATE PROCEDURE and CALL
-        if concept_id == "stored-procedures":
-            if "create procedure" in sql_lower:
-                score += 5.0
-            if re.search(r'\bcall\s+\w+', sql_lower):
+                matched_signals.append('create_procedure')
+            if 'CALL' in sql_upper:
                 score += 3.0
-            if "delimiter" in sql_lower:
+                matched_signals.append('call_statement')
+            if re.search(r'\bBEGIN\b', sql_upper) and re.search(r'\bEND\b', sql_upper):
                 score += 2.0
-            if "begin" in sql_lower and "end" in sql_lower:
+                matched_signals.append('begin_end_block')
+            if 'DELIMITER' in sql_upper:
                 score += 2.0
+                matched_signals.append('delimiter')
+            if re.search(r'(IN\s+|OUT\s+|INOUT\s+)\w+', sql_upper):
+                score += 2.0
+                matched_signals.append('parameter_modes')
         
-        # Data types: bonus for CREATE TABLE with type declarations
-        if concept_id == "data-types":
-            if "create table" in sql_lower:
-                # Count type declarations in CREATE TABLE
-                type_pattern = r'\b\w+\s+(?:varchar|int|decimal|timestamp|boolean|text|float|double|bigint|char|date)'
-                type_count = len(re.findall(type_pattern, sql_lower))
-                score += min(type_count * 3, 9)  # Cap at 9 points
+        # data-types: detailed scoring
+        if concept_id == 'data-types':
+            if re.search(r'CREATE\s+TABLE', sql_upper):
+                score += 3.0
+                matched_signals.append('create_table')
+            type_keywords = ['INT', 'VARCHAR', 'CHAR', 'DATE', 'DATETIME', 
+                            'DECIMAL', 'FLOAT', 'DOUBLE', 'TEXT', 'BOOLEAN',
+                            'TIMESTAMP', 'TIME', 'YEAR', 'ENUM', 'SET']
+            for kw in type_keywords:
+                if kw in sql_upper:
+                    score += 1.0
+                    matched_signals.append(f'type_{kw.lower()}')
+            if re.search(r'CAST\s*\(|CONVERT\s*\(', sql_upper):
+                score += 3.0
+                matched_signals.append('cast_convert')
         
-        # String functions: bonus for actual function calls
-        if concept_id == "string-functions":
-            func_calls = ["concat(", "substring(", "trim(", "length(", "replace(", 
-                         "upper(", "lower(", "left(", "right(", "instr(", "char_length("]
-            for func in func_calls:
-                if func in sql_lower:
+        # string-functions: detailed scoring
+        if concept_id == 'string-functions':
+            string_funcs = ['CONCAT', 'SUBSTRING', 'SUBSTR', 'TRIM', 'REPLACE', 
+                           'LENGTH', 'CHAR_LENGTH', 'UPPER', 'LOWER', 'LEFT', 
+                           'RIGHT', 'INSTR', 'LOCATE', 'FORMAT', 'LPAD', 'RPAD']
+            for func in string_funcs:
+                if func in sql_upper:
+                    score += 2.0
+                    matched_signals.append(f'string_{func.lower()}')
+            if re.search(r"LIKE\s+['\"]%", sql):
+                score += 2.0
+                matched_signals.append('pattern_matching')
+        
+        # date-functions: detailed scoring
+        if concept_id == 'date-functions':
+            date_funcs = ['CURRENT_DATE', 'CURRENT_TIMESTAMP', 'NOW', 'CURDATE',
+                         'DATEDIFF', 'DATE_ADD', 'DATE_SUB', 'EXTRACT', 
+                         'YEAR', 'MONTH', 'DAY', 'DATE_FORMAT', 'STR_TO_DATE']
+            for func in date_funcs:
+                if func in sql_upper:
+                    score += 2.0
+                    matched_signals.append(f'date_{func.lower()}')
+            if re.search(r'\bFROM\s+(DAYS|UNIXTIME|DATE)', sql_upper):
+                score += 2.0
+                matched_signals.append('date_conversion')
+        
+        # transactions: detailed scoring
+        if concept_id == 'transactions':
+            trans_keywords = ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK',
+                             'SAVEPOINT', 'RELEASE SAVEPOINT', 'LOCK', 'UNLOCK']
+            for kw in trans_keywords:
+                if kw in sql_upper:
+                    score += 3.0
+                    matched_signals.append(f'trans_{kw.lower().replace(" ", "_")}')
+            if 'ISOLATION' in sql_upper:
+                score += 2.0
+                matched_signals.append('isolation_level')
+        
+        # self-join: detailed scoring
+        if concept_id == 'self-join':
+            # Detect same table used twice with different aliases
+            from_match = re.search(r'FROM\s+(\w+)', sql_upper)
+            join_match = re.search(r'JOIN\s+(\w+)', sql_upper)
+            if from_match and join_match:
+                if from_match.group(1) == join_match.group(1):
                     score += 5.0
-                    break  # Only count once
-        
-        # Date functions: bonus for function calls
-        if concept_id == "date-functions":
-            func_calls = ["current_date", "current_timestamp", "date_add", "date_sub",
-                         "extract(", "datediff", "date_format", "now()", "curdate()",
-                         "year(", "month(", "day(", "date_diff", "timestampdiff"]
-            for func in func_calls:
-                if func in sql_lower:
-                    score += 5.0
-                    break  # Only count once
-            if "date" in sql_lower and ("function" in sql_lower or "calculate" in sql_lower):
+                    matched_signals.append('same_table_joined')
+            # Detect aliases
+            if re.search(r'\w+\s+\w+\s*,\s*\w+\s+\w+', sql):  # table a, table b
                 score += 2.0
+                matched_signals.append('table_aliases')
         
-        # Subquery-in-where: stronger detection
-        if concept_id == "subquery-in-where":
-            if re.search(r'where.*in\s*\(\s*select', sql_lower):
+        # outer-join: detailed scoring
+        if concept_id == 'outer-join':
+            if re.search(r'(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN', sql_upper):
                 score += 5.0
-            if re.search(r'where.*exists\s*\(\s*select', sql_lower):
-                score += 5.0
-            if re.search(r'where.*[=<>]+\s*\(\s*select', sql_lower):
-                score += 5.0
+                matched_signals.append('outer_join_syntax')
+            if 'LEFT JOIN' in sql_upper:
+                score += 1.0
+                matched_signals.append('left_join')
+            if 'RIGHT JOIN' in sql_upper:
+                score += 1.0
+                matched_signals.append('right_join')
+            if 'FULL JOIN' in sql_upper or 'FULL OUTER JOIN' in sql_upper:
+                score += 1.0
+                matched_signals.append('full_join')
         
-        # Outer join: detect LEFT/RIGHT/FULL JOIN patterns
-        if concept_id == "outer-join":
-            if re.search(r'\b(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN\b', sql_upper):
+        # subquery-in-where: detailed scoring
+        if concept_id == 'subquery-in-where':
+            # Detect nested SELECT in WHERE clause
+            if re.search(r'WHERE\s+.*\(\s*SELECT', sql_upper):
                 score += 5.0
-            if re.search(r'LEFT\s+JOIN', sql_upper) and 'ON' in sql_upper:
+                matched_signals.append('where_subquery')
+            if re.search(r'WHERE\s+\w+\s*(IN|EXISTS|NOT IN|NOT EXISTS)\s*\(', sql_upper):
+                score += 4.0
+                matched_signals.append('where_in_exists')
+        
+        # subquery-in-select: detailed scoring
+        if concept_id == 'subquery-in-select':
+            # Detect scalar subquery in SELECT list
+            if re.search(r'SELECT\s+.*\(\s*SELECT', sql_upper):
+                score += 5.0
+                matched_signals.append('scalar_subquery')
+            if re.search(r'SELECT\s+\([^)]+SELECT', sql_upper):
                 score += 3.0
+                matched_signals.append('select_expression_subquery')
         
-        # Self-join: detect same-table alias patterns
-        if concept_id == "self-join":
-            if re.search(r'FROM\s+\w+\s+\w+.*JOIN\s+\w+\s+\w+', sql_upper):
-                score += 5.0
-            if re.search(r'\w+\.\w+.*=.*\w+\.\w+', sql):
-                score += 3.0
+        # ===== LEGACY BONUS SCORING (kept for backward compatibility) =====
         
         # HAVING clause: detect HAVING with aggregate
         if concept_id == "having-clause":
             if 'HAVING' in sql_upper:
                 score += 5.0
+                if 'having' not in [s.replace('strong_indicator_', '') for s in matched_signals]:
+                    matched_signals.append('having_clause')
             if re.search(r'HAVING\s+\w+\s*\(', sql_upper):
                 score += 3.0
+                matched_signals.append('having_with_aggregate')
         
         # Create table: detect CREATE TABLE with columns
         if concept_id == "create-table":
             if re.search(r'CREATE\s+TABLE\s+\w+\s*\(', sql_upper):
                 score += 5.0
+                matched_signals.append('create_table_syntax')
             if re.search(r'(INT|VARCHAR|DATE|DECIMAL|PRIMARY\s+KEY)', sql_upper):
                 score += 3.0
-        
-        # Transactions: detect BEGIN/COMMIT/ROLLBACK
-        if concept_id == "transactions":
-            if re.search(r'\b(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|SAVEPOINT)\b', sql_upper):
-                score += 5.0
-            if 'TRANSACTION' in sql_upper:
-                score += 3.0
-        
-        # Stored procedures: detect CREATE PROCEDURE/FUNCTION
-        if concept_id == "stored-procedures":
-            if re.search(r'CREATE\s+(PROCEDURE|FUNCTION|PROC)', sql_upper):
-                score += 5.0
-            if 'CALL' in sql_upper:
-                score += 3.0
-            if 'DELIMITER' in sql_upper:
-                score += 3.0
-            if 'BEGIN' in sql_upper and 'END' in sql_upper:
-                score += 2.0
-        
-        # Data types: enhanced detection for CREATE TABLE with type declarations
-        if concept_id == "data-types":
-            if re.search(r'CREATE\s+TABLE', sql_upper):
-                score += 3.0
-            # Count data type declarations
-            type_keywords = ['VARCHAR', 'INT', 'DECIMAL', 'TIMESTAMP', 'BOOLEAN', 
-                           'TEXT', 'FLOAT', 'DOUBLE', 'BIGINT', 'SMALLINT',
-                           'CHAR', 'DATE', 'DATETIME', 'TIME', 'BLOB']
-            for t in type_keywords:
-                if t in sql_upper:
-                    score += 1.0
-        
-        # String functions: detect function calls
-        if concept_id == "string-functions":
-            func_calls = ['CONCAT(', 'SUBSTRING(', 'TRIM(', 'LENGTH(', 'REPLACE(',
-                         'UPPER(', 'LOWER(', 'LEFT(', 'RIGHT(', 'INSTR(', 'CHAR_LENGTH(',
-                         'LPAD(', 'RPAD(', 'LTRIM(', 'RTRIM(', 'REVERSE(', 'FORMAT(']
-            for func in func_calls:
-                if func.upper() in sql_upper:
-                    score += 5.0
-                    break  # Only give bonus once
-            if 'LIKE' in sql_upper and ('%' in sql or '_' in sql):
-                score += 3.0
-        
-        # Date functions: detect function calls
-        if concept_id == "date-functions":
-            func_calls = ['CURRENT_DATE', 'CURRENT_TIMESTAMP', 'DATE_ADD', 'DATE_SUB',
-                         'EXTRACT(', 'DATEDIFF', 'DATE_FORMAT', 'NOW(', 'CURDATE(',
-                         'YEAR(', 'MONTH(', 'DAY(', 'DATE_DIFF', 'TIMESTAMPDIFF',
-                         'DATE(', 'TIME(', 'HOUR(', 'MINUTE(', 'SECOND(']
-            for func in func_calls:
-                if func.upper() in sql_upper:
-                    score += 5.0
-                    break  # Only give bonus once
+                matched_signals.append('column_definitions')
         
         # Normalization: detect normalization-related content
         if concept_id == "normalization":
@@ -2272,24 +2333,9 @@ class UnitGenerator:
             for term in norm_terms:
                 if term in sql_upper:
                     score += 5.0
+                    matched_signals.append(f'normalization_{term.lower().replace(" ", "_")}')
         
-        # Outer join: enhanced detection
-        if concept_id == "outer-join":
-            if re.search(r'\b(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN\b', sql_upper):
-                score += 5.0
-            if 'LEFT JOIN' in sql_upper and 'ON' in sql_upper:
-                score += 3.0
-        
-        # Self-join: enhanced detection for same-table patterns
-        if concept_id == "self-join":
-            # Look for same table with different aliases
-            if re.search(r'FROM\s+\w+\s+\w+.*JOIN\s+\w+', sql_upper):
-                score += 5.0
-            # Look for table alias pattern
-            if re.search(r'\w+\.\w+\s*=\s*\w+\.\w+', sql):
-                score += 3.0
-        
-        return score
+        return score, matched_signals
 
     def _get_default_example_sql(self, concept_id: str) -> str:
         """Get default example SQL for concept with concept-appropriate examples."""
@@ -3729,6 +3775,104 @@ class UnitGenerator:
         
         return False
 
+    def _is_sql_optional_concept(self, concept_id: str) -> bool:
+        """Check if a concept is SQL-optional (theory/design, not executable SQL).
+        
+        SQL-optional concepts like normalization, database-design, ER diagrams
+        don't require executable SQL examples and use lower thresholds.
+        
+        Args:
+            concept_id: The canonical concept ID
+            
+        Returns:
+            True if the concept is SQL-optional
+        """
+        return concept_id in SQL_OPTIONAL_CONCEPTS
+
+    def _validate_example_sql(self, sql: str) -> str:
+        """Ensure SQL is valid, replace broken placeholders.
+        
+        Args:
+            sql: The SQL string to validate
+            
+        Returns:
+            Valid SQL string or a fallback message if invalid
+        """
+        if not sql or sql.strip() in ('', 'SELECT;', 'SELECT *;', '--', ';'):
+            return "-- No executable example available for this concept"
+        sql = sql.strip()
+        if not sql.strip().endswith(';'):
+            sql = sql.strip() + ';'
+        return sql
+
+    def _build_conceptual_l2(self, concept_id: str, blocks: list[ContentBlock]) -> L2Content | None:
+        """Build L2 for SQL-optional concepts using conceptual explanations.
+        
+        For theory/design concepts that don't have executable SQL, this method
+        builds L2 content using conceptual explanations extracted from blocks.
+        
+        Args:
+            concept_id: The canonical concept ID
+            blocks: Source content blocks
+            
+        Returns:
+            L2Content with conceptual example, or None if no suitable content found
+        """
+        from .section_extractor import BlockType
+        
+        # Only process SQL-optional concepts
+        if concept_id not in SQL_OPTIONAL_CONCEPTS:
+            return None
+        
+        # Extract conceptual explanation from blocks
+        conceptual_text = ""
+        for block in blocks:
+            if block.block_type in (BlockType.EXPLANATORY_PROSE, BlockType.DEFINITION):
+                text = block.text_content.strip() if block.text_content else ""
+                if len(text) > 50 and not self._looks_like_heading(text):
+                    conceptual_text = text[:500] if len(text) > 500 else text
+                    break
+        
+        # Fall back to ontology definition if no text extracted
+        if not conceptual_text:
+            ontology = self._get_ontology_info(concept_id)
+            conceptual_text = ontology.get("definition", "")
+        
+        if not conceptual_text:
+            return None
+        
+        # Create conceptual L2 content (non-executable)
+        display_text = conceptual_text[:200] + "..." if len(conceptual_text) > 200 else conceptual_text
+        
+        # Concept-specific pitfalls
+        common_pitfall = "Applying procedural thinking to declarative concepts"
+        if concept_id in ["normalization", "1nf", "2nf", "3nf"]:
+            common_pitfall = "Applying normalization rules without considering query performance trade-offs"
+        elif concept_id in ["database-design", "erd-basics", "database-design"]:
+            common_pitfall = "Creating overly complex relationships that don't match actual business needs"
+        
+        return L2Content(
+            hint_text=f"Understanding {concept_id}: key concepts and principles",
+            example_sql="-- Conceptual example (see explanation below)",
+            example_explanation=display_text,
+            common_pitfall=common_pitfall,
+            example_metadata=ExampleMetadata(
+                source_type='conceptual',
+                selection_method='conceptual_explanation',
+                matched_concepts=[concept_id],
+                confidence=0.8,
+                is_conceptual=True,
+                _used_default_example=False,
+                _example_source_type='conceptual',
+                _example_match_score=0.8,
+                _example_selection_reason='SQL-optional concept: using conceptual explanation'
+            ),
+            source_sql="",
+            source_example_sql=None,
+            practice_example_sql=None,
+            conceptual_example=conceptual_text
+        )
+
     def _build_grounded_L1_content(
         self, 
         concept_id: str, 
@@ -3826,145 +3970,127 @@ class UnitGenerator:
         Uses concept-specific scoring to select the best matching SQL example
         from extracted content, ensuring examples match the concept being taught.
         
-        Checks for curated content first for concepts that need high-quality
-        pre-written L2 units.
+        For SQL-optional concepts (theory/design), uses conceptual example path
+        with lower thresholds (1.0 vs 2.5).
+        
+        Collects ALL candidates first, then ranks by score and source preference
+        to select the best example rather than taking the first acceptable one.
         """
-        # Check for curated L2 content first
-        curated_pack = self._load_curated_unit_pack(concept_id)
-        if curated_pack and "L2_hint_plus_example" in curated_pack:
-            curated_l2 = curated_pack["L2_hint_plus_example"]
-            example_sql = curated_l2.get("example_sql", "")
-            # Transform SQL to practice schema
-            if example_sql:
-                example_sql = self.transformer.transform_to_practice_schema(
-                    example_sql, ["Sailors", "Boats", "Reserves"]
-                )
-            
-            example_metadata = ExampleMetadata(
-                match_score=1.0,
-                source_type="curated",
-                selection_method="curated_pack",
-            )
-            
-            # Transform SQL to practice schema but preserve source
-            source_example_sql = example_sql
-            practice_example_sql = self.transformer.transform_to_practice_schema(
-                example_sql, ["Sailors", "Boats", "Reserves"]
-            ) if example_sql else ""
-            
-            return L2Content(
-                hint_text=curated_l2.get("hint_text", l1_hint)[:300],
-                example_sql=practice_example_sql[:500],
-                example_explanation=curated_l2.get("example_explanation", "")[:300],
-                common_pitfall=curated_l2.get("common_pitfall", "")[:200],
-                example_metadata=example_metadata,
-                source_sql=source_example_sql[:500],
-            )
+        # Check if this is a SQL-optional concept and try conceptual path first
+        if self._is_sql_optional_concept(concept_id):
+            conceptual_l2 = self._build_conceptual_l2(concept_id, blocks)
+            if conceptual_l2:
+                return conceptual_l2
+            # Fall through to normal SQL extraction with lower threshold
+        
+        # Determine threshold based on concept type
+        # SQL-optional concepts (theory/design) use lower threshold (1.0)
+        # SQL concepts use strict threshold (2.5) for high-quality matches
+        threshold = (EXAMPLE_MATCH_THRESHOLD_SQL_OPTIONAL 
+                     if self._is_sql_optional_concept(concept_id) 
+                     else EXAMPLE_MATCH_THRESHOLD)
+        
+        # Create a list to hold all candidates
+        candidates = []
         
         # Extract SQL examples from blocks
         sql_examples = self._extract_sql_examples_from_blocks(blocks)
         
-        # Score and select the best example for this concept
-        best_example = None
-        best_page = None
-        best_score = -1.0
-        
+        # For each extracted SQL example, create a candidate
         for ex in sql_examples:
-            score = self._score_sql_for_concept(ex["sql"], concept_id)
-            if score > best_score:
-                best_score = score
-                best_example = ex["sql"]
-                best_page = ex["page"]
+            score, matched_signals = self._score_sql_for_concept(ex["sql"], concept_id)
+            
+            candidates.append({
+                'sql': ex["sql"],
+                'score': score,
+                'source_type': 'extracted',
+                'source_block_id': f"page_{ex.get('page', 0)}",
+                'page': ex.get('page', 0),
+                'matched_signals': matched_signals if matched_signals else ["low_score"],
+            })
         
-        # Determine final example and explanation with metadata tracking
-        # Raised threshold from 0.3 to 2.5 to ensure only high-quality matches
-        # are accepted as extracted examples, reducing default fallback
-        EXAMPLE_MATCH_THRESHOLD = 2.5
-        example_metadata: ExampleMetadata | None = None
+        # Add curated candidates if available
+        curated_l2 = self._load_curated_l2_content(concept_id)
+        if curated_l2 and curated_l2.get("example_sql"):
+            candidates.append({
+                'sql': curated_l2["example_sql"],
+                'score': curated_l2.get('score', 2.0),  # curated gets medium-high score
+                'source_type': 'curated',
+                'source_block_id': 'curated',
+                'page': 0,
+            })
         
-        # Track both source SQL (original) and practice SQL (transformed)
-        source_sql = ""
-        practice_sql = ""
+        # Add default as last resort
+        default_sql = self._get_default_example_sql(concept_id)
+        candidates.append({
+            'sql': default_sql,
+            'score': 0.5,  # default gets low score
+            'source_type': 'default',
+            'source_block_id': 'default',
+            'page': 0,
+        })
         
-        if best_example and best_score >= EXAMPLE_MATCH_THRESHOLD:
-            # Use the best matched example from source
-            source_sql = best_example
-            example_explanation = f"Example from page {best_page}."
-            example_metadata = ExampleMetadata(
-                match_score=best_score,
-                source_type="extracted",
-                selection_method="scored",
-            )
-        else:
-            # Check if curated content exists before using generic defaults
-            curated_l2 = self._load_curated_l2_content(concept_id)
-            if curated_l2 and curated_l2.get("example_sql"):
-                source_sql = curated_l2["example_sql"]
-                example_explanation = curated_l2.get("example_explanation", "Curated example.")
-                example_metadata = ExampleMetadata(
-                    match_score=best_score if best_score > 0 else 0.0,
-                    source_type="curated",
-                    selection_method="curated_fallback",
-                )
+        # Sort by: score (desc), then source preference (extracted > curated > default)
+        source_preference = {'extracted': 0, 'curated': 1, 'default': 2}
+        candidates.sort(key=lambda x: (-x['score'], source_preference[x['source_type']]))
+        
+        # Select best candidate that meets threshold
+        best_candidate = None
+        for candidate in candidates:
+            if candidate['score'] >= threshold:
+                best_candidate = candidate
+                break
+        
+        # If no candidate meets threshold and we have candidates, use best available
+        # For SQL-optional concepts, we already tried conceptual path above
+        if best_candidate is None and candidates:
+            best_candidate = candidates[0]  # Best available even if below threshold
+        
+        # If still nothing, use default (should be last in list)
+        if best_candidate is None:
+            best_candidate = candidates[-1] if candidates else {
+                'sql': default_sql,
+                'score': 0.5,
+                'source_type': 'default',
+                'source_block_id': 'default',
+                'page': 0,
+            }
+        
+        # Determine source and practice SQL with validation
+        source_sql_raw = best_candidate['sql']
+        page = best_candidate.get('page', 0)
+        
+        # Validate and clean source SQL
+        source_example_sql = self._validate_example_sql(source_sql_raw)
+        
+        # Build example explanation based on source type
+        conceptual_example: str | None = None
+        if best_candidate['source_type'] == 'extracted' and page > 0:
+            example_explanation = f"Example from page {page}."
+        elif best_candidate['source_type'] == 'curated':
+            example_explanation = curated_l2.get("example_explanation", "Curated example.") if curated_l2 else "Curated example."
+        elif best_candidate['source_type'] == 'default':
+            if self._is_sql_optional_concept(concept_id):
+                # For theoretical concepts, use concept explanation
+                ontology = self._get_ontology_info(concept_id)
+                concept_def = ontology.get("definition", "")
+                conceptual_example = concept_def if concept_def else f"{concept_id.replace('-', ' ').title()} involves database design principles and theoretical concepts."
+                source_example_sql = f"-- {concept_id}: Conceptual knowledge\n-- See explanation for design principles"
+                example_explanation = conceptual_example
             else:
-                # Check if this is a theoretical/design concept that doesn't need executable SQL
-                theoretical_concepts = [
-                    "normalization", "database-design", "er-diagrams", "relational-model",
-                    "acid-properties", "cap-theorem", "data-integrity", "schema-design"
-                ]
-                is_theoretical = concept_id in theoretical_concepts
-                
-                # Before falling back to default, try to use ANY extracted SQL
-                # even if score is low - it's better than generic defaults
-                if sql_examples and not is_theoretical:
-                    # Use the first extracted SQL even with low score
-                    best_example = sql_examples[0]["sql"]
-                    best_page = sql_examples[0].get("page", 0)
-                    source_sql = best_example
-                    example_explanation = f"Example extracted from source text (page {best_page})."
-                    example_metadata = ExampleMetadata(
-                        match_score=best_score if best_score > 0 else 0.1,
-                        source_type="extracted",
-                        selection_method="low_score_fallback",
-                    )
-                else:
-                    # Truly no extracted SQL - use curated if available
-                    curated_l3 = self._load_curated_l3_content(concept_id)
-                    if curated_l3 and curated_l3.get("examples"):
-                        curated_example = curated_l3["examples"][0]
-                        source_sql = curated_example.get("sql", "")
-                        example_explanation = curated_example.get("explanation", "Curated example from instructional content.")
-                        example_metadata = ExampleMetadata(
-                            match_score=0.8,
-                            source_type="curated",
-                            selection_method="curated_l3_fallback",
-                        )
-                    elif is_theoretical:
-                        # For theoretical concepts, use concept explanation as L2 instead of SQL
-                        ontology = self._get_ontology_info(concept_id)
-                        concept_def = ontology.get("definition", "")
-                        source_sql = f"-- {concept_id}: Conceptual knowledge\n-- See explanation for design principles"
-                        example_explanation = concept_def if concept_def else f"{concept_id.replace('-', ' ').title()} involves database design principles and theoretical concepts."
-                        example_metadata = ExampleMetadata(
-                            match_score=0.5,
-                            source_type="curated",
-                            selection_method="theoretical_concept",
-                        )
-                    else:
-                        # Last resort: concept-appropriate default example
-                        source_sql = self._get_default_example_sql(concept_id)
-                        example_explanation = "Basic usage example."
-                        example_metadata = ExampleMetadata(
-                            match_score=best_score if best_score > 0 else 0.0,
-                            source_type="default",
-                            selection_method="fallback_threshold",
-                            is_default_fallback=True,
-                        )
+                example_explanation = "Basic usage example."
+        else:
+            example_explanation = "Example demonstrating the concept."
         
         # Transform SQL to practice schema (preserving original)
-        practice_sql = self.transformer.transform_to_practice_schema(
-            source_sql, ["Sailors", "Boats", "Reserves"]
-        )
+        # Only transform if it's not a conceptual/non-executable example
+        if source_example_sql.startswith("--"):
+            practice_example_sql = source_example_sql
+        else:
+            practice_example_sql = self.transformer.transform_to_practice_schema(
+                source_example_sql, ["Sailors", "Boats", "Reserves"]
+            )
+            practice_example_sql = self._validate_example_sql(practice_example_sql)
         
         # Get pitfall from ontology or default
         ontology = self._get_ontology_info(concept_id)
@@ -3974,13 +4100,47 @@ class UnitGenerator:
         else:
             common_pitfall = self._get_default_pitfall(concept_id)
         
+        # Build selection reason string
+        is_sql_optional = self._is_sql_optional_concept(concept_id)
+        selection_reason = f"score={best_candidate['score']:.2f}, threshold={threshold}, sql_optional={is_sql_optional}"
+        
+        # Determine if this is a conceptual example (non-executable SQL)
+        is_conceptual = (is_sql_optional and best_candidate['source_type'] == 'default') or \
+                        'Conceptual knowledge' in source_example_sql
+        
+        # Calculate confidence score (0-1)
+        confidence = min(best_candidate['score'] / 5.0, 1.0)
+        
+        # Get matched signals from candidate
+        matched_signals = best_candidate.get('matched_signals', [])
+        
+        # Create metadata with audit fields
+        example_metadata = ExampleMetadata(
+            source_type=best_candidate['source_type'],
+            selection_method='ranked_score',
+            matched_concepts=[concept_id],
+            page=page if page > 0 else None,
+            confidence=confidence,
+            block_types=["sql_code"] if best_candidate['source_type'] == 'extracted' else [best_candidate['source_type']],
+            evidence_count=1 if best_candidate['source_type'] == 'extracted' else 0,
+            _used_default_example=best_candidate['source_type'] == 'default',
+            _example_source_type=best_candidate['source_type'],
+            _example_match_score=best_candidate['score'],
+            _example_selection_reason=selection_reason,
+            _example_matched_signals=matched_signals if matched_signals else [],
+            is_conceptual=is_conceptual,
+        )
+        
         return L2Content(
             hint_text=l1_hint[:300],
-            example_sql=practice_sql[:500],
+            example_sql=practice_example_sql[:500],
             example_explanation=example_explanation[:300],
             common_pitfall=common_pitfall[:200],
             example_metadata=example_metadata,
-            source_sql=source_sql[:500],
+            source_sql=source_example_sql[:500],
+            source_example_sql=source_example_sql[:500] if not is_conceptual else None,
+            practice_example_sql=practice_example_sql[:500] if not is_conceptual else None,
+            conceptual_example=conceptual_example[:1000] if conceptual_example else None,
         )
     
     def _extract_l3_from_blocks(self, blocks: list[ContentBlock], concept_id: str) -> dict:
