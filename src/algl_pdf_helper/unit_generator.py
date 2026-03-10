@@ -2054,6 +2054,46 @@ class UnitGenerator:
             if re.search(r'where.*[=<>]+\s*\(\s*select', sql_lower):
                 score += 5.0
         
+        # Outer join: detect LEFT/RIGHT/FULL JOIN patterns
+        if concept_id == "outer-join":
+            if re.search(r'\b(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN\b', sql_upper):
+                score += 5.0
+            if re.search(r'LEFT\s+JOIN', sql_upper) and 'ON' in sql_upper:
+                score += 3.0
+        
+        # Self-join: detect same-table alias patterns
+        if concept_id == "self-join":
+            if re.search(r'FROM\s+\w+\s+\w+.*JOIN\s+\w+\s+\w+', sql_upper):
+                score += 5.0
+            if re.search(r'\w+\.\w+.*=.*\w+\.\w+', sql):
+                score += 3.0
+        
+        # HAVING clause: detect HAVING with aggregate
+        if concept_id == "having-clause":
+            if 'HAVING' in sql_upper:
+                score += 5.0
+            if re.search(r'HAVING\s+\w+\s*\(', sql_upper):
+                score += 3.0
+        
+        # Create table: detect CREATE TABLE with columns
+        if concept_id == "create-table":
+            if re.search(r'CREATE\s+TABLE\s+\w+\s*\(', sql_upper):
+                score += 5.0
+            if re.search(r'(INT|VARCHAR|DATE|DECIMAL|PRIMARY\s+KEY)', sql_upper):
+                score += 3.0
+        
+        # Transactions: detect BEGIN/COMMIT/ROLLBACK
+        if concept_id == "transactions":
+            if re.search(r'\b(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION)\b', sql_upper):
+                score += 5.0
+        
+        # Stored procedures: detect CREATE PROCEDURE/FUNCTION
+        if concept_id == "stored-procedures":
+            if re.search(r'CREATE\s+(PROCEDURE|FUNCTION|PROC)', sql_upper):
+                score += 5.0
+            if 'CALL' in sql_upper:
+                score += 3.0
+        
         return score
 
     def _get_default_example_sql(self, concept_id: str) -> str:
@@ -2517,6 +2557,9 @@ class UnitGenerator:
         sql_pattern = r"(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+.+?;"
         examples = []
         
+        # Reject patterns that are just keywords with semicolon
+        broken_pattern = re.compile(r'^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s*;$', re.IGNORECASE)
+        
         for block in blocks:
             if not block.text_content:
                 continue
@@ -2524,8 +2567,19 @@ class UnitGenerator:
             # Use finditer to get full matches, not just captured groups
             for match in re.finditer(sql_pattern, block.text_content, re.IGNORECASE | re.DOTALL):
                 sql = match.group(0).strip()
-                # Validate it's not just a keyword - must have substantial content
-                if len(sql) > 20 and sql.count(' ') >= 2:  # At least "SELECT x FROM"
+                
+                # Explicit rejection of broken SQL like "SELECT;", "INSERT;", etc.
+                if broken_pattern.match(sql):
+                    import warnings
+                    warnings.warn(f"Rejecting broken SQL pattern: {sql}", UserWarning)
+                    continue
+                
+                # Validate: require at least 3 words AND must contain 'FROM' or be DDL
+                word_count = len(sql.split())
+                has_from = 'FROM' in sql.upper()
+                is_ddl = sql.upper().startswith(('CREATE', 'ALTER', 'DROP'))
+                
+                if word_count >= 3 and (has_from or is_ddl):
                     # Clean up - take first 200 chars to avoid capturing too much
                     sql = sql[:200] if len(sql) > 200 else sql
                     examples.append({
@@ -3531,7 +3585,7 @@ class UnitGenerator:
                 best_page = ex["page"]
         
         # Determine final example and explanation with metadata tracking
-        EXAMPLE_MATCH_THRESHOLD = 2.0
+        EXAMPLE_MATCH_THRESHOLD = 1.0
         example_metadata: ExampleMetadata | None = None
         
         if best_example and best_score >= EXAMPLE_MATCH_THRESHOLD:
@@ -3544,14 +3598,26 @@ class UnitGenerator:
                 selection_method="scored",
             )
         else:
-            # Fall back to concept-appropriate default example
-            example_sql = self._get_default_example_sql(concept_id)
-            example_explanation = "Basic usage example."
-            example_metadata = ExampleMetadata(
-                match_score=best_score if best_score > 0 else 0.0,
-                source_type="default",
-                selection_method="fallback_threshold",
-            )
+            # Check if curated content exists before using generic defaults
+            curated_l2 = self._load_curated_l2_content(concept_id)
+            if curated_l2 and curated_l2.get("example_sql"):
+                example_sql = curated_l2["example_sql"]
+                example_explanation = curated_l2.get("example_explanation", "Curated example.")
+                example_metadata = ExampleMetadata(
+                    match_score=best_score if best_score > 0 else 0.0,
+                    source_type="curated",
+                    selection_method="curated_fallback",
+                )
+            else:
+                # Fall back to concept-appropriate default example as last resort
+                example_sql = self._get_default_example_sql(concept_id)
+                example_explanation = "Basic usage example."
+                example_metadata = ExampleMetadata(
+                    match_score=best_score if best_score > 0 else 0.0,
+                    source_type="default",
+                    selection_method="fallback_threshold",
+                    is_default_fallback=True,
+                )
         
         # Transform SQL to practice schema
         example_sql = self.transformer.transform_to_practice_schema(
