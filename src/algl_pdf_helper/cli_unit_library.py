@@ -277,6 +277,31 @@ def process_command(
         "--clear-repair-cache",
         help="Clear the repair cache before processing",
     ),
+    page_range: str | None = typer.Option(
+        None,
+        "--page-range",
+        help="Process only specific pages (e.g., '1-100' or '50,75,100-120')",
+    ),
+    chapter_range: str | None = typer.Option(
+        None,
+        "--chapter-range",
+        help="Process only specific chapters (e.g., '1-5' or '3,4,7'). Note: Requires PDF bookmarks/table of contents",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume from last checkpoint (if available)",
+    ),
+    cache_extraction: bool = typer.Option(
+        True,
+        "--cache-extraction/--no-cache-extraction",
+        help="Cache and reuse PDF extraction (speeds up re-runs)",
+    ),
+    allow_offbook_curated: bool = typer.Option(
+        False,
+        "--allow-offbook-curated",
+        help="Allow off-book curated concepts not present in source PDF (opt-in augmentation)",
+    ),
 ):
     """
     Process a PDF into a unit library.
@@ -297,17 +322,27 @@ def process_command(
             Blocks: placeholder practice links, default L2 examples, 
             synthetic-only L3, weak curated content.
     
+    Page/Chapter Range:
+        Use --page-range to process specific pages (e.g., '1-100' or '50,75,100-120').
+        Use --chapter-range to process specific chapters (requires PDF bookmarks).
+        Use --resume to continue from a previous interrupted run.
+        Use --no-cache-extraction to force re-extraction of the PDF.
+    
     Example:
         algl-pdf process ./textbook.pdf --output-dir ./output
         algl-pdf process ./textbook.pdf -o ./output --filter-level production
         algl-pdf process ./textbook.pdf -o ./output --export-mode student_ready
         algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
         algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
+        algl-pdf process ./textbook.pdf -o ./output --page-range 1-50
+        algl-pdf process ./textbook.pdf -o ./output --chapter-range 1-3
+        algl-pdf process ./textbook.pdf -o ./output --resume
+        algl-pdf process ./textbook.pdf -o ./output --page-range 100-200 --resume
     """
     # Clear repair cache if requested
     if clear_repair_cache:
         try:
-            from ..ollama_repair import RepairCache
+            from .ollama_repair import RepairCache
             cache = RepairCache()
             count = cache.clear_cache()
             console.print(f"[green]✓ Cleared {count} cached repairs[/green]")
@@ -328,6 +363,21 @@ def process_command(
     if doc_id is None:
         doc_id = generate_doc_id()
     
+    # Parse page/chapter ranges
+    parsed_page_range = _parse_range(page_range) if page_range else None
+    parsed_chapter_range = _parse_range(chapter_range) if chapter_range else None
+    
+    # Show range info in header
+    range_info = ""
+    if parsed_page_range:
+        range_info += f"\nPage Range: {page_range}"
+    if parsed_chapter_range:
+        range_info += f"\nChapter Range: {chapter_range}"
+    if resume:
+        range_info += "\nMode: Resume from checkpoint"
+    if not cache_extraction:
+        range_info += "\nCache: Disabled"
+    
     # Show header panel
     export_mode_display = f"[green]{export_mode}[/green]" if export_mode == "student_ready" else export_mode
     console.print(Panel(
@@ -336,7 +386,8 @@ def process_command(
         f"Output: {output_dir}/\n"
         f"Doc ID: {doc_id}\n"
         f"Filter Level: {filter_level}\n"
-        f"Export Mode: {export_mode_display}",
+        f"Export Mode: {export_mode_display}"
+        f"{range_info}",
         title="📚 Unit Library Pipeline",
         border_style="blue"
     ))
@@ -371,6 +422,11 @@ def process_command(
         use_ollama_repair=use_ollama_repair,
         ollama_model=ollama_model,
         ollama_repair_threshold=ollama_repair_threshold,
+        page_range=parsed_page_range,  # type: ignore
+        chapter_range=parsed_chapter_range,  # type: ignore
+        resume_from_checkpoint=resume,
+        cache_extraction=cache_extraction,
+        allow_offbook_curated=allow_offbook_curated,
     )
     
     # Run the pipeline with progress display
@@ -572,6 +628,76 @@ def process_command(
         console.print(f"[yellow]Warning: Could not verify exported library: {e}[/yellow]")
 
 
+def _parse_range(range_str: str) -> tuple[int, int] | list[int]:
+    """Parse a range string like '1-100' or '1,2,3' into a tuple or list.
+    
+    Args:
+        range_str: Range string (e.g., '1-100', '50,75,100-120', '1,2,3')
+        
+    Returns:
+        Tuple (start, end) for ranges, or list of integers for comma-separated values
+        
+    Raises:
+        ValueError: If the range string is invalid
+    """
+    range_str = range_str.strip()
+    
+    # Handle range format: "1-100"
+    if '-' in range_str and ',' not in range_str:
+        parts = range_str.split('-')
+        if len(parts) == 2:
+            try:
+                start = int(parts[0].strip())
+                end = int(parts[1].strip())
+                if start < 1:
+                    raise ValueError(f"Range start must be >= 1, got {start}")
+                if end < start:
+                    raise ValueError(f"Range end ({end}) must be >= start ({start})")
+                return (start, end)
+            except ValueError as e:
+                if "must be" in str(e):
+                    raise
+                raise ValueError(f"Invalid range format: {range_str}")
+    
+    # Handle comma-separated format: "1,2,3" or "50,75,100-120"
+    if ',' in range_str:
+        pages = []
+        for part in range_str.split(','):
+            part = part.strip()
+            if '-' in part:
+                # Handle sub-range like "100-120"
+                sub_parts = part.split('-')
+                if len(sub_parts) == 2:
+                    try:
+                        start = int(sub_parts[0].strip())
+                        end = int(sub_parts[1].strip())
+                        pages.extend(range(start, end + 1))
+                    except ValueError:
+                        raise ValueError(f"Invalid sub-range format: {part}")
+                else:
+                    raise ValueError(f"Invalid sub-range format: {part}")
+            else:
+                # Single page
+                try:
+                    pages.append(int(part))
+                except ValueError:
+                    raise ValueError(f"Invalid page number: {part}")
+        
+        if not pages:
+            raise ValueError(f"No valid pages in range: {range_str}")
+        
+        return sorted(set(pages))  # Remove duplicates and sort
+    
+    # Single page number
+    try:
+        page = int(range_str)
+        if page < 1:
+            raise ValueError(f"Page number must be >= 1, got {page}")
+        return [page]
+    except ValueError:
+        raise ValueError(f"Invalid range format: {range_str}")
+
+
 def _extract_page_count(pdf_path: Path) -> int:
     """Extract page count from PDF."""
     try:
@@ -582,45 +708,6 @@ def _extract_page_count(pdf_path: Path) -> int:
         # Fallback: estimate based on file size
         file_size_mb = pdf_path.stat().st_size / (1024 * 1024)
         return int(file_size_mb * 10)  # Rough estimate: 10 pages per MB
-
-
-def _create_manifest(
-    doc_id: str,
-    stats: dict[str, Any],
-    filter_level: str,
-    llm_provider: str,
-    llm_model: str,
-    export_mode: str = "prototype",
-) -> dict[str, Any]:
-    """Create export manifest."""
-    return {
-        "export_version": "2.0.0-unit-library",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_pdf_id": doc_id,
-        "statistics": {
-            "total_units": stats["units_generated"],
-            "exported_units": stats["exported"],
-            "filtered_units": stats["filtered"],
-            "concepts_covered": stats["concepts"],
-            "misconception_units": stats["misconceptions"],
-            "reinforcement_items": stats["reinforcement"],
-        },
-        "configuration": {
-            "filter_level": filter_level,
-            "export_mode": export_mode,
-            "llm_provider": llm_provider,
-            "llm_model": llm_model,
-        },
-        "files": {
-            "manifest": "export_manifest.json",
-            "concept_ontology": "concept_ontology.json",
-            "concept_graph": "concept_graph.json",
-            "source_spans": "source_spans.jsonl",
-            "instructional_units": "instructional_units.jsonl",
-            "misconception_bank": "misconception_bank.jsonl",
-            "reinforcement_bank": "reinforcement_bank.jsonl",
-        }
-    }
 
 
 # =============================================================================
