@@ -497,6 +497,127 @@ class UnitLibraryExporter:
             return len(item.prompt) >= 10 and len(item.expected_answer) >= 1
         return True
     
+    def _compute_l2_stats(self, units: list[InstructionalUnit]) -> dict:
+        """Compute L2 source type statistics.
+        
+        Analyzes all L2 (hint_plus_example) units and categorizes them by
+        their source type: default, extracted, curated, or conceptual.
+        
+        Args:
+            units: List of instructional units to analyze
+            
+        Returns:
+            Dictionary with L2 statistics including counts and percentages
+        """
+        l2_units = [u for u in units if u.target_stage == 'L2_hint_plus_example']
+        
+        stats = {
+            'total_l2_units': len(l2_units),
+            'default_count': 0,
+            'extracted_count': 0,
+            'curated_count': 0,
+            'conceptual_count': 0,
+            'unknown_count': 0,
+            'default_percentage': 0.0,
+            'concepts_with_default': []
+        }
+        
+        for unit in l2_units:
+            content = unit.content or {}
+            metadata = content.get('example_metadata', {})
+            
+            # Check audit fields first
+            source_type = metadata.get('_example_source_type') or metadata.get('source_type', 'unknown')
+            used_default = metadata.get('_used_default_example', False)
+            
+            if used_default or source_type == 'default':
+                stats['default_count'] += 1
+                stats['concepts_with_default'].append(unit.concept_id)
+            elif source_type == 'extracted':
+                stats['extracted_count'] += 1
+            elif source_type == 'curated':
+                stats['curated_count'] += 1
+            elif source_type == 'conceptual':
+                stats['conceptual_count'] += 1
+            else:
+                stats['unknown_count'] += 1
+        
+        # Calculate percentage
+        if stats['total_l2_units'] > 0:
+            stats['default_percentage'] = round(
+                stats['default_count'] / stats['total_l2_units'] * 100, 1
+            )
+        
+        return stats
+    
+    def _compute_stage_counts(self, units: list[InstructionalUnit]) -> dict:
+        """Compute unit counts per target stage.
+        
+        Args:
+            units: List of instructional units
+            
+        Returns:
+            Dictionary mapping stage names to counts
+        """
+        counts: dict[str, int] = {}
+        for unit in units:
+            stage = unit.target_stage
+            counts[stage] = counts.get(stage, 0) + 1
+        return counts
+    
+    def _write_l2_audit_log(
+        self,
+        output_dir: Path,
+        units: list[InstructionalUnit]
+    ) -> Path | None:
+        """Write detailed L2 selection audit log.
+        
+        Creates a machine-readable JSONL file with audit information for each
+        L2 unit, including source type, match scores, and selection reasons.
+        
+        Args:
+            output_dir: Directory to write the audit log
+            units: List of instructional units to audit
+            
+        Returns:
+            Path to the audit log file, or None if no L2 units
+        """
+        l2_units = [u for u in units if u.target_stage == 'L2_hint_plus_example']
+        if not l2_units:
+            return None
+        
+        audit_path = output_dir / 'l2_selection_audit.jsonl'
+        
+        with open(audit_path, 'w', encoding='utf-8') as f:
+            for unit in l2_units:
+                content = unit.content or {}
+                metadata = content.get('example_metadata', {})
+                
+                # Get SQL preview (truncate if too long)
+                source_sql = content.get('source_example_sql', '')
+                if source_sql:
+                    source_sql_preview = source_sql[:100] + '...' if len(source_sql) > 100 else source_sql
+                else:
+                    source_sql_preview = None
+                
+                audit_entry = {
+                    'concept_id': unit.concept_id,
+                    'unit_id': unit.unit_id,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'source_type': metadata.get('_example_source_type', 'unknown'),
+                    'match_score': metadata.get('_example_match_score', 0.0),
+                    'selection_reason': metadata.get('_example_selection_reason', ''),
+                    'matched_signals': metadata.get('_example_matched_signals', []),
+                    'used_default': metadata.get('_used_default_example', False),
+                    'is_conceptual': metadata.get('is_conceptual', False),
+                    'source_sql_preview': source_sql_preview,
+                    'page': metadata.get('page')
+                }
+                f.write(json.dumps(audit_entry, ensure_ascii=False) + '\n')
+        
+        self._logger.info(f"Wrote L2 audit log: {audit_path.name} ({len(l2_units)} entries)")
+        return audit_path
+    
     def _extract_all_source_spans(
         self,
         library: UnitLibraryExport,
@@ -919,6 +1040,23 @@ class UnitLibraryExporter:
         for unit in library.instructional_units:
             units_per_concept[unit.concept_id] += 1
         
+        # Compute L2 statistics
+        l2_stats = self._compute_l2_stats(library.instructional_units)
+        
+        # Write audit log
+        audit_path = self._write_l2_audit_log(output_dir, library.instructional_units)
+        
+        # Log L2 summary
+        self._logger.info(
+            f"L2 Export Stats: {l2_stats['extracted_count']} extracted, "
+            f"{l2_stats['curated_count']} curated, "
+            f"{l2_stats['default_count']} default "
+            f"({l2_stats['default_percentage']}%)"
+        )
+        
+        if l2_stats['default_count'] > 0:
+            self._logger.warning(f"Concepts using default L2: {l2_stats['concepts_with_default']}")
+        
         # Get quality pass rate from report
         quality_report = library.quality_report
         summary = quality_report.get("summary", {})
@@ -1016,6 +1154,8 @@ class UnitLibraryExporter:
                 "units_per_concept": dict(units_per_concept),
                 "export_filter_pass_rate": export_filter_pass_rate,
                 "quality_gate_pass_rate": quality_pass_rate,
+                "l2": l2_stats,
+                "by_stage": self._compute_stage_counts(library.instructional_units),
                 "misconceptions": {
                     "generated": generated_misconceptions,
                     "exported": exported_misconceptions,
@@ -1027,6 +1167,11 @@ class UnitLibraryExporter:
                 "total_misconceptions": exported_misconceptions,
                 "total_reinforcement": exported_reinforcement,
             },
+            "quality_flags": {
+                "high_default_l2_rate": l2_stats['default_percentage'] > 30,
+                "l2_coverage_complete": l2_stats['unknown_count'] == 0,
+                "has_l2_audit_log": audit_path is not None,
+            },
             "provenance": provenance,
             "validation_results": validation_results,
             "filter_results": filter_results,
@@ -1036,6 +1181,7 @@ class UnitLibraryExporter:
                 "exported": self.QUALITY_REPORT_FILE,
             },
             "files": files_section,
+            "audit_log": str(audit_path.relative_to(output_dir)) if audit_path else None,
         }
         
         filepath = output_dir / self.MANIFEST_FILE

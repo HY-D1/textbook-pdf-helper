@@ -1498,6 +1498,9 @@ class InstructionalPipeline:
         
         self._logger.info(f"Generated {len(self._instructional_units)} instructional units")
         
+        # Log L2 generation statistics
+        self._log_l2_generation_stats(self._instructional_units)
+        
         # Log repair summary (only if repair was attempted)
         if self._repair_status.get("available"):
             repaired = len(self._repair_status.get("repaired_units", []))
@@ -1636,6 +1639,34 @@ class InstructionalPipeline:
         subtypes = list(set(p.error_subtype_id for p in patterns if p.error_subtype_id))
         
         return subtypes
+    
+    def _log_l2_generation_stats(self, units: list[InstructionalUnit]) -> None:
+        """Log L2 generation statistics.
+        
+        Analyzes L2 units and logs statistics about example source types,
+        highlighting when a high percentage of units use default examples.
+        
+        Args:
+            units: List of generated instructional units
+        """
+        l2_units = [u for u in units if u.target_stage == 'L2_hint_plus_example']
+        if not l2_units:
+            return
+        
+        default_count = 0
+        for unit in l2_units:
+            content = unit.content or {}
+            metadata = content.get('example_metadata', {})
+            if metadata.get('_used_default_example', False):
+                default_count += 1
+        
+        default_pct = default_count / len(l2_units) * 100
+        
+        print(f"[Pipeline] Generated {len(l2_units)} L2 units, "
+              f"{default_count} using defaults ({default_pct:.1f}%)")
+        
+        if default_pct > 30:  # More than 30% defaults
+            print("[Pipeline] WARNING: High default L2 rate - consider expanding curated content")
     
     def _generate_misconceptions(
         self, 

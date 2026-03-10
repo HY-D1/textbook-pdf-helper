@@ -283,6 +283,12 @@ class TextbookStaticManifest(BaseModel):
     chapters: list[ChapterInfo] = Field(default_factory=list, description="Chapter structure")
     total_exercises: int = Field(default=0, description="Total exercises extracted")
     total_examples: int = Field(default=0, description="Total SQL examples extracted")
+    
+    # L2 Statistics (new)
+    l2_stats: dict = Field(default_factory=dict, description="L2 unit source type statistics")
+    
+    # Audit log path (new)
+    audit_log_path: str | None = Field(default=None, description="Path to L2 selection audit log")
 
     @field_validator("schemaVersion")
     @classmethod
