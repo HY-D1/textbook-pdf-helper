@@ -111,3 +111,12 @@ docs/**/*.md
 AGENTS.md
 test_debug_output/
 test_exists_fix/
+
+# Generated outputs - do not commit
+murach-v*/
+murach-output/
+ramakrishnan-v*/
+ramakrishnan-output/
+outputs/
+test_output/
+code_analysis_report.py
