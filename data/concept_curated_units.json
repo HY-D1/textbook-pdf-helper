@@ -446,5 +446,389 @@
         "What information can't be captured in standard ERD notation?"
       ]
     }
+  },
+  "transactions": {
+    "L2_hint_plus_example": {
+      "hint_text": "Transactions group multiple SQL operations into a single atomic unit. Use START TRANSACTION (or BEGIN), perform your operations, then COMMIT to save or ROLLBACK to undo if something goes wrong.",
+      "example_sql": "START TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nUPDATE accounts SET balance = balance + 100 WHERE id = 2;\nCOMMIT;",
+      "example_explanation": "This transfers $100 between accounts. Both updates succeed together, or if either fails, ROLLBACK restores both accounts to their original state. No money is ever lost or created.",
+      "common_pitfall": "Forgetting COMMIT leaves changes in limbo - visible to you but not saved permanently"
+    },
+    "L3_explanation": {
+      "definition": "A transaction is a sequence of SQL operations executed as a single atomic unit of work. Transactions follow ACID properties: Atomicity (all or nothing), Consistency (valid state to valid state), Isolation (concurrent transactions don't interfere), and Durability (committed changes survive failures). BEGIN/START TRANSACTION marks the start, COMMIT makes changes permanent, and ROLLBACK undoes them.",
+      "why_it_matters": "Transactions are essential for data integrity in multi-step operations. Bank transfers, inventory updates, and order processing all require multiple related changes. Without transactions, a crash midway could leave data inconsistent - money deducted but not transferred, inventory reduced but order not created. ACID guarantees ensure reliable processing even in system failures.",
+      "examples": [
+        {
+          "title": "Basic bank transfer with error handling",
+          "sql": "START TRANSACTION;\n\n-- Deduct from sender\nUPDATE accounts SET balance = balance - 500 WHERE account_id = 101;\n\n-- Add to receiver\nUPDATE accounts SET balance = balance + 500 WHERE account_id = 202;\n\n-- Verify both accounts exist and have valid balances\nIF ROW_COUNT() = 1 THEN\n    COMMIT;\nELSE\n    ROLLBACK;\nEND IF;",
+          "explanation": "Both updates must succeed for the transaction to commit. If account 202 doesn't exist, ROLLBACK restores account 101's balance.",
+          "scenario": "ATM transfer: ensuring money isn't lost in transit due to errors."
+        },
+        {
+          "title": "Multi-table order creation",
+          "sql": "START TRANSACTION;\n\n-- Create the order\nINSERT INTO orders (customer_id, order_date, total) VALUES (5, CURDATE(), 150.00);\nSET @order_id = LAST_INSERT_ID();\n\n-- Add order items\nINSERT INTO order_items (order_id, product_id, quantity, price)\nVALUES (@order_id, 101, 2, 50.00), (@order_id, 102, 1, 50.00);\n\n-- Update inventory\nUPDATE products SET stock = stock - 2 WHERE product_id = 101;\nUPDATE products SET stock = stock - 1 WHERE product_id = 102;\n\nCOMMIT;",
+          "explanation": "Order, items, and inventory updates are atomic. If inventory update fails (insufficient stock), the entire order is rolled back.",
+          "scenario": "E-commerce checkout: inventory, order, and items must all succeed together."
+        },
+        {
+          "title": "Using savepoints for partial rollback",
+          "sql": "START TRANSACTION;\n\nINSERT INTO orders (customer_id) VALUES (1);\nSET @order_id = LAST_INSERT_ID();\n\nSAVEPOINT after_order_created;\n\nINSERT INTO order_items (order_id, product_id) VALUES (@order_id, 5);\n\n-- Oops, wrong product - rollback just this part\nROLLBACK TO SAVEPOINT after_order_created;\n\nINSERT INTO order_items (order_id, product_id) VALUES (@order_id, 6);\nCOMMIT;",
+          "explanation": "SAVEPOINT creates a marker within a transaction. You can roll back to it without aborting the entire transaction, useful for complex workflows.",
+          "scenario": "Multi-step form where some operations can be retried without starting over."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Forgetting COMMIT",
+          "error_sql": "START TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\n-- Forgot COMMIT",
+          "error_message": "Changes appear in your session but disappear when you disconnect; other users don't see changes",
+          "why_it_happens": "Uncommitted changes are only visible in the current session and are lost on disconnect.",
+          "fix_sql": "START TRANSACTION;\nUPDATE accounts SET balance = balance - 100 WHERE id = 1;\nCOMMIT;",
+          "key_takeaway": "Every START TRANSACTION needs a matching COMMIT or ROLLBACK."
+        },
+        {
+          "title": "Holding transactions open too long",
+          "error_sql": "START TRANSACTION;\nSELECT * FROM inventory WHERE product_id = 5;\n-- Application takes 30 seconds to process\nUPDATE inventory SET stock = stock - 1 WHERE product_id = 5;\nCOMMIT;",
+          "error_message": "Lock wait timeout exceeded; other transactions blocked",
+          "why_it_happens": "Locks are held for the entire transaction duration. Long transactions block other operations and can cause deadlocks.",
+          "fix_sql": "-- Keep transactions short and focused\nSTART TRANSACTION;\nUPDATE inventory SET stock = stock - 1 WHERE product_id = 5;\nCOMMIT;\n-- Do application processing outside the transaction",
+          "key_takeaway": "Transactions should be as short as possible. Get in, do work, commit immediately."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Transactions represent one of the fundamental differences between databases and simple file storage. They provide the guarantees needed for reliable concurrent access and system resilience.",
+      "key_takeaways": [
+        "ACID properties ensure data integrity even in failure scenarios",
+        "Transactions enable safe concurrent access by multiple users",
+        "Keep transactions short to minimize locking and improve throughput",
+        "Understanding isolation levels helps balance consistency vs concurrency"
+      ],
+      "connection_prompts": [
+        "What would happen to a bank account balance if a transfer crashed midway without transactions?",
+        "When would you use ROLLBACK TO SAVEPOINT instead of full ROLLBACK?",
+        "How do transactions interact with other concurrent transactions?"
+      ]
+    }
+  },
+  "outer-join": {
+    "L2_hint_plus_example": {
+      "hint_text": "OUTER JOIN returns all rows from one table (the preserved table), plus matching rows from the other. If there's no match, NULLs fill the other table's columns. Use LEFT JOIN to keep all left table rows, RIGHT JOIN for all right table rows.",
+      "example_sql": "SELECT c.customer_name, o.order_id, o.total\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id;",
+      "example_explanation": "This returns ALL customers, even those who haven't placed orders. Customers without orders show NULL for order_id and total. Use this to find customers who haven't purchased yet.",
+      "common_pitfall": "Filtering on the right table in WHERE (like WHERE o.total > 100) removes unmatched rows, defeating the purpose of LEFT JOIN"
+    },
+    "L3_explanation": {
+      "definition": "An OUTER JOIN returns all rows from one table (the preserved table), plus matching rows from the other table. If there's no match, NULL values are returned for the other table's columns. Unlike INNER JOIN, you won't lose unmatched records. LEFT JOIN keeps all left table rows; RIGHT JOIN keeps all right table rows; FULL OUTER JOIN (not in MySQL) keeps rows from both.",
+      "why_it_matters": "OUTER JOINs are essential when you need to find records that don't have matches in another table, like customers who haven't placed orders, or products that haven't been sold. Without OUTER JOINs, you'd miss these important business insights. Real-world example: A marketing team needs to identify inactive customers for a re-engagement campaign.",
+      "examples": [
+        {
+          "title": "Find all customers and their orders (including customers with no orders)",
+          "sql": "SELECT c.customer_name, o.order_id, o.total\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id;",
+          "explanation": "This returns ALL customers. If a customer has orders, you see them. If not, order_id and total are NULL. This is the most common use case for outer joins.",
+          "scenario": "Marketing wants to send promotions to all customers, showing their order history if they have any."
+        },
+        {
+          "title": "Finding customers with NO orders",
+          "sql": "SELECT c.customer_name, c.email\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\nWHERE o.order_id IS NULL;",
+          "explanation": "By filtering WHERE o.order_id IS NULL, we get only customers who have never placed an order. The NULL indicates no match was found.",
+          "scenario": "Sales team needs to identify leads who signed up but never purchased for targeted outreach."
+        },
+        {
+          "title": "Simulating FULL OUTER JOIN in MySQL",
+          "sql": "SELECT c.customer_name, o.order_id\nFROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id\n\nUNION\n\nSELECT c.customer_name, o.order_id\nFROM orders o\nLEFT JOIN customers c ON o.customer_id = c.customer_id\nWHERE c.customer_id IS NULL;",
+          "explanation": "MySQL doesn't support FULL OUTER JOIN directly. This UNION pattern combines LEFT JOIN results to get all records from both tables, including orphans from either side.",
+          "scenario": "Data reconciliation: finding all customers and all orders, including orphaned records from both sides."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using WHERE to filter the joined table instead of ON",
+          "error_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id\nWHERE o.total > 100;",
+          "error_message": "No error, but silently removes customers with no orders or orders <= 100",
+          "why_it_happens": "The WHERE clause filters AFTER the join is complete, turning your LEFT JOIN into an INNER JOIN for the filtered results.",
+          "fix_sql": "SELECT c.name, o.total\nFROM customers c\nLEFT JOIN orders o ON c.id = o.customer_id AND o.total > 100;",
+          "key_takeaway": "Filter the joined table in the ON clause, not the WHERE clause, when using OUTER JOINs."
+        },
+        {
+          "title": "Misunderstanding which table is preserved",
+          "error_sql": "-- Want all customers but put orders first\nSELECT * FROM orders o\nLEFT JOIN customers c ON o.customer_id = c.customer_id;",
+          "error_message": "Returns all orders (not all customers) with matching customer data",
+          "why_it_happens": "The left table (orders) is preserved. To get all customers, customers must be the left table.",
+          "fix_sql": "-- Correct: customers on the left\nSELECT * FROM customers c\nLEFT JOIN orders o ON c.customer_id = o.customer_id;",
+          "key_takeaway": "The preserved table must be on the LEFT for LEFT JOIN. Table order matters!"
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "OUTER JOINs represent a different way of thinking about data relationships. Instead of only caring about matches, they let you identify absences - what's NOT there is often as valuable as what is.",
+      "key_takeaways": [
+        "OUTER JOINs preserve all rows from one table regardless of matches",
+        "Use NULL checks in WHERE to find records without relationships",
+        "Filter conditions belong in ON clause for outer-joined tables",
+        "Table order determines which side is preserved"
+      ],
+      "connection_prompts": [
+        "Why would a business prefer to see NULL values instead of just excluding unmatched records?",
+        "When might a RIGHT JOIN be more natural than a LEFT JOIN?",
+        "Can you think of a business scenario where knowing what ISN'T there is more valuable?"
+      ]
+    }
+  },
+  "self-join": {
+    "L2_hint_plus_example": {
+      "hint_text": "A SELF JOIN is when a table is joined to itself. You use table aliases (like e1, e2) to treat the same table as two separate tables, allowing you to compare rows within the same table.",
+      "example_sql": "SELECT e.name AS employee, m.name AS manager\nFROM employees e\nLEFT JOIN employees m ON e.manager_id = m.id;",
+      "example_explanation": "We join employees to itself. 'e' represents employees, 'm' represents their managers (who are also employees). The LEFT JOIN includes employees who don't have a manager assigned.",
+      "common_pitfall": "Forgetting to use table aliases - without them, SQL can't distinguish which table's columns you're referring to"
+    },
+    "L3_explanation": {
+      "definition": "A SELF JOIN is when a table is joined to itself. You create two aliases (like employee e1 and employee e2) to treat the same table as if it were two separate tables, allowing you to compare rows within the same table. This is essential for hierarchical data like organizational charts, or for finding related pairs within the same dataset.",
+      "why_it_matters": "SELF JOINs solve hierarchical and comparative problems that exist within a single table. They're essential for organizational charts (employees and managers), finding pairs of related items, and comparing records to each other. Without self-joins, you'd need complex application code to process these relationships.",
+      "examples": [
+        {
+          "title": "Employee-Manager hierarchy",
+          "sql": "SELECT e.name AS employee_name,\n       m.name AS manager_name,\n       e.salary AS emp_salary,\n       m.salary AS mgr_salary\nFROM employees e\nLEFT JOIN employees m ON e.manager_id = m.id;",
+          "explanation": "We join the employees table to itself. 'e' represents employees, 'm' represents managers (who are also employees). The LEFT JOIN includes the CEO who has no manager.",
+          "scenario": "HR needs an organizational chart showing reporting relationships and salary comparisons."
+        },
+        {
+          "title": "Finding employees who earn more than their managers",
+          "sql": "SELECT e.name AS employee,\n       e.salary AS emp_salary,\n       m.name AS manager,\n       m.salary AS mgr_salary\nFROM employees e\nJOIN employees m ON e.manager_id = m.id\nWHERE e.salary > m.salary;",
+          "explanation": "This compares salary values between related rows in the same table. Great for finding policy violations or identifying promotion candidates.",
+          "scenario": "HR audit to identify employees who may have been over-promoted or managers who need raises."
+        },
+        {
+          "title": "Finding pairs of employees in the same department",
+          "sql": "SELECT e1.name AS employee1,\n       e2.name AS employee2,\n       e1.department\nFROM employees e1\nJOIN employees e2 ON e1.department = e2.department\n  AND e1.id < e2.id;",
+          "explanation": "We join employees to themselves where they share a department. The e1.id < e2.id prevents duplicate pairs (A,B and B,A) and self-pairing (A,A).",
+          "scenario": "Team building: identifying coworkers who might collaborate or compete."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Forgetting to use table aliases",
+          "error_sql": "SELECT name FROM employees JOIN employees ON manager_id = id;",
+          "error_message": "Column 'name' in field list is ambiguous",
+          "why_it_happens": "Without aliases (e1, e2), MySQL can't distinguish which table's 'name' column you want. Both tables in the join have the same columns.",
+          "fix_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
+          "key_takeaway": "Always use meaningful aliases (e for employee, m for manager) when self-joining."
+        },
+        {
+          "title": "Creating a Cartesian product",
+          "error_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m;",
+          "error_message": "Query runs but returns every employee paired with every other employee",
+          "why_it_happens": "Without the ON clause linking the relationship (like manager_id = id), SQL performs a cross join.",
+          "fix_sql": "SELECT e.name, m.name\nFROM employees e\nJOIN employees m ON e.manager_id = m.id;",
+          "key_takeaway": "Self-joins MUST have a join condition that defines the relationship between the two 'copies' of the table."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Self-joins demonstrate the power of relational thinking - using the same structure to model both the entity and its relationships. They're fundamental for hierarchical data.",
+      "key_takeaways": [
+        "Table aliases are mandatory for self-joins to distinguish between the two 'copies'",
+        "Self-joins model hierarchical relationships within a single table",
+        "The join condition typically matches a foreign key to a primary key in the same table",
+        "Use id < other.id patterns to avoid duplicate pairs"
+      ],
+      "connection_prompts": [
+        "Why do we need aliases for self-joins but not for joining two different tables?",
+        "How would you modify the query to show the full chain from CEO to intern?",
+        "What other real-world scenarios involve data referencing other data in the same collection?"
+      ]
+    }
+  },
+  "exists-operator": {
+    "L2_hint_plus_example": {
+      "hint_text": "EXISTS tests if a subquery returns any rows, returning TRUE or FALSE. Use it to check for related data without returning it. EXISTS stops at the first match, making it faster than IN for large tables.",
+      "example_sql": "SELECT name FROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+      "example_explanation": "This finds customers who have placed at least one order. EXISTS returns true as soon as it finds the first matching order, then moves to the next customer. It's efficient and clearly expresses 'has any' logic.",
+      "common_pitfall": "Using SELECT * in EXISTS - SELECT 1 is faster since EXISTS only checks for row existence, not column values"
+    },
+    "L3_explanation": {
+      "definition": "The EXISTS operator tests whether a subquery returns any rows. It returns TRUE if the subquery returns one or more rows, and FALSE otherwise. EXISTS is typically used with correlated subqueries (subqueries that reference columns from the outer query) to check for the existence of related records without returning actual data.",
+      "why_it_matters": "EXISTS is essential for semi-join operations - finding rows in one table that have (or don't have) corresponding rows in another. It's more efficient than IN for large tables because it stops at the first match. EXISTS also handles NULL values better than IN, and clearly expresses 'has any' or 'has none' logic that's common in business queries.",
+      "examples": [
+        {
+          "title": "Find customers who have placed orders",
+          "sql": "SELECT c.name, c.email\nFROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+          "explanation": "Returns customers who have at least one order. The subquery correlates via customer_id. EXISTS stops checking as soon as it finds the first order.",
+          "scenario": "Marketing wants to target existing customers for repeat purchases."
+        },
+        {
+          "title": "Find customers with NO orders (using NOT EXISTS)",
+          "sql": "SELECT c.name, c.email, c.signup_date\nFROM customers c\nWHERE NOT EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+          "explanation": "NOT EXISTS finds customers who have never placed an order. This is often preferred over LEFT JOIN with IS NULL because it clearly expresses the 'has none' intent.",
+          "scenario": "Sales team needs to identify and re-engage inactive customer accounts."
+        },
+        {
+          "title": "Find products that have been ordered",
+          "sql": "SELECT p.product_name, p.price\nFROM products p\nWHERE EXISTS (\n    SELECT 1 FROM order_items oi\n    WHERE oi.product_id = p.product_id\n);",
+          "explanation": "Returns only products that appear in at least one order. Useful for inventory analysis and identifying popular vs unpopular items.",
+          "scenario": "Product team analyzing which items have actually sold."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using SELECT * instead of SELECT 1 in EXISTS",
+          "error_sql": "SELECT name FROM customers c\nWHERE EXISTS (\n    SELECT * FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+          "error_message": "Works but inefficient - the database may fetch all columns",
+          "why_it_happens": "SELECT * is a habit from regular queries, but EXISTS only cares about row existence, not column values.",
+          "fix_sql": "SELECT name FROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+          "key_takeaway": "Always use SELECT 1 in EXISTS subqueries - it's faster and clearer."
+        },
+        {
+          "title": "Forgetting the correlation for correlated EXISTS",
+          "error_sql": "SELECT name FROM customers\nWHERE EXISTS (SELECT 1 FROM orders);",
+          "error_message": "Returns all customers (or none) - not what you want",
+          "why_it_happens": "Without correlating the subquery (linking orders.customer_id to customers.id), EXISTS checks if ANY orders exist, not orders for each customer.",
+          "fix_sql": "SELECT c.name FROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n);",
+          "key_takeaway": "EXISTS subqueries usually need to correlate with the outer query to check per-row conditions."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "EXISTS represents a fundamental pattern in relational database queries - the semi-join. It allows you to filter based on relationships without retrieving the related data.",
+      "key_takeaways": [
+        "EXISTS is optimized to stop at the first match",
+        "Use NOT EXISTS instead of LEFT JOIN/IS NULL for clarity",
+        "SELECT 1 is the standard idiom - don't use SELECT *",
+        "Correlated EXISTS is powerful but requires proper linking conditions"
+      ],
+      "connection_prompts": [
+        "When would you choose EXISTS over IN? Over JOIN?",
+        "How does EXISTS handle NULL values differently than IN?",
+        "Why is EXISTS often more efficient than IN for large tables?"
+      ]
+    }
+  },
+  "subquery-in-select": {
+    "L2_hint_plus_example": {
+      "hint_text": "A subquery in SELECT (scalar subquery) returns a single value that becomes a computed column. It runs once for each row, making it useful for calculated values from related tables.",
+      "example_sql": "SELECT c.name,\n       (SELECT COUNT(*) FROM orders o\n        WHERE o.customer_id = c.customer_id) AS order_count\nFROM customers c;",
+      "example_explanation": "This adds an 'order_count' column to each customer row by counting their orders. The subquery returns a single number for each customer, making it a scalar subquery.",
+      "common_pitfall": "Scalar subqueries must return exactly one value - if they return multiple rows, the query fails"
+    },
+    "L3_explanation": {
+      "definition": "A scalar subquery is a subquery placed in the SELECT clause that returns exactly one column and one row. It becomes a computed column in the result set. The subquery executes once for each row in the outer query, making it a correlated subquery when it references outer query columns. Scalar subqueries are useful for adding calculated values from related tables without joining.",
+      "why_it_matters": "Scalar subqueries let you add derived columns to your results without complex joins. They're perfect for counts, lookups, or calculations that depend on the current row. While they can be slower than joins for large datasets, they often produce cleaner, more readable queries for simple lookups. Understanding when to use subqueries vs joins is key to writing efficient SQL.",
+      "examples": [
+        {
+          "title": "Add order count to each customer",
+          "sql": "SELECT c.customer_id,\n       c.name,\n       (SELECT COUNT(*)\n        FROM orders o\n        WHERE o.customer_id = c.customer_id) AS order_count,\n       (SELECT COALESCE(SUM(total), 0)\n        FROM orders o\n        WHERE o.customer_id = c.customer_id) AS total_spent\nFROM customers c;",
+          "explanation": "Two scalar subqueries add calculated columns - one for count, one for sum. Each runs per customer. COALESCE handles customers with no orders (returns 0 instead of NULL).",
+          "scenario": "Customer dashboard showing order statistics alongside basic customer info."
+        },
+        {
+          "title": "Lookup values from related tables",
+          "sql": "SELECT o.order_id,\n       o.order_date,\n       (SELECT c.name FROM customers c\n        WHERE c.customer_id = o.customer_id) AS customer_name,\n       (SELECT COUNT(*) FROM order_items oi\n        WHERE oi.order_id = o.order_id) AS item_count\nFROM orders o;",
+          "explanation": "Scalar subqueries look up related data without explicit joins. This can be cleaner than multiple joins for simple lookups.",
+          "scenario": "Order report with customer names and item counts - simpler than joining three tables."
+        },
+        {
+          "title": "Calculate percentage of total",
+          "sql": "SELECT p.product_name,\n       p.price,\n       (SELECT AVG(price) FROM products) AS avg_price,\n       ROUND((p.price / (SELECT AVG(price) FROM products) - 1) * 100, 2)\n           AS pct_diff_from_avg\nFROM products p;",
+          "explanation": "Scalar subqueries can appear in expressions. Here we calculate how each product's price compares to the average. Note: the subquery repeats - in production, use a CTE or variable.",
+          "scenario": "Pricing analysis showing which products are above or below average price."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Subquery returns multiple rows",
+          "error_sql": "SELECT c.name,\n       (SELECT o.total FROM orders o\n        WHERE o.customer_id = c.customer_id) AS order_total\nFROM customers c;",
+          "error_message": "Subquery returns more than 1 row",
+          "why_it_happens": "Scalar subqueries must return exactly one value. If a customer has multiple orders, this fails.",
+          "fix_sql": "SELECT c.name,\n       (SELECT SUM(o.total) FROM orders o\n        WHERE o.customer_id = c.customer_id) AS total_spent\nFROM customers c;",
+          "key_takeaway": "Ensure scalar subqueries aggregate (SUM, COUNT, MAX) or filter to exactly one row."
+        },
+        {
+          "title": "Performance issues with uncorrelated subqueries in SELECT",
+          "error_sql": "SELECT name,\n       (SELECT COUNT(*) FROM orders) AS total_orders\nFROM customers;",
+          "error_message": "Slow query - the same count is calculated for every customer",
+          "why_it_happens": "Even though the subquery result is the same for all rows, it executes repeatedly. For uncorrelated values, use a JOIN or CTE instead.",
+          "fix_sql": "SELECT c.name, o.total_orders\nFROM customers c\nCROSS JOIN (SELECT COUNT(*) AS total_orders FROM orders) o;",
+          "key_takeaway": "Avoid uncorrelated subqueries in SELECT - they execute for every row. Use CROSS JOIN for global values."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "Scalar subqueries represent a trade-off between query readability and performance. They're elegant for simple lookups but can become performance bottlenecks.",
+      "key_takeaways": [
+        "Scalar subqueries must return exactly one value",
+        "They execute once per row, which can impact performance",
+        "Consider JOINs or CTEs when dealing with large datasets",
+        "Useful when you need a single calculated value per row"
+      ],
+      "connection_prompts": [
+        "When would you prefer a scalar subquery over a JOIN?",
+        "How could you rewrite a scalar subquery using a CTE?",
+        "What are the performance implications of multiple scalar subqueries in one SELECT?"
+      ]
+    }
+  },
+  "subquery-in-where": {
+    "L2_hint_plus_example": {
+      "hint_text": "Subqueries in WHERE filter rows based on values from another query. Use IN to match any value in a list, EXISTS to check for row existence, or comparison operators (=, >, <) with single-value subqueries.",
+      "example_sql": "SELECT name, salary FROM employees\nWHERE department_id IN (\n    SELECT department_id FROM departments\n    WHERE location = 'New York'\n);",
+      "example_explanation": "This finds employees in New York departments. The subquery first gets all NY department IDs, then the outer query finds employees in those departments. IN is like a list of OR conditions.",
+      "common_pitfall": "Using = instead of IN for subqueries that might return multiple rows - use IN for multiple, = for single values"
+    },
+    "L3_explanation": {
+      "definition": "Subqueries in the WHERE clause filter rows based on results from another query. They can use IN (match any value), EXISTS (check for existence), or comparison operators (=, >, <, >=, <=, <>) for single-value comparisons. Subqueries in WHERE are powerful for complex filtering that would be difficult or impossible with simple conditions.",
+      "why_it_matters": "WHERE subqueries enable dynamic filtering based on data in other tables. They're essential for queries like 'find customers who placed orders in the last month' or 'show employees who earn above their department average.' Without subqueries in WHERE, you'd need multiple queries or complex joins. Understanding the different operators (IN, EXISTS, comparisons) lets you choose the most efficient approach.",
+      "examples": [
+        {
+          "title": "Find employees in specific departments",
+          "sql": "SELECT e.name, e.salary\nFROM employees e\nWHERE e.department_id IN (\n    SELECT d.department_id\n    FROM departments d\n    WHERE d.budget > 1000000\n);",
+          "explanation": "IN matches any value returned by the subquery. This finds employees in high-budget departments. IN is efficient for medium-sized lists.",
+          "scenario": "HR analysis focusing on employees in well-funded departments."
+        },
+        {
+          "title": "Find employees earning above department average",
+          "sql": "SELECT e1.name, e1.salary, e1.department_id\nFROM employees e1\nWHERE e1.salary > (\n    SELECT AVG(e2.salary)\n    FROM employees e2\n    WHERE e2.department_id = e1.department_id\n);",
+          "explanation": "Comparison operators work with single-value subqueries. This correlated subquery calculates each employee's department average, then filters for above-average earners.",
+          "scenario": "Performance reviews: identifying top performers relative to peers."
+        },
+        {
+          "title": "Find customers with large orders using EXISTS",
+          "sql": "SELECT c.name, c.email\nFROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n      AND o.total > 1000\n);",
+          "explanation": "EXISTS is efficient for checking conditions. It stops at the first match per customer. This finds customers who have placed at least one high-value order.",
+          "scenario": "Marketing VIP program targeting high-value customers."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using = with multi-row subquery",
+          "error_sql": "SELECT name FROM employees\nWHERE department_id = (\n    SELECT department_id FROM departments\n    WHERE budget > 100000\n);",
+          "error_message": "Subquery returns more than 1 row",
+          "why_it_happens": "The = operator expects exactly one value. If multiple departments have budget > 100000, this fails.",
+          "fix_sql": "SELECT name FROM employees\nWHERE department_id IN (\n    SELECT department_id FROM departments\n    WHERE budget > 100000\n);",
+          "key_takeaway": "Use = for single-value subqueries, IN for multi-value subqueries."
+        },
+        {
+          "title": "NULL handling with NOT IN",
+          "error_sql": "SELECT name FROM employees\nWHERE department_id NOT IN (\n    SELECT department_id FROM departments\n    WHERE location IS NULL\n);",
+          "error_message": "No results returned - NULLs in subquery cause issues",
+          "why_it_happens": "NOT IN with NULL in the subquery list returns no rows (x NOT IN (1, 2, NULL) is UNKNOWN, not TRUE).",
+          "fix_sql": "SELECT name FROM employees e\nWHERE NOT EXISTS (\n    SELECT 1 FROM departments d\n    WHERE d.department_id = e.department_id\n      AND d.location IS NULL\n);",
+          "key_takeaway": "Use NOT EXISTS instead of NOT IN when NULLs might be present."
+        }
+      ]
+    },
+    "L4_reflective_note": {
+      "note_text": "WHERE subqueries transform simple filtering into powerful, data-driven conditions. They're the bridge between separate tables, allowing dynamic filtering based on related data.",
+      "key_takeaways": [
+        "IN is best for matching against a list of values",
+        "EXISTS is most efficient for checking existence",
+        "Comparison operators work with single-value subqueries",
+        "NOT EXISTS is safer than NOT IN when NULLs may be present"
+      ],
+      "connection_prompts": [
+        "When would you use a JOIN instead of a WHERE subquery?",
+        "How does the database optimize different types of WHERE subqueries?",
+        "What are the NULL handling differences between IN and EXISTS?"
+      ]
+    }
   }
 }
