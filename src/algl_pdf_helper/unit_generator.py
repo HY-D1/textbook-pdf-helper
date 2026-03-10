@@ -971,6 +971,9 @@ class UnitGenerator:
     It coordinates prompt building, LLM calls, and result assembly.
     """
     
+    # Class-level flag to track if Ollama disabled message was already logged
+    _ollama_disabled_logged: bool = False
+    
     def __init__(
         self,
         prompt_builder: PromptBuilder | None = None,
@@ -1016,7 +1019,10 @@ class UnitGenerator:
         """
         # Early exit if disabled
         if not config.enable_ollama_repair:
-            print("[Ollama] Repair disabled by configuration")
+            # Only print the disabled message once
+            if not UnitGenerator._ollama_disabled_logged:
+                print("[Ollama] Repair disabled by configuration")
+                UnitGenerator._ollama_disabled_logged = True
             self._ollama_repair = None
             return False
         
@@ -3017,71 +3023,343 @@ class UnitGenerator:
                 return text[:150] if len(text) > 150 else text
         return ""
     
-    def _extract_sql_examples_from_blocks(self, blocks: list[ContentBlock]) -> list[dict]:
-        """Extract SQL examples from content blocks."""
-        sql_pattern = r"(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+.+?;"
+    def _extract_sql_examples_from_blocks(
+        self, blocks: list[ContentBlock], concept_id: str = ""
+    ) -> list[dict]:
+        """Extract SQL examples from content blocks with detailed rejection logging.
+        
+        Args:
+            blocks: List of content blocks to search for SQL
+            concept_id: Optional concept ID for targeted debug logging
+            
+        Returns:
+            List of extracted SQL examples with metadata
+        """
         examples = []
         
-        # DEBUG LOGGING START
-        print(f"\n[SQL EXTRACT] === START SQL EXTRACTION ===")
-        print(f"[SQL EXTRACT] Blocks provided: {len(blocks)}")
-        # DEBUG LOGGING END
+        # Track rejections for debugging
+        rejections = {
+            'no_regex_match': 0,
+            'too_short': 0,
+            'no_select_or_ddl': 0,
+            'failed_cleanup': 0,
+            'invalid_syntax': 0,
+            'broken_pattern': 0,
+            'no_from_clause': 0,
+            'other': 0
+        }
+        
+        # Add detailed logging for key concepts
+        debug_mode = concept_id in ('select-basic', 'joins-intro', 'group-by', 'where-clause', 'order-by')
+        if debug_mode:
+            print(f"\n{'='*60}")
+            print(f"[SQL EXTRACT DEBUG] Concept: {concept_id}")
+            print(f"[SQL EXTRACT DEBUG] Total blocks: {len(blocks)}")
+        
+        # TASK 1: Add logging for block types - count each type
+        block_type_counts = {}
+        for block in blocks:
+            bt = getattr(block, 'block_type', 'unknown')
+            # Handle both enum and string block types
+            if hasattr(bt, 'name'):
+                bt_str = bt.name
+            else:
+                bt_str = str(bt)
+            block_type_counts[bt_str] = block_type_counts.get(bt_str, 0) + 1
+        
+        if debug_mode:
+            print(f"[SQL EXTRACT DEBUG] Block types: {block_type_counts}")
+        
+        # TASK 2: Define allowed block types for SQL extraction
+        # Accept multiple block types - SQL might be in EXPLANATORY_PROSE or CODE blocks
+        allowed_block_types = {
+            'SQL_CODE', 'CODE', 'EXAMPLE', 'EXERCISE',
+            'EXPLANATORY_PROSE',  # Might contain inline SQL
+            'SIDEBAR',  # Side notes might have SQL examples
+            'SUMMARY',  # Summaries might have SQL examples
+        }
+        
+        # =============================================================================
+        # EXPANDED SQL REGEX PATTERNS (CRITICAL FIX 3)
+        # =============================================================================
+        # Ordered from most specific to most general for better matching
+        
+        sql_patterns = [
+            # Pattern 1: Code blocks with explicit SQL markers (```sql ... ```)
+            # Extract content inside markdown SQL blocks
+            r'```sql\s*(.+?)```',
+            
+            # Pattern 2: Standard SELECT statements with FROM clause (multiline)
+            # Matches SELECT ... FROM table ... ;
+            r"SELECT\s+.+?\s+FROM\s+\w+[^;]*;",
+            
+            # Pattern 3: CREATE statements (TABLE, VIEW, INDEX, PROCEDURE, FUNCTION, etc.)
+            r"CREATE\s+(?:TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|SCHEMA|DATABASE)\s+\w+[^;]*;",
+            
+            # Pattern 4: INSERT INTO statements
+            r"INSERT\s+INTO\s+\w+[^;]*;",
+            
+            # Pattern 5: UPDATE statements with SET clause
+            r"UPDATE\s+\w+\s+SET[^;]*;",
+            
+            # Pattern 6: DELETE FROM statements
+            r"DELETE\s+FROM\s+\w+[^;]*;",
+            
+            # Pattern 7: ALTER statements (TABLE, VIEW, INDEX)
+            r"ALTER\s+(?:TABLE|VIEW|INDEX)\s+\w+[^;]*;",
+            
+            # Pattern 8: DROP statements (TABLE, VIEW, INDEX, etc.)
+            r"DROP\s+(?:TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|DATABASE|SCHEMA)\s+\w+[^;]*;",
+            
+            # Pattern 9: WITH/CTE (Common Table Expressions)
+            r"WITH\s+\w+\s+AS\s*\([^;]*;",
+            
+            # Pattern 10: Backtick-quoted SQL (inline code style)
+            r'`(SELECT\s+[^`]+)`',
+            
+            # Pattern 11: SQL in parentheses (often in textbooks)
+            r'\((SELECT\s+[^)]+)\)',
+            
+            # Pattern 12: Line-numbered examples (e.g., "1. SELECT * FROM users")
+            r'^\s*\d+[\.\)]\s*(SELECT\s+.+?;?)$',
+            
+            # Pattern 13: Generic fallback for any SQL-like statement
+            r"(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\s+.+?;",
+        ]
         
         # Reject patterns that are just keywords with semicolon
-        broken_pattern = re.compile(r'^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s*;$', re.IGNORECASE)
+        broken_pattern = re.compile(r'^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\s*;$', re.IGNORECASE)
         
         total_code_blocks = 0
+        blocks_with_sql_content = 0
+        
         for block in blocks:
             if not block.text_content:
                 continue
             
+            text = block.text_content
+            
+            # Get block type as string
+            block_type = getattr(block, 'block_type', 'unknown')
+            if hasattr(block_type, 'name'):
+                block_type_str = block_type.name
+            else:
+                block_type_str = str(block_type)
+            
+            # TASK 2: Check if SQL is in allowed block types
+            is_allowed_type = block_type_str in allowed_block_types
+            
+            # TASK 4: Check the actual block content for select-basic
+            if concept_id == 'select-basic' and debug_mode:
+                print(f"\n[SQL EXTRACT DEBUG] Block {blocks.index(block)}:")
+                print(f"  Type: {block_type_str}")
+                print(f"  Is allowed: {is_allowed_type}")
+                print(f"  Text: {text[:200]}...")
+            
             # DEBUG: Count potential code blocks
-            if block.block_type in ['code', 'listing', 'example', 'verbatim', 'preformatted'] or \
-               ('SELECT' in block.text_content.upper() or 'FROM' in block.text_content.upper()):
+            is_code_block = (
+                hasattr(block, 'block_type') and block.block_type in 
+                [BlockType.SQL_CODE, BlockType.CODE]
+            ) or block.block_type in ['code', 'listing', 'example', 'verbatim', 'preformatted']
+            
+            has_sql_keywords = any(kw in text.upper() for kw in ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'WITH'])
+            
+            if is_code_block or has_sql_keywords:
                 total_code_blocks += 1
             
-            # Use finditer to get full matches, not just captured groups
+            if has_sql_keywords:
+                blocks_with_sql_content += 1
+            
+            # Skip blocks that aren't allowed types and don't look like code
+            if not is_allowed_type and not is_code_block:
+                if debug_mode and has_sql_keywords:
+                    print(f"[SQL EXTRACT DEBUG] Skipping block type: {block_type_str} (not in allowed types)")
+                continue
+            
+            if debug_mode:
+                text_preview = text[:100].replace('\n', ' ')
+                print(f"\n[SQL EXTRACT DEBUG] Processing block type: {block_type_str}")
+                print(f"[SQL EXTRACT DEBUG] Text preview: {text_preview}...")
+            
+            # TASK 3: Extract SQL from prose if needed
+            # For EXPLANATORY_PROSE blocks, look for inline SQL in quotes, backticks, or bold
+            if block_type_str in ['EXPLANATORY_PROSE', 'SIDEBAR', 'SUMMARY']:
+                inline_patterns = [
+                    # Quoted SQL: "SELECT * FROM users" or 'SELECT * FROM users'
+                    (r'"((?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)[^"]{10,200})"', 'double_quotes'),
+                    (r"'((?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)[^']{10,200})'", 'single_quotes'),
+                    # Backtick SQL: `SELECT * FROM users`
+                    (r'`((?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)[^`]{10,200})`', 'backticks'),
+                    # Bold SQL: **SELECT * FROM users** (markdown style)
+                    (r'\*\*((?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)[^*]{10,200})\*\*', 'bold_markdown'),
+                    # Inline code: `SELECT ...`
+                    (r'`((?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)[^`]+)`', 'inline_code'),
+                ]
+                
+                for pattern, source_type in inline_patterns:
+                    for match in re.finditer(pattern, text, re.IGNORECASE):
+                        inline_sql = match.group(1).strip()
+                        # Validate inline SQL
+                        if len(inline_sql.split()) >= 3:  # At least 3 words
+                            if 'FROM' in inline_sql.upper() or inline_sql.upper().startswith(('INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP')):
+                                # Add semicolon if missing
+                                if not inline_sql.endswith(';'):
+                                    inline_sql += ';'
+                                if len(inline_sql) >= 15:  # Minimum length check
+                                    examples.append({
+                                        "sql": inline_sql[:200],
+                                        "page": block.page_number,
+                                        "source": f"inline_{source_type}"
+                                    })
+                                    if debug_mode:
+                                        print(f"[SQL EXTRACT DEBUG] Found inline SQL ({source_type}): {inline_sql[:60]}...")
+            
+            # Try each pattern
             matches_found = 0
-            for match in re.finditer(sql_pattern, block.text_content, re.IGNORECASE | re.DOTALL):
-                matches_found += 1
-                sql = match.group(0).strip()
-                
-                # DEBUG: Show what we found
-                print(f"[SQL EXTRACT]   Found match #{matches_found} on page {block.page_number}: {sql[:60]}...")
-                
-                # Explicit rejection of broken SQL like "SELECT;", "INSERT;", etc.
-                if broken_pattern.match(sql):
-                    import warnings
-                    warnings.warn(f"Rejecting broken SQL pattern: {sql}", UserWarning)
-                    print(f"[SQL EXTRACT]   REJECTED: broken pattern")
-                    continue
-                
-                # Validate: require at least 3 words AND must contain 'FROM' or be DDL
-                word_count = len(sql.split())
-                has_from = 'FROM' in sql.upper()
-                is_ddl = sql.upper().startswith(('CREATE', 'ALTER', 'DROP'))
-                
-                # DEBUG: Show validation details
-                print(f"[SQL EXTRACT]   Validation: words={word_count}, has_from={has_from}, is_ddl={is_ddl}")
-                
-                if word_count >= 3 and (has_from or is_ddl):
-                    # Clean up - take first 200 chars to avoid capturing too much
-                    sql = sql[:200] if len(sql) > 200 else sql
+            seen_sql_normalized = set()  # For deduplication within this block
+            
+            for pattern_idx, pattern in enumerate(sql_patterns):
+                for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+                    matches_found += 1
+                    
+                    # Determine pattern name for debugging
+                    pattern_names = [
+                        'code_block', 'select', 'create', 'insert', 'update', 
+                        'delete', 'alter', 'drop', 'with_cte', 'backtick',
+                        'parens', 'line_number', 'generic'
+                    ]
+                    pattern_name = pattern_names[pattern_idx] if pattern_idx < len(pattern_names) else f'pattern_{pattern_idx}'
+                    
+                    # Handle patterns with capture groups (code_block, backtick, parens, line_number)
+                    # vs patterns without (standard SQL statements)
+                    has_capture_group = pattern_idx in [0, 9, 10, 11]  # code_block, backtick, parens, line_number
+                    if has_capture_group and match.groups():
+                        raw_sql = match.group(1).strip()
+                    else:
+                        raw_sql = match.group(0).strip()
+                    
+                    if debug_mode:
+                        print(f"[SQL EXTRACT DEBUG] [{pattern_name}] Matched: {raw_sql[:60]}...")
+                    
+                    # Track original before cleanup
+                    original_sql = raw_sql
+                    
+                    # Clean up the SQL
+                    cleaned_sql = self._cleanup_sql_for_extraction(raw_sql)
+                    
+                    if debug_mode and cleaned_sql != original_sql:
+                        print(f"[SQL EXTRACT DEBUG] Cleaned: {cleaned_sql[:60]}...")
+                    
+                    # Validate the SQL
+                    # Check 1: Explicit rejection of broken SQL like "SELECT;"
+                    if broken_pattern.match(cleaned_sql):
+                        rejections['broken_pattern'] += 1
+                        if debug_mode:
+                            print(f"[SQL EXTRACT DEBUG] REJECTED: broken pattern (just keyword + semicolon)")
+                        continue
+                    
+                    # Check 2: Minimum length
+                    if len(cleaned_sql) < 15:
+                        rejections['too_short'] += 1
+                        if debug_mode:
+                            print(f"[SQL EXTRACT DEBUG] REJECTED: too short ({len(cleaned_sql)} chars < 15)")
+                        continue
+                    
+                    # Check 3: Must have SELECT or DDL keyword
+                    sql_upper = cleaned_sql.upper()
+                    has_select = 'SELECT' in sql_upper
+                    has_ddl = any(kw in sql_upper for kw in ['CREATE', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER'])
+                    
+                    if not has_select and not has_ddl:
+                        rejections['no_select_or_ddl'] += 1
+                        if debug_mode:
+                            print(f"[SQL EXTRACT DEBUG] REJECTED: no SELECT or DDL keyword")
+                            print(f"[SQL EXTRACT DEBUG]   SQL: {cleaned_sql[:60]}...")
+                        continue
+                    
+                    # Check 4: Must have FROM or be DDL
+                    has_from = 'FROM' in sql_upper
+                    is_ddl = any(kw in sql_upper for kw in ['CREATE', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER'])
+                    
+                    if has_select and not has_from and not is_ddl:
+                        # This might be an incomplete SELECT - check if it's valid
+                        # Allow SELECT expressions without FROM (e.g., SELECT 1+1;)
+                        if len(cleaned_sql) < 25 and not re.search(r"SELECT\s+\d+|SELECT\s+['\"]", sql_upper):
+                            rejections['no_from_clause'] += 1
+                            if debug_mode:
+                                print(f"[SQL EXTRACT DEBUG] REJECTED: SELECT without FROM, too short and not expression")
+                            continue
+                    
+                    # Deduplication check
+                    sql_normalized = cleaned_sql.lower().replace(' ', '')
+                    if sql_normalized in seen_sql_normalized:
+                        if debug_mode:
+                            print(f"[SQL EXTRACT DEBUG] SKIPPED: duplicate SQL in block")
+                        continue
+                    seen_sql_normalized.add(sql_normalized)
+                    
+                    # If we get here, it's valid
+                    if debug_mode:
+                        print(f"[SQL EXTRACT DEBUG] ACCEPTED [{pattern_name}]: {cleaned_sql[:60]}...")
+                    
+                    # Clean up - take first 300 chars to avoid capturing too much
+                    final_sql = cleaned_sql[:300] if len(cleaned_sql) > 300 else cleaned_sql
                     examples.append({
-                        "sql": sql,
+                        "sql": final_sql,
                         "page": block.page_number,
+                        "source": "extracted",
+                        "pattern_used": pattern_name
                     })
-                    print(f"[SQL EXTRACT]   ACCEPTED: {sql[:80]}...")
-                else:
-                    print(f"[SQL EXTRACT]   REJECTED: validation failed (words={word_count}, has_from={has_from}, is_ddl={is_ddl})")
+            
+            if matches_found == 0 and has_sql_keywords:
+                # SQL keywords present but no regex match - log for debugging
+                if debug_mode:
+                    print(f"[SQL EXTRACT DEBUG] WARNING: SQL keywords found but no regex match")
+                    print(f"[SQL EXTRACT DEBUG]   Text: {text[:100]}...")
+                rejections['no_regex_match'] += 1
         
-        # DEBUG LOGGING START
-        print(f"[SQL EXTRACT] Total blocks with SQL-like content: {total_code_blocks}")
-        print(f"[SQL EXTRACT] Total SQL examples extracted: {len(examples)}")
-        print(f"[SQL EXTRACT] === END SQL EXTRACTION ===\n")
-        # DEBUG LOGGING END
+        if debug_mode:
+            print(f"\n[SQL EXTRACT DEBUG] Summary:")
+            print(f"[SQL EXTRACT DEBUG]   Total blocks checked: {len(blocks)}")
+            print(f"[SQL EXTRACT DEBUG]   Code/SQL blocks found: {total_code_blocks}")
+            print(f"[SQL EXTRACT DEBUG]   Blocks with SQL keywords: {blocks_with_sql_content}")
+            print(f"[SQL EXTRACT DEBUG]   Total examples extracted: {len(examples)}")
+            if examples:
+                pattern_counts = {}
+                for ex in examples:
+                    pname = ex.get('pattern_used', 'unknown')
+                    pattern_counts[pname] = pattern_counts.get(pname, 0) + 1
+                print(f"[SQL EXTRACT DEBUG]   Pattern usage: {pattern_counts}")
+            print(f"[SQL EXTRACT DEBUG]   Rejections: {rejections}")
+            print(f"{'='*60}\n")
         
         return examples
+    
+    def _cleanup_sql_for_extraction(self, sql: str) -> str:
+        """Clean up extracted SQL for validation.
+        
+        Removes backticks, extra whitespace, and ensures proper formatting.
+        
+        Args:
+            sql: Raw SQL string from extraction
+            
+        Returns:
+            Cleaned SQL string
+        """
+        # Remove backticks
+        sql = sql.strip('`')
+        
+        # Remove leading/trailing whitespace
+        sql = sql.strip()
+        
+        # Normalize internal whitespace
+        sql = re.sub(r'\s+', ' ', sql)
+        
+        # Ensure semicolon at end
+        if not sql.endswith(';'):
+            sql += ';'
+        
+        return sql
 
     def _extract_definition_sentence(self, blocks: list[ContentBlock]) -> str | None:
         """
@@ -4258,8 +4536,8 @@ class UnitGenerator:
         # Create a list to hold all candidates
         candidates = []
         
-        # Extract SQL examples from blocks
-        sql_examples = self._extract_sql_examples_from_blocks(blocks)
+        # Extract SQL examples from blocks (with concept_id for debug logging)
+        sql_examples = self._extract_sql_examples_from_blocks(blocks, concept_id)
         
         # Debug: Show extracted SQL examples
         print(f"[L2 BUILD] Extracted {len(sql_examples)} SQL examples")
