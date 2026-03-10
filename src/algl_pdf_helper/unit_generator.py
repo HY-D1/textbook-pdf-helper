@@ -3158,8 +3158,7 @@ class UnitGenerator:
             
             # DEBUG: Count potential code blocks
             is_code_block = (
-                hasattr(block, 'block_type') and block.block_type in 
-                [BlockType.SQL_CODE, BlockType.CODE]
+                hasattr(block, 'block_type') and block.block_type == BlockType.SQL_CODE
             ) or block.block_type in ['code', 'listing', 'example', 'verbatim', 'preformatted']
             
             has_sql_keywords = any(kw in text.upper() for kw in ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'WITH'])
