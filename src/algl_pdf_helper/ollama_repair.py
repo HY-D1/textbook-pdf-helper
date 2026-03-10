@@ -19,7 +19,7 @@ Usage:
         repaired_content = repair.repair_l3_content(
             concept_id="joins",
             weak_content={"definition": "Weak definition...", "why_it_matters": ""},
-            source_evidence="Source text from textbook..."
+            source_evidence="Textbook content..."
         )
     
     # Or use the selective repair pass for automatic detection
@@ -37,18 +37,96 @@ import hashlib
 import json
 import logging
 import re
+import socket
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .instructional_models import InstructionalUnit
+from algl_pdf_helper.instructional_models import InstructionalUnit
 
 
 logger = logging.getLogger(__name__)
 
 # Prompt version for cache invalidation - bump when prompt changes
-REPAIR_PROMPT_VERSION = "v1.0.0"
+REPAIR_PROMPT_VERSION = "v2.1.0-rtx4080"
+
+# Preferred models for RTX 4080 optimization (in order of preference)
+PREFERRED_MODELS = [
+    "qwen3.5:9b-q8_0",
+    "qwen3.5:27b-q4_K_M",
+    "qwen3-coder:30b",
+    "glm-4.7-flash:latest",
+]
+
+# Model-specific configurations for RTX 4080 (16GB VRAM)
+MODEL_CONFIGS: dict[str, dict[str, Any]] = {
+    "qwen3.5:9b-q8_0": {
+        "context_window": 8192,
+        "temperature": 0.2,
+        "top_p": 0.85,
+        "top_k": 30,
+        "num_predict": 600,
+        "description": "Fast, high-quality 9B model with 8-bit quantization",
+    },
+    "qwen3.5:27b-q4_K_M": {
+        "context_window": 4096,
+        "temperature": 0.2,
+        "top_p": 0.85,
+        "top_k": 30,
+        "num_predict": 600,
+        "description": "Large 27B model with 4-bit quantization",
+    },
+    "qwen3-coder:30b": {
+        "context_window": 4096,
+        "temperature": 0.15,
+        "top_p": 0.80,
+        "top_k": 25,
+        "num_predict": 700,
+        "description": "Code-specialized 30B model for SQL generation",
+    },
+    "glm-4.7-flash:latest": {
+        "context_window": 8192,
+        "temperature": 0.2,
+        "top_p": 0.85,
+        "top_k": 30,
+        "num_predict": 600,
+        "description": "Fast GLM model for quick repairs",
+    },
+    "qwen2.5:3b": {
+        "context_window": 4096,
+        "temperature": 0.3,
+        "top_p": 0.90,
+        "top_k": 40,
+        "num_predict": 500,
+        "description": "Small, fast model for testing (fallback)",
+    },
+}
+
+# Default config for unknown models
+DEFAULT_MODEL_CONFIG = {
+    "context_window": 4096,
+    "temperature": 0.3,
+    "top_p": 0.90,
+    "top_k": 40,
+    "num_predict": 500,
+    "description": "Default configuration",
+}
+
+
+def get_model_config(model_name: str) -> dict[str, Any]:
+    """Get configuration for specific model, falling back to default."""
+    # Try exact match first
+    if model_name in MODEL_CONFIGS:
+        return MODEL_CONFIGS[model_name]
+    
+    # Try partial match (e.g., "qwen3.5:9b" matches "qwen3.5:9b-q8_0")
+    for key in MODEL_CONFIGS:
+        if key in model_name or model_name.startswith(key.split(":")[0]):
+            return MODEL_CONFIGS[key]
+    
+    return DEFAULT_MODEL_CONFIG
 
 
 class RepairCache:
@@ -195,6 +273,84 @@ class RepairCache:
         }
 
 
+class OllamaRepairError(Exception):
+    """Base exception for Ollama repair errors."""
+    pass
+
+
+class OllamaModelNotFoundError(OllamaRepairError):
+    """Raised when the specified model is not found in Ollama."""
+    
+    def __init__(self, model: str, available: list[str]):
+        self.model = model
+        self.available = available
+        super().__init__(
+            f"Model '{model}' not found. Available models: {available}. "
+            f"Use --ollama-model to specify a different model."
+        )
+
+
+class OllamaTimeoutError(OllamaRepairError):
+    """Raised when Ollama request times out."""
+    
+    def __init__(self, model: str):
+        self.model = model
+        super().__init__(
+            f"Ollama timeout for model '{model}'. "
+            f"Model may be loading or too large for GPU. "
+            f"First call after Ollama start may be slow as model loads into VRAM."
+        )
+
+
+class RepairValidator:
+    """Validates repairs and handles quality checks."""
+    
+    @staticmethod
+    def validate_repair_output(output: dict[str, Any], concept_id: str) -> tuple[bool, list[str]]:
+        """
+        Validate the repair output from Ollama.
+        
+        Returns:
+            Tuple of (is_valid, list_of_issues)
+        """
+        issues = []
+        
+        # Check required fields
+        required_fields = ["definition"]
+        for field in required_fields:
+            if field not in output or not output[field]:
+                issues.append(f"missing_{field}")
+        
+        # Check definition quality
+        definition = output.get("definition", "")
+        if len(definition) < 20:
+            issues.append("definition_too_short")
+        if definition.isupper():
+            issues.append("definition_is_heading")
+        
+        # Check for generic phrases
+        generic_phrases = [
+            "is an important SQL concept",
+            "is a crucial SQL concept",
+            "is an essential SQL concept",
+        ]
+        for phrase in generic_phrases:
+            if phrase in definition.lower():
+                issues.append(f"generic_definition_contains_{phrase.replace(' ', '_')}")
+        
+        # Check hallucination indicators
+        hallucination_indicators = [
+            "according to the source",
+            "the textbook states",
+            "as mentioned in",
+        ]
+        for indicator in hallucination_indicators:
+            if indicator in definition.lower():
+                issues.append(f"possible_hallucination_{indicator.replace(' ', '_')}")
+        
+        return len(issues) == 0, issues
+
+
 class OllamaRepair:
     """
     Repair weak L3 content using local Ollama.
@@ -219,17 +375,91 @@ class OllamaRepair:
         ...     )
     """
     
-    # Class-level cache for availability check (one-time per run)
-    _availability_checked = False
-    _availability_result: bool | None = None
-    _availability_logged = False
+    # Class-level state for run-level availability tracking
+    _preflight_completed = False
+    _preflight_available = False
+    _preflight_logged = False
+    _available_models: list[str] | None = None
+    
+    @classmethod
+    def run_preflight_check(cls, host: str = "http://localhost:11434", model: str = "qwen2.5:3b") -> tuple[bool, str | None]:
+        """
+        Run a one-time preflight check for Ollama availability.
+        
+        This should be called once at the start of the pipeline to check
+        Ollama availability. Subsequent instances will use this cached result.
+        
+        Args:
+            host: Ollama API host URL
+            model: Model to check availability for
+            
+        Returns:
+            Tuple of (is_available, disabled_reason)
+            - is_available: True if Ollama is available
+            - disabled_reason: None if available, or reason string (e.g., "ollama_not_running")
+        """
+        if cls._preflight_completed:
+            return cls._preflight_available, None if cls._preflight_available else "ollama_not_running"
+        
+        cls._preflight_completed = True
+        
+        # Try to connect to Ollama
+        try:
+            import urllib.request
+            import json
+            req = urllib.request.Request(
+                f"{host}/api/tags",
+                method="GET",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    models = data.get("models", [])
+                    cls._available_models = [m.get("name", "") for m in models if m.get("name")]
+                    
+                    # Check if requested model is available
+                    model_available = any(
+                        model in m or m.startswith(model.split(":")[0])
+                        for m in cls._available_models
+                    )
+                    
+                    if model_available or cls._available_models:
+                        cls._preflight_available = True
+                        logger.info(f"Ollama repair available with {len(cls._available_models)} models")
+                        return True, None
+                    else:
+                        cls._preflight_available = False
+                        if not cls._preflight_logged:
+                            logger.warning("Ollama running but no models found - repair disabled")
+                            cls._preflight_logged = True
+                        return False, "no_models_available"
+                        
+        except Exception as e:
+            cls._preflight_available = False
+            if not cls._preflight_logged:
+                logger.warning(f"Ollama repair enabled but server not available at {host}")
+                cls._preflight_logged = True
+            return False, "ollama_not_running"
+        
+        return False, "unknown_error"
+    
+    @classmethod
+    def reset_preflight(cls) -> None:
+        """Reset the preflight check state (for testing)."""
+        cls._preflight_completed = False
+        cls._preflight_available = False
+        cls._preflight_logged = False
+        cls._available_models = None
     
     def __init__(
         self,
         model: str = "qwen2.5:3b",
         host: str = "http://localhost:11434",
-        timeout: int = 30,
+        timeout: int = 120,
         cache: RepairCache | None = None,
+        auto_fallback: bool = True,
+        skip_preflight: bool = False,
     ):
         """
         Initialize OllamaRepair with model and host configuration.
@@ -237,58 +467,165 @@ class OllamaRepair:
         Args:
             model: The Ollama model name to use for repairs
             host: The Ollama API host URL
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default 120 for large models)
             cache: Optional RepairCache instance for caching repairs
+            auto_fallback: Whether to automatically fallback to available models
+            skip_preflight: If True, don't run preflight check (use cached result)
         """
-        self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
         self.cache = cache
+        self.auto_fallback = auto_fallback
+        self._model_loaded = False
         
-        # Use cached availability check (one-time per process)
-        self.available = self._check_availability_cached()
+        # Run preflight if not already done and not skipped
+        if not skip_preflight and not OllamaRepair._preflight_completed:
+            OllamaRepair.run_preflight_check(self.host, model)
+        
+        # Use preflight result for availability
+        self.available = OllamaRepair._preflight_available
         
         if self.available:
-            if not OllamaRepair._availability_logged:
-                logger.info(f"OllamaRepair initialized with model: {model}")
-                OllamaRepair._availability_logged = True
+            # Validate model and potentially fallback
+            self.model = self._resolve_model(model)
+            # Check if model is loaded (warn if not)
+            self._check_model_loaded()
         else:
-            if not OllamaRepair._availability_logged:
-                logger.warning(f"Ollama not available at {host} - repair pass will be skipped")
-                OllamaRepair._availability_logged = True
+            # Set model but won't be used
+            self.model = model
     
-    @classmethod
-    def _check_availability_cached(cls) -> bool:
+    def _resolve_model(self, requested_model: str) -> str:
         """
-        Check Ollama availability with class-level caching.
+        Resolve model name, falling back to available models if needed.
         
-        This ensures the availability check (and warning) only happens
-        once per process, reducing log noise.
+        Args:
+            requested_model: The originally requested model name
+            
+        Returns:
+            The resolved model name (may be different if fallback occurred)
+        """
+        is_valid, available_models = self._validate_model(requested_model)
+        
+        if is_valid:
+            return requested_model
+        
+        if not self.auto_fallback:
+            raise OllamaModelNotFoundError(requested_model, available_models)
+        
+        # Try fallback models in order
+        models_to_try = [m for m in PREFERRED_MODELS if m != requested_model]
+        
+        for fallback_model in models_to_try:
+            if fallback_model in available_models:
+                logger.warning(
+                    f"Model '{requested_model}' not found. "
+                    f"Auto-fallback to '{fallback_model}'."
+                )
+                return fallback_model
+        
+        # Try any available model as last resort
+        if available_models:
+            fallback = available_models[0]
+            logger.warning(
+                f"Model '{requested_model}' not found. "
+                f"Falling back to first available: '{fallback}'."
+            )
+            return fallback
+        
+        # No models available - return original and let it fail later
+        logger.error(f"No models available in Ollama. Requested: {requested_model}")
+        return requested_model
+    
+    def _validate_model(self, model_name: str) -> tuple[bool, list[str]]:
+        """
+        Check if model exists in Ollama, return available models if not.
+        
+        Args:
+            model_name: The model name to validate
+            
+        Returns:
+            Tuple of (is_valid, available_models)
+        """
+        try:
+            available_models = self._list_available_models()
+            
+            # Check exact match or match without tag
+            if model_name in available_models:
+                return True, available_models
+            
+            # Check if model name matches the start of any available model
+            # (handles cases like "qwen2.5:3b" matching "qwen2.5:3b-16k")
+            for available in available_models:
+                if available.startswith(model_name) or model_name.startswith(available.split(":")[0]):
+                    return True, available_models
+            
+            return False, available_models
+            
+        except Exception as e:
+            logger.debug(f"Could not validate model (Ollama may be unavailable): {e}")
+            # Return True to let it try - actual error will happen at call time
+            return True, []
+    
+    def _list_available_models(self) -> list[str]:
+        """
+        List all available models in Ollama.
         
         Returns:
-            True if Ollama is available, False otherwise
+            List of model names available in Ollama
         """
-        if not cls._availability_checked:
-            # Create a temporary instance to check availability
-            temp_instance = object.__new__(cls)
-            temp_instance.host = "http://localhost:11434"
-            temp_instance.model = "qwen2.5:3b"
-            cls._availability_result = temp_instance._check_availability()
-            cls._availability_checked = True
-        return cls._availability_result or False
-    
-    @classmethod
-    def reset_availability_cache(cls) -> None:
-        """
-        Reset the class-level availability cache.
+        try:
+            req = urllib.request.Request(
+                f"{self.host}/api/tags",
+                method="GET",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    models = data.get("models", [])
+                    model_names = [m.get("name", "") for m in models if m.get("name")]
+                    # Cache for later use
+                    OllamaRepair._available_models = model_names
+                    return model_names
+        except Exception as e:
+            logger.debug(f"Failed to list models: {e}")
         
-        This is useful for testing or when the Ollama server status
-        may have changed during process execution.
+        return OllamaRepair._available_models or []
+    
+    def _check_model_loaded(self) -> bool:
         """
-        cls._availability_checked = False
-        cls._availability_result = None
-        cls._availability_logged = False
-        logger.debug("Ollama availability cache reset")
+        Check if the current model is already loaded in Ollama.
+        
+        Returns:
+            True if model is loaded, False otherwise
+        """
+        try:
+            req = urllib.request.Request(
+                f"{self.host}/api/ps",
+                method="GET",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=2) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    running_models = data.get("models", [])
+                    for m in running_models:
+                        if m.get("name") == self.model or m.get("model") == self.model:
+                            self._model_loaded = True
+                            return True
+                    
+                    # Model not loaded - warn user
+                    if not self._model_loaded:
+                        logger.warning(
+                            f"Model '{self.model}' is not currently loaded. "
+                            f"First call may be slow as model loads into GPU memory."
+                        )
+                    return False
+        except Exception as e:
+            logger.debug(f"Could not check loaded models: {e}")
+        return False
+    
+
     
     def _check_availability(self) -> bool:
         """
@@ -327,6 +664,15 @@ class OllamaRepair:
             logger.debug(f"Unexpected error checking Ollama: {e}")
         return False
     
+    def _get_model_config(self) -> dict[str, Any]:
+        """
+        Get configuration for the current model.
+        
+        Returns:
+            Configuration dictionary with context window, temperature, etc.
+        """
+        return get_model_config(self.model)
+    
     def repair_l3_content(
         self,
         concept_id: str,
@@ -364,6 +710,16 @@ class OllamaRepair:
             logger.debug(f"Ollama not available, skipping repair for {concept_id}")
             return None
         
+        # Check cache first
+        if self.cache:
+            evidence_hash = hashlib.sha256(source_evidence.encode()).hexdigest()[:16]
+            cached = self.cache.get_cached_repair(
+                concept_id, "L3", self.model, evidence_hash, REPAIR_PROMPT_VERSION
+            )
+            if cached:
+                logger.debug(f"Using cached repair for {concept_id}")
+                return cached
+        
         prompt = self._build_repair_prompt(concept_id, weak_content, source_evidence)
         
         try:
@@ -371,10 +727,27 @@ class OllamaRepair:
             if response:
                 parsed = self._parse_repair_response(response)
                 if parsed:
+                    # Validate the repair
+                    is_valid, issues = RepairValidator.validate_repair_output(parsed, concept_id)
+                    if not is_valid:
+                        logger.warning(f"Repair validation failed for {concept_id}: {issues}")
+                    
                     parsed["_repaired_by_ollama"] = True
                     parsed["_repair_model"] = self.model
+                    
+                    # Cache the repair
+                    if self.cache:
+                        self.cache.cache_repair(
+                            concept_id, "L3", self.model, evidence_hash,
+                            REPAIR_PROMPT_VERSION, parsed
+                        )
+                    
                     logger.info(f"Successfully repaired L3 content for {concept_id}")
                     return parsed
+        except OllamaModelNotFoundError as e:
+            logger.error(str(e))
+        except OllamaTimeoutError as e:
+            logger.error(str(e))
         except Exception as e:
             logger.warning(f"Ollama repair failed for {concept_id}: {e}")
         
@@ -400,8 +773,10 @@ class OllamaRepair:
         Returns:
             Formatted prompt string for the LLM
         """
+        config = self._get_model_config()
+        max_evidence_chars = config.get("context_window", 4096) - 1000  # Reserve space for prompt
+        
         # Truncate evidence to avoid token limits
-        max_evidence_chars = 2000
         if len(evidence) > max_evidence_chars:
             evidence = evidence[:max_evidence_chars] + "..."
         
@@ -447,18 +822,23 @@ Return ONLY valid JSON, no markdown code blocks, no extra commentary."""
             The raw response text from Ollama
         
         Raises:
+            OllamaModelNotFoundError: If model is not found (404)
+            OllamaTimeoutError: If request times out
             urllib.error.URLError: If connection fails
             json.JSONDecodeError: If response parsing fails
         """
+        config = self._get_model_config()
+        
         data = json.dumps({
             "model": self.model,
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,  # Low temperature for consistency
-                "num_predict": 500,  # Limit response length
-                "top_p": 0.9,
-                "top_k": 40,
+                "temperature": config.get("temperature", 0.3),
+                "num_predict": config.get("num_predict", 500),
+                "top_p": config.get("top_p", 0.9),
+                "top_k": config.get("top_k", 40),
+                "num_ctx": config.get("context_window", 4096),
             }
         }).encode("utf-8")
         
@@ -469,9 +849,21 @@ Return ONLY valid JSON, no markdown code blocks, no extra commentary."""
             method="POST",
         )
         
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            return result.get("response", "")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                return result.get("response", "")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                available = self._list_available_models()
+                raise OllamaModelNotFoundError(self.model, available) from e
+            raise
+        except socket.timeout:
+            raise OllamaTimeoutError(self.model)
+        except urllib.error.URLError as e:
+            if "timed out" in str(e).lower():
+                raise OllamaTimeoutError(self.model) from e
+            raise
     
     def _parse_repair_response(self, response: str) -> dict[str, Any] | None:
         """
@@ -581,7 +973,9 @@ def create_ollama_repair_if_enabled(
     enabled: bool = True,
     model: str = "qwen2.5:3b",
     host: str = "http://localhost:11434",
-) -> OllamaRepair | None:
+    auto_fallback: bool = True,
+    preflight_available: bool | None = None,
+) -> tuple[OllamaRepair | None, dict[str, Any]]:
     """
     Create OllamaRepair instance if enabled and available.
     
@@ -592,26 +986,67 @@ def create_ollama_repair_if_enabled(
         enabled: Whether repair is enabled in configuration
         model: Ollama model to use
         host: Ollama API host
+        auto_fallback: Whether to automatically fallback to available models
+        preflight_available: Optional preflight result to avoid re-checking
     
     Returns:
-        OllamaRepair instance if enabled and available, None otherwise
+        Tuple of (repair_instance, status_dict)
+        - repair_instance: OllamaRepair if enabled and available, None otherwise
+        - status_dict: Dict with keys: enabled, available, disabled_reason, model
     
     Example:
-        >>> repair = create_ollama_repair_if_enabled(
+        >>> repair, status = create_ollama_repair_if_enabled(
         ...     enabled=config.use_ollama_repair,
         ...     model=config.ollama_model
         ... )
+        >>> if repair:
+        ...     print(f"Repair available with model: {status['model']}")
     """
+    status = {
+        "enabled": enabled,
+        "available": False,
+        "disabled_reason": None,
+        "model": model,
+    }
+    
     if not enabled:
-        logger.info("Ollama repair disabled by configuration")
-        return None
+        status["disabled_reason"] = "user_disabled"
+        logger.debug("Ollama repair disabled by configuration")
+        return None, status
     
-    repair = OllamaRepair(model=model, host=host)
-    if repair.available:
-        return repair
+    # Run preflight check if not already done and no result provided
+    if preflight_available is None and not OllamaRepair._preflight_completed:
+        available, reason = OllamaRepair.run_preflight_check(host, model)
+        preflight_available = available
+        if not available:
+            status["disabled_reason"] = reason or "ollama_not_running"
     
-    logger.warning("Ollama repair enabled but server not available")
-    return None
+    # If preflight shows unavailable, return None without logging
+    if preflight_available is False:
+        status["disabled_reason"] = "ollama_not_running"
+        return None, status
+    
+    try:
+        repair = OllamaRepair(
+            model=model,
+            host=host,
+            auto_fallback=auto_fallback,
+            skip_preflight=True,  # Already done above
+        )
+        if repair.available:
+            status["available"] = True
+            status["model"] = repair.model  # May have changed due to fallback
+            return repair, status
+        else:
+            status["disabled_reason"] = "ollama_not_available"
+    except OllamaModelNotFoundError as e:
+        logger.error(str(e))
+        status["disabled_reason"] = f"model_not_found: {e.model}"
+    except Exception as e:
+        logger.warning(f"Failed to create OllamaRepair: {e}")
+        status["disabled_reason"] = f"error: {e}"
+    
+    return None, status
 
 
 @dataclass
@@ -1078,8 +1513,10 @@ class SelectiveRepairPass:
         Returns:
             Formatted prompt string
         """
+        config = self.ollama_repair._get_model_config()
+        max_evidence_chars = config.get("context_window", 4096) - 1000
+        
         # Truncate evidence to avoid token limits
-        max_evidence_chars = 2000
         if len(source_evidence) > max_evidence_chars:
             source_evidence = source_evidence[:max_evidence_chars] + "..."
         
@@ -1153,8 +1590,18 @@ __all__ = [
     "SelectiveRepairPass",
     "RepairResult",
     "RepairCache",
+    "RepairValidator",
     # Factory function
     "create_ollama_repair_if_enabled",
     # Constants
     "REPAIR_PROMPT_VERSION",
+    "PREFERRED_MODELS",
+    "MODEL_CONFIGS",
+    "DEFAULT_MODEL_CONFIG",
+    # Exceptions
+    "OllamaRepairError",
+    "OllamaModelNotFoundError",
+    "OllamaTimeoutError",
+    # Functions
+    "get_model_config",
 ]
