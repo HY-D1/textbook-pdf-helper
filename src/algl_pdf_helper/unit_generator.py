@@ -260,7 +260,7 @@ class GenerationConfig:
     allow_synthetic_examples: bool = False  # Default to False for production
     enable_ollama_repair: bool = True  # Enable selective Ollama repair by default
     repair_threshold: float = 0.6  # Quality threshold for triggering repair
-    ollama_model: str = "qwen3.5:9b-q8_0"  # Default Ollama model for repairs
+    ollama_model: str = "qwen2.5:3b"  # Default Ollama model for repairs
     
     def __post_init__(self):
         """Validate configuration."""
@@ -940,6 +940,20 @@ class UnitGenerator:
         self.logger = logging.getLogger(__name__)
         self._ollama_repair: OllamaRepair | None = None
         self._selective_repair: SelectiveRepairPass | None = None
+        self._chapters: list[Any] = []  # Chapter structure for provenance tracking
+    
+    def set_chapters(self, chapters: list[Any]) -> None:
+        """
+        Set chapter structure for provenance tracking.
+        
+        Args:
+            chapters: List of ChapterInfo objects
+        """
+        self._chapters = chapters
+    
+    def _get_provenance_for_blocks(self, blocks: list[ContentBlock]) -> dict[str, Any]:
+        """Get provenance information for a set of blocks."""
+        return self._extract_provenance_from_blocks(blocks, self._chapters)
     
     def _init_ollama_repair(self, config: GenerationConfig) -> bool:
         """
@@ -1224,6 +1238,69 @@ class UnitGenerator:
             )
         return evidence_spans
     
+    def _extract_provenance_from_blocks(
+        self,
+        blocks: list[ContentBlock],
+        chapters: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Extract chapter/section provenance from content blocks.
+        
+        Args:
+            blocks: Source content blocks
+            chapters: Optional list of ChapterInfo for chapter lookup
+            
+        Returns:
+            Dictionary with chapter_number, section_title, source_examples
+        """
+        provenance = {
+            "chapter_number": None,
+            "section_title": None,
+            "source_examples": [],
+        }
+        
+        if not blocks:
+            return provenance
+        
+        # Get pages from blocks
+        pages = list(set(b.page_number for b in blocks))
+        if not pages:
+            return provenance
+        
+        # Try to determine chapter from page numbers
+        if chapters:
+            for chapter in chapters:
+                chapter_start = getattr(chapter, 'start_page', getattr(chapter, 'page_range', [0, 0])[0])
+                chapter_end = getattr(chapter, 'end_page', getattr(chapter, 'page_range', [0, 0])[1])
+                
+                # Check if any block page falls within chapter
+                if any(chapter_start <= p <= chapter_end for p in pages):
+                    provenance["chapter_number"] = getattr(chapter, 'chapter_num', getattr(chapter, 'chapter_number', None))
+                    break
+        
+        # Extract section title from heading blocks
+        for block in blocks:
+            if block.is_structural:
+                text = block.text_content.strip()
+                # Skip chapter headings
+                if re.match(r'^(chapter|ch\.?|part)\s+\d+', text, re.IGNORECASE):
+                    continue
+                # Use first non-chapter heading as section title
+                if len(text) < 100:  # Reasonable section title length
+                    provenance["section_title"] = text
+                    break
+        
+        # Extract SQL example references from code blocks
+        example_counter = 0
+        for block in blocks:
+            if block.is_code:
+                example_counter += 1
+                # Generate example reference ID
+                page = block.page_number
+                provenance["source_examples"].append(f"ex:p{page}:{example_counter}")
+        
+        return provenance
+    
     def _call_llm(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
         """Call LLM with prompt and return structured response."""
         # Grounded mode: no LLM, use extracted content only
@@ -1317,6 +1394,9 @@ class UnitGenerator:
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
         
+        # Get provenance information
+        provenance = self._get_provenance_for_blocks(blocks)
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L1_hint",
             concept_id=concept_id,
@@ -1330,6 +1410,9 @@ class UnitGenerator:
             source_pages=source_pages,
             grounding_confidence=0.8 if blocks else 0.0,
             estimated_read_time=15,
+            chapter_number=provenance.get("chapter_number"),
+            section_title=provenance.get("section_title"),
+            source_examples=provenance.get("source_examples", []),
         )
     
     def generate_L2_hint_plus_example(
@@ -1426,6 +1509,9 @@ class UnitGenerator:
                 "content_quality": "curated",
             }
         
+        # Get provenance information
+        provenance = self._get_provenance_for_blocks(blocks)
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L2_hint_plus_example",
             concept_id=concept_id,
@@ -1439,6 +1525,9 @@ class UnitGenerator:
             source_pages=source_pages,
             grounding_confidence=0.8 if blocks else 0.0,
             estimated_read_time=45,
+            chapter_number=provenance.get("chapter_number"),
+            section_title=provenance.get("section_title"),
+            source_examples=provenance.get("source_examples", []),
         )
     
     def generate_L3_explanation(
@@ -1600,6 +1689,9 @@ class UnitGenerator:
                     quality="weak"
                 )
         
+        # Get provenance information
+        provenance = self._get_provenance_for_blocks(blocks)
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L3_explanation",
             concept_id=concept_id,
@@ -1613,6 +1705,9 @@ class UnitGenerator:
             source_pages=source_pages,
             grounding_confidence=0.8 if blocks else 0.0,
             estimated_read_time=300,
+            chapter_number=provenance.get("chapter_number"),
+            section_title=provenance.get("section_title"),
+            source_examples=provenance.get("source_examples", []),
         )
     
     def generate_L4_reflective_note(
@@ -1665,6 +1760,9 @@ class UnitGenerator:
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
         
+        # Get provenance information
+        provenance = self._get_provenance_for_blocks(blocks)
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_L4_reflective_note",
             concept_id=concept_id,
@@ -1678,6 +1776,9 @@ class UnitGenerator:
             source_pages=source_pages,
             grounding_confidence=0.8 if blocks else 0.0,
             estimated_read_time=180,
+            chapter_number=provenance.get("chapter_number"),
+            section_title=provenance.get("section_title"),
+            source_examples=provenance.get("source_examples", []),
         )
     
     def generate_reinforcement_microcheck(
@@ -1726,6 +1827,9 @@ class UnitGenerator:
         # Get source pages from blocks
         source_pages = list(set(b.page_number for b in blocks))
         
+        # Get provenance information
+        provenance = self._get_provenance_for_blocks(blocks)
+        
         return InstructionalUnit(
             unit_id=f"{concept_id}_reinforcement",
             concept_id=concept_id,
@@ -1739,6 +1843,9 @@ class UnitGenerator:
             source_pages=source_pages,
             grounding_confidence=0.8 if blocks else 0.0,
             estimated_read_time=10,
+            chapter_number=provenance.get("chapter_number"),
+            section_title=provenance.get("section_title"),
+            source_examples=provenance.get("source_examples", []),
         )
     
     def _create_fallback_unit(
@@ -3121,7 +3228,7 @@ class UnitGenerator:
         # Look at previous block
         if index > 0:
             prev = blocks[index - 1]
-            if hasattr(prev, 'block_type') and prev.block_type in (BlockType.EXPLANATORY_PROSE, BlockType.EXPLANATORY_PROSE):
+            if hasattr(prev, 'block_type') and prev.block_type == BlockType.EXPLANATORY_PROSE:
                 text = prev.text_content.strip() if prev.text_content else ""
                 if len(text) > 20 and len(text) < 200:
                     return text
@@ -3129,7 +3236,7 @@ class UnitGenerator:
         # Look at next block
         if index < len(blocks) - 1:
             next_block = blocks[index + 1]
-            if hasattr(next_block, 'block_type') and next_block.block_type in (BlockType.EXPLANATORY_PROSE, BlockType.EXPLANATORY_PROSE):
+            if hasattr(next_block, 'block_type') and next_block.block_type == BlockType.EXPLANATORY_PROSE:
                 text = next_block.text_content.strip() if next_block.text_content else ""
                 if len(text) > 20 and len(text) < 200:
                     return text
@@ -3953,11 +4060,6 @@ class UnitGenerator:
         if use_curated and curated_full:
                 # Access the nested content structure (curated_full has "content" key)
                 curated = curated_full.get("content", curated_full)
-                print(f"[Generate L3] {concept_id}: merging with curated content")
-                
-                # DEBUG: Check what's in curated
-                print(f"[DEBUG] {concept_id} curated keys: {list(curated.keys())}")
-                print(f"[DEBUG] {concept_id} curated definition: {curated.get('definition', 'MISSING')[:50] if curated.get('definition') else 'EMPTY'}")
                 
                 # USE CURATED DIRECTLY - don't merge with empty extracted
                 # Only keep non-empty extracted values that curated doesn't have
@@ -3976,13 +4078,6 @@ class UnitGenerator:
                 merged_content["_used_curated_fallback"] = True
                 extracted_content = merged_content
                 curated_used = True
-                print(f"[DEBUG] {concept_id}: Using curated directly")
-        
-        # DEBUG: Check final content state
-        print(f"[DEBUG] {concept_id}: final has_definition={bool(extracted_content.get('definition'))}, "
-              f"has_examples={bool(extracted_content.get('examples'))}, "
-              f"has_why={bool(extracted_content.get('why_it_matters'))}, "
-              f"curated_used={curated_used}")
         
         # Build definition: Try extracted/merged first, then ontology, then default
         definition = extracted_content.get("definition")
