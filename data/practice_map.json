@@ -2,9 +2,11 @@
   "_metadata": {
     "format_version": "2.0",
     "status": "active",
-    "last_updated": "2026-03-09",
+    "last_updated": "2026-03-10",
     "source": "sql-engage-v1",
-    "description": "Real adaptive practice problem mappings for SQL-Engage integration"
+    "description": "Real adaptive practice problem mappings for SQL-Engage integration",
+    "total_concepts": 50,
+    "total_problems": 105
   },
   "concepts": {
     "select-basic": {
@@ -133,27 +135,27 @@
         }
       ]
     },
-    "left-join": {
+    "outer-join": {
       "problems": [
         {
-          "problem_id": "sql-engage/left-join-basic-001",
-          "title": "LEFT JOIN Basics",
+          "problem_id": "sql-engage/outer-join-basics-001",
+          "title": "OUTER JOIN Fundamentals",
           "difficulty": "intermediate",
-          "concepts": ["left-join", "outer-join"],
+          "concepts": ["outer-join", "left-join", "right-join"],
           "error_subtypes": ["wrong_join_type_error"],
           "supports_hintwise": true,
           "supports_replay": true,
-          "url": "https://sql-engage.example.com/problems/left-join-basic-001"
+          "url": "https://sql-engage.example.com/problems/outer-join-basics-001"
         },
         {
-          "problem_id": "sql-engage/left-join-filter-002",
-          "title": "LEFT JOIN with Filtering",
-          "difficulty": "advanced",
-          "concepts": ["left-join", "where-clause"],
-          "error_subtypes": ["where_vs_on_error"],
+          "problem_id": "sql-engage/outer-join-nulls-002",
+          "title": "NULLs in OUTER JOINs",
+          "difficulty": "intermediate",
+          "concepts": ["outer-join", "null-handling"],
+          "error_subtypes": ["null_filtering_error"],
           "supports_hintwise": true,
           "supports_replay": true,
-          "url": "https://sql-engage.example.com/problems/left-join-filter-002"
+          "url": "https://sql-engage.example.com/problems/outer-join-nulls-002"
         }
       ]
     },
@@ -225,13 +227,13 @@
         }
       ]
     },
-    "subqueries": {
+    "subqueries-intro": {
       "problems": [
         {
           "problem_id": "sql-engage/subquery-basic-001",
           "title": "Basic Subquery",
           "difficulty": "intermediate",
-          "concepts": ["subqueries", "nested-select"],
+          "concepts": ["subqueries-intro", "nested-select"],
           "error_subtypes": ["subquery_correlation_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -241,7 +243,7 @@
           "problem_id": "sql-engage/subquery-where-002",
           "title": "Subquery in WHERE Clause",
           "difficulty": "intermediate",
-          "concepts": ["subqueries", "where-subquery"],
+          "concepts": ["subqueries-intro", "where-subquery"],
           "error_subtypes": ["single_vs_multi_row_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -251,7 +253,7 @@
           "problem_id": "sql-engage/subquery-select-003",
           "title": "Subquery in SELECT Clause",
           "difficulty": "advanced",
-          "concepts": ["subqueries", "scalar-subquery"],
+          "concepts": ["subqueries-intro", "scalar-subquery"],
           "error_subtypes": ["multi_row_in_select_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -427,13 +429,13 @@
         }
       ]
     },
-    "correlated-subqueries": {
+    "correlated-subquery": {
       "problems": [
         {
           "problem_id": "sql-engage/correlated-intro-001",
           "title": "Correlated Subquery Introduction",
           "difficulty": "advanced",
-          "concepts": ["correlated-subqueries", "exists-operator"],
+          "concepts": ["correlated-subquery", "exists-operator"],
           "error_subtypes": ["correlation_reference_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -443,7 +445,7 @@
           "problem_id": "sql-engage/correlated-exists-002",
           "title": "EXISTS with Correlated Subquery",
           "difficulty": "advanced",
-          "concepts": ["correlated-subqueries", "exists"],
+          "concepts": ["correlated-subquery", "exists"],
           "error_subtypes": ["exists_select_star_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -451,13 +453,13 @@
         }
       ]
     },
-    "exists-subqueries": {
+    "exists-operator": {
       "problems": [
         {
           "problem_id": "sql-engage/exists-basic-001",
           "title": "EXISTS Operator",
           "difficulty": "intermediate",
-          "concepts": ["exists-subqueries", "semi-join"],
+          "concepts": ["exists-operator", "semi-join"],
           "error_subtypes": ["exists_vs_in_confusion"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -467,7 +469,7 @@
           "problem_id": "sql-engage/exists-not-002",
           "title": "NOT EXISTS",
           "difficulty": "intermediate",
-          "concepts": ["exists-subqueries", "anti-join"],
+          "concepts": ["exists-operator", "anti-join"],
           "error_subtypes": ["not_exists_logic_error"],
           "supports_hintwise": true,
           "supports_replay": true,
@@ -592,6 +594,840 @@
           "supports_hintwise": true,
           "supports_replay": true,
           "url": "https://sql-engage.example.com/problems/like-wildcards-002"
+        }
+      ]
+    },
+    "cross-join": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/cross-join-001",
+          "title": "CROSS JOIN Basics",
+          "difficulty": "intermediate",
+          "concepts": ["cross-join", "cartesian-product"],
+          "error_subtypes": ["unintended_cross_join"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/cross-join-001"
+        },
+        {
+          "problem_id": "sql-engage/cross-join-use-002",
+          "title": "Practical Uses of CROSS JOIN",
+          "difficulty": "advanced",
+          "concepts": ["cross-join", "data-generation"],
+          "error_subtypes": ["memory_exhaustion_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/cross-join-use-002"
+        }
+      ]
+    },
+    "self-join": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/self-join-001",
+          "title": "Self-Join Basics",
+          "difficulty": "intermediate",
+          "concepts": ["self-join", "hierarchical-data"],
+          "error_subtypes": ["ambiguous_column_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/self-join-001"
+        },
+        {
+          "problem_id": "sql-engage/self-join-hierarchy-002",
+          "title": "Self-Join for Hierarchies",
+          "difficulty": "advanced",
+          "concepts": ["self-join", "recursive-thinking"],
+          "error_subtypes": ["termination_condition_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/self-join-hierarchy-002"
+        }
+      ]
+    },
+    "subquery-in-select": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/scalar-subquery-001",
+          "title": "Scalar Subquery in SELECT",
+          "difficulty": "intermediate",
+          "concepts": ["subquery-in-select", "scalar-subquery"],
+          "error_subtypes": ["multi_row_in_select_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/scalar-subquery-001"
+        },
+        {
+          "problem_id": "sql-engage/subquery-select-correlated-002",
+          "title": "Correlated Subquery in SELECT",
+          "difficulty": "advanced",
+          "concepts": ["subquery-in-select", "correlated-subqueries"],
+          "error_subtypes": ["correlation_reference_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/subquery-select-correlated-002"
+        }
+      ]
+    },
+    "subquery-in-where": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/subquery-where-in-001",
+          "title": "Subquery with IN Operator",
+          "difficulty": "intermediate",
+          "concepts": ["subquery-in-where", "in-operator"],
+          "error_subtypes": ["single_vs_multi_row_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/subquery-where-in-001"
+        },
+        {
+          "problem_id": "sql-engage/subquery-where-comparison-002",
+          "title": "Subquery with Comparison Operators",
+          "difficulty": "intermediate",
+          "concepts": ["subquery-in-where", "comparison-operators"],
+          "error_subtypes": ["scalar_subquery_required"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/subquery-where-comparison-002"
+        }
+      ]
+    },
+    "in-operator": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/in-operator-001",
+          "title": "IN Operator Basics",
+          "difficulty": "beginner",
+          "concepts": ["in-operator", "set-membership"],
+          "error_subtypes": ["in_vs_equals_confusion"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/in-operator-001"
+        },
+        {
+          "problem_id": "sql-engage/in-subquery-002",
+          "title": "IN with Subqueries",
+          "difficulty": "intermediate",
+          "concepts": ["in-operator", "subqueries"],
+          "error_subtypes": ["single_vs_multi_row_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/in-subquery-002"
+        }
+      ]
+    },
+    "between-operator": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/between-001",
+          "title": "BETWEEN Operator",
+          "difficulty": "beginner",
+          "concepts": ["between-operator", "range-filtering"],
+          "error_subtypes": ["boundary_inclusion_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/between-001"
+        }
+      ]
+    },
+    "comparison-operators": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/comparison-001",
+          "title": "Comparison Operators",
+          "difficulty": "beginner",
+          "concepts": ["comparison-operators", "filtering"],
+          "error_subtypes": ["string_literal_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/comparison-001"
+        },
+        {
+          "problem_id": "sql-engage/comparison-null-002",
+          "title": "Comparisons with NULL",
+          "difficulty": "beginner",
+          "concepts": ["comparison-operators", "null-handling"],
+          "error_subtypes": ["null_equality_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/comparison-null-002"
+        }
+      ]
+    },
+    "and-or-operators": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/and-or-001",
+          "title": "AND and OR Operators",
+          "difficulty": "beginner",
+          "concepts": ["and-or-operators", "logical-operators"],
+          "error_subtypes": ["operator_precedence_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/and-or-001"
+        }
+      ]
+    },
+    "alter-table": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/alter-add-001",
+          "title": "ALTER TABLE ADD COLUMN",
+          "difficulty": "beginner",
+          "concepts": ["alter-table", "ddl"],
+          "error_subtypes": ["datatype_selection_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/alter-add-001"
+        },
+        {
+          "problem_id": "sql-engage/alter-modify-002",
+          "title": "ALTER TABLE MODIFY",
+          "difficulty": "intermediate",
+          "concepts": ["alter-table", "schema-change"],
+          "error_subtypes": ["data_truncation_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/alter-modify-002"
+        }
+      ]
+    },
+    "drop-table": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/drop-table-001",
+          "title": "DROP TABLE",
+          "difficulty": "beginner",
+          "concepts": ["drop-table", "ddl"],
+          "error_subtypes": ["cascade_constraints_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/drop-table-001"
+        },
+        {
+          "problem_id": "sql-engage/drop-if-exists-002",
+          "title": "DROP TABLE IF EXISTS",
+          "difficulty": "beginner",
+          "concepts": ["drop-table", "safe-ddl"],
+          "error_subtypes": ["syntax_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/drop-if-exists-002"
+        }
+      ]
+    },
+    "constraints": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/constraints-pk-001",
+          "title": "PRIMARY KEY Constraint",
+          "difficulty": "beginner",
+          "concepts": ["constraints", "primary-key"],
+          "error_subtypes": ["constraint_syntax_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/constraints-pk-001"
+        },
+        {
+          "problem_id": "sql-engage/constraints-fk-002",
+          "title": "FOREIGN KEY Constraint",
+          "difficulty": "intermediate",
+          "concepts": ["constraints", "foreign-key"],
+          "error_subtypes": ["referential_integrity_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/constraints-fk-002"
+        },
+        {
+          "problem_id": "sql-engage/constraints-check-003",
+          "title": "CHECK Constraint",
+          "difficulty": "intermediate",
+          "concepts": ["constraints", "check-constraint"],
+          "error_subtypes": ["check_violation_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/constraints-check-003"
+        }
+      ]
+    },
+    "indexes": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/index-create-001",
+          "title": "CREATE INDEX",
+          "difficulty": "intermediate",
+          "concepts": ["indexes", "performance"],
+          "error_subtypes": ["duplicate_index_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/index-create-001"
+        },
+        {
+          "problem_id": "sql-engage/index-unique-002",
+          "title": "UNIQUE INDEX",
+          "difficulty": "intermediate",
+          "concepts": ["indexes", "unique-constraint"],
+          "error_subtypes": ["unique_violation_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/index-unique-002"
+        }
+      ]
+    },
+    "string-functions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/string-concat-001",
+          "title": "String Concatenation",
+          "difficulty": "beginner",
+          "concepts": ["string-functions", "concat"],
+          "error_subtypes": ["null_concat_result"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/string-concat-001"
+        },
+        {
+          "problem_id": "sql-engage/string-substring-002",
+          "title": "SUBSTRING and POSITION",
+          "difficulty": "beginner",
+          "concepts": ["string-functions", "substring"],
+          "error_subtypes": ["off_by_one_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/string-substring-002"
+        },
+        {
+          "problem_id": "sql-engage/string-trim-003",
+          "title": "TRIM and Padding Functions",
+          "difficulty": "intermediate",
+          "concepts": ["string-functions", "trim"],
+          "error_subtypes": ["whitespace_mismatch"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/string-trim-003"
+        }
+      ]
+    },
+    "date-functions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/date-current-001",
+          "title": "Current Date and Time",
+          "difficulty": "beginner",
+          "concepts": ["date-functions", "current-timestamp"],
+          "error_subtypes": ["timezone_confusion"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/date-current-001"
+        },
+        {
+          "problem_id": "sql-engage/date-format-002",
+          "title": "Date Formatting",
+          "difficulty": "intermediate",
+          "concepts": ["date-functions", "date-format"],
+          "error_subtypes": ["format_string_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/date-format-002"
+        },
+        {
+          "problem_id": "sql-engage/date-arithmetic-003",
+          "title": "Date Arithmetic",
+          "difficulty": "intermediate",
+          "concepts": ["date-functions", "interval-arithmetic"],
+          "error_subtypes": ["interval_unit_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/date-arithmetic-003"
+        }
+      ]
+    },
+    "data-types": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/datatypes-numeric-001",
+          "title": "Numeric Data Types",
+          "difficulty": "beginner",
+          "concepts": ["data-types", "numeric"],
+          "error_subtypes": ["precision_loss_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/datatypes-numeric-001"
+        },
+        {
+          "problem_id": "sql-engage/datatypes-conversion-002",
+          "title": "Data Type Conversion",
+          "difficulty": "intermediate",
+          "concepts": ["data-types", "casting"],
+          "error_subtypes": ["implicit_conversion_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/datatypes-conversion-002"
+        }
+      ]
+    },
+    "case-expressions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/case-simple-001",
+          "title": "Simple CASE Expression",
+          "difficulty": "intermediate",
+          "concepts": ["case-expressions", "conditional-logic"],
+          "error_subtypes": ["case_else_missing"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/case-simple-001"
+        },
+        {
+          "problem_id": "sql-engage/case-searched-002",
+          "title": "Searched CASE Expression",
+          "difficulty": "intermediate",
+          "concepts": ["case-expressions", "complex-conditions"],
+          "error_subtypes": ["case_order_matters"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/case-searched-002"
+        }
+      ]
+    },
+    "coalesce-nullif": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/coalesce-001",
+          "title": "COALESCE Function",
+          "difficulty": "intermediate",
+          "concepts": ["coalesce-nullif", "null-handling"],
+          "error_subtypes": ["all_nulls_coalesce"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/coalesce-001"
+        },
+        {
+          "problem_id": "sql-engage/nullif-002",
+          "title": "NULLIF Function",
+          "difficulty": "intermediate",
+          "concepts": ["coalesce-nullif", "null-conditional"],
+          "error_subtypes": ["division_by_zero_prevention"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/nullif-002"
+        }
+      ]
+    },
+    "views": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/view-create-001",
+          "title": "Creating Views",
+          "difficulty": "intermediate",
+          "concepts": ["views", "virtual-tables"],
+          "error_subtypes": ["view_column_mismatch"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/view-create-001"
+        },
+        {
+          "problem_id": "sql-engage/view-update-002",
+          "title": "Updatable Views",
+          "difficulty": "advanced",
+          "concepts": ["views", "updatable-views"],
+          "error_subtypes": ["non_updatable_view_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/view-update-002"
+        }
+      ]
+    },
+    "triggers": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/trigger-basic-001",
+          "title": "Basic Triggers",
+          "difficulty": "advanced",
+          "concepts": ["triggers", "automation"],
+          "error_subtypes": ["trigger_timing_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/trigger-basic-001"
+        },
+        {
+          "problem_id": "sql-engage/trigger-audit-002",
+          "title": "Audit Trail Triggers",
+          "difficulty": "advanced",
+          "concepts": ["triggers", "auditing"],
+          "error_subtypes": ["trigger_recursion_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/trigger-audit-002"
+        }
+      ]
+    },
+    "functions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/function-create-001",
+          "title": "Creating Functions",
+          "difficulty": "intermediate",
+          "concepts": ["functions", "stored-functions"],
+          "error_subtypes": ["return_type_mismatch"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/function-create-001"
+        },
+        {
+          "problem_id": "sql-engage/function-deterministic-002",
+          "title": "Deterministic Functions",
+          "difficulty": "advanced",
+          "concepts": ["functions", "deterministic"],
+          "error_subtypes": ["nondeterministic_in_index"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/function-deterministic-002"
+        }
+      ]
+    },
+    "cte": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/cte-basic-001",
+          "title": "Common Table Expressions",
+          "difficulty": "intermediate",
+          "concepts": ["cte", "with-clause"],
+          "error_subtypes": ["cte_scope_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/cte-basic-001"
+        },
+        {
+          "problem_id": "sql-engage/cte-multi-002",
+          "title": "Multiple CTEs",
+          "difficulty": "intermediate",
+          "concepts": ["cte", "complex-queries"],
+          "error_subtypes": ["cte_reference_order"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/cte-multi-002"
+        }
+      ]
+    },
+    "window-functions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/window-over-001",
+          "title": "OVER Clause Basics",
+          "difficulty": "intermediate",
+          "concepts": ["window-functions", "over-clause"],
+          "error_subtypes": ["window_syntax_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/window-over-001"
+        },
+        {
+          "problem_id": "sql-engage/window-ranking-002",
+          "title": "Ranking Functions",
+          "difficulty": "advanced",
+          "concepts": ["window-functions", "row_number", "rank", "dense_rank"],
+          "error_subtypes": ["rank_vs_row_number_confusion"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/window-ranking-002"
+        },
+        {
+          "problem_id": "sql-engage/window-frame-003",
+          "title": "Window Frame Specifications",
+          "difficulty": "advanced",
+          "concepts": ["window-functions", "frame-clause"],
+          "error_subtypes": ["frame_boundary_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/window-frame-003"
+        }
+      ]
+    },
+    "recursive-cte": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/recursive-cte-001",
+          "title": "Recursive CTEs",
+          "difficulty": "advanced",
+          "concepts": ["recursive-cte", "hierarchical-queries"],
+          "error_subtypes": ["infinite_recursion_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/recursive-cte-001"
+        },
+        {
+          "problem_id": "sql-engage/recursive-tree-002",
+          "title": "Tree Traversal with CTE",
+          "difficulty": "advanced",
+          "concepts": ["recursive-cte", "tree-traversal"],
+          "error_subtypes": ["anchor_vs_recursive_confusion"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/recursive-tree-002"
+        }
+      ]
+    },
+    "normalization": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/normalization-1nf-001",
+          "title": "First Normal Form (1NF)",
+          "difficulty": "beginner",
+          "concepts": ["normalization", "1nf"],
+          "error_subtypes": ["repeating_groups_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/normalization-1nf-001"
+        },
+        {
+          "problem_id": "sql-engage/normalization-2nf-002",
+          "title": "Second Normal Form (2NF)",
+          "difficulty": "intermediate",
+          "concepts": ["normalization", "2nf"],
+          "error_subtypes": ["partial_dependency_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/normalization-2nf-002"
+        },
+        {
+          "problem_id": "sql-engage/normalization-3nf-003",
+          "title": "Third Normal Form (3NF)",
+          "difficulty": "intermediate",
+          "concepts": ["normalization", "3nf"],
+          "error_subtypes": ["transitive_dependency_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/normalization-3nf-003"
+        }
+      ]
+    },
+    "primary-key": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/pk-concept-001",
+          "title": "Primary Key Fundamentals",
+          "difficulty": "beginner",
+          "concepts": ["primary-key", "constraints"],
+          "error_subtypes": ["duplicate_key_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/pk-concept-001"
+        }
+      ]
+    },
+    "foreign-key": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/fk-concept-001",
+          "title": "Foreign Key Fundamentals",
+          "difficulty": "intermediate",
+          "concepts": ["foreign-key", "referential-integrity"],
+          "error_subtypes": ["foreign_key_violation"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/fk-concept-001"
+        }
+      ]
+    },
+    "transactions": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/transaction-acid-001",
+          "title": "Transaction Basics",
+          "difficulty": "intermediate",
+          "concepts": ["transactions", "acid"],
+          "error_subtypes": ["implicit_commit_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/transaction-acid-001"
+        },
+        {
+          "problem_id": "sql-engage/transaction-isolation-002",
+          "title": "Transaction Isolation",
+          "difficulty": "advanced",
+          "concepts": ["transactions", "isolation-levels"],
+          "error_subtypes": ["dirty_read_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/transaction-isolation-002"
+        }
+      ]
+    },
+    "stored-procedures": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/stored-proc-basic-001",
+          "title": "Stored Procedures Basics",
+          "difficulty": "intermediate",
+          "concepts": ["stored-procedures", "procedural-sql"],
+          "error_subtypes": ["delimiter_syntax_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/stored-proc-basic-001"
+        },
+        {
+          "problem_id": "sql-engage/stored-proc-params-002",
+          "title": "Procedures with Parameters",
+          "difficulty": "intermediate",
+          "concepts": ["stored-procedures", "parameters"],
+          "error_subtypes": ["parameter_mode_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/stored-proc-params-002"
+        }
+      ]
+    },
+    "database-design": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/db-design-erd-001",
+          "title": "ERD to Schema Design",
+          "difficulty": "intermediate",
+          "concepts": ["database-design", "erd-modeling"],
+          "error_subtypes": ["missing_primary_key_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/db-design-erd-001"
+        },
+        {
+          "problem_id": "sql-engage/db-design-relationships-002",
+          "title": "Relationship Cardinality",
+          "difficulty": "intermediate",
+          "concepts": ["database-design", "relationships"],
+          "error_subtypes": ["wrong_cardinality_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/db-design-relationships-002"
+        }
+      ]
+    },
+    "erd-basics": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/erd-entities-001",
+          "title": "Entity Identification",
+          "difficulty": "beginner",
+          "concepts": ["erd-basics", "entity-relationship"],
+          "error_subtypes": ["entity_vs_attribute_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/erd-entities-001"
+        },
+        {
+          "problem_id": "sql-engage/erd-relationships-002",
+          "title": "Relationship Types",
+          "difficulty": "intermediate",
+          "concepts": ["erd-basics", "cardinality"],
+          "error_subtypes": ["many_to_many_resolution"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/erd-relationships-002"
+        }
+      ]
+    },
+    "first-normal-form": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/1nf-atomicity-001",
+          "title": "Atomic Values in 1NF",
+          "difficulty": "beginner",
+          "concepts": ["first-normal-form", "atomicity"],
+          "error_subtypes": ["multi_valued_attribute_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/1nf-atomicity-001"
+        }
+      ]
+    },
+    "second-normal-form": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/2nf-partial-001",
+          "title": "Eliminating Partial Dependencies",
+          "difficulty": "intermediate",
+          "concepts": ["second-normal-form", "partial-dependency"],
+          "error_subtypes": ["partial_dependency_undetected"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/2nf-partial-001"
+        }
+      ]
+    },
+    "third-normal-form": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/3nf-transitive-001",
+          "title": "Eliminating Transitive Dependencies",
+          "difficulty": "intermediate",
+          "concepts": ["third-normal-form", "transitive-dependency"],
+          "error_subtypes": ["transitive_dependency_undetected"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/3nf-transitive-001"
+        }
+      ]
+    },
+    "isolation-levels": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/isolation-read-uncommitted-001",
+          "title": "READ UNCOMMITTED Isolation",
+          "difficulty": "intermediate",
+          "concepts": ["isolation-levels", "dirty-reads"],
+          "error_subtypes": ["isolation_choice_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/isolation-read-uncommitted-001"
+        },
+        {
+          "problem_id": "sql-engage/isolation-serializable-002",
+          "title": "SERIALIZABLE Isolation",
+          "difficulty": "advanced",
+          "concepts": ["isolation-levels", "concurrency"],
+          "error_subtypes": ["serialization_failure"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/isolation-serializable-002"
+        }
+      ]
+    },
+    "intersect-except": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/intersect-basics-001",
+          "title": "INTERSECT Operator",
+          "difficulty": "intermediate",
+          "concepts": ["intersect-except", "set-operations"],
+          "error_subtypes": ["set_operation_column_mismatch"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/intersect-basics-001"
+        },
+        {
+          "problem_id": "sql-engage/except-basics-002",
+          "title": "EXCEPT Operator",
+          "difficulty": "intermediate",
+          "concepts": ["intersect-except", "set-difference"],
+          "error_subtypes": ["except_order_matters"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/except-basics-002"
+        }
+      ]
+    },
+    "merge-upsert": {
+      "problems": [
+        {
+          "problem_id": "sql-engage/merge-basic-001",
+          "title": "MERGE Statement",
+          "difficulty": "advanced",
+          "concepts": ["merge-upsert", "upsert"],
+          "error_subtypes": ["merge_condition_error"],
+          "supports_hintwise": true,
+          "supports_replay": true,
+          "url": "https://sql-engage.example.com/problems/merge-basic-001"
         }
       ]
     }
