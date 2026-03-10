@@ -263,6 +263,7 @@ class SectionExtractor:
         self,
         pdf_path: Path | str,
         doc_id: str,
+        page_range: tuple[int, int] | list[int] | None = None,
     ) -> list[ContentBlock]:
         """
         Extract content blocks from a PDF with pedagogical structure awareness.
@@ -274,6 +275,10 @@ class SectionExtractor:
         Args:
             pdf_path: Path to the PDF file
             doc_id: Document identifier for block ID generation
+            page_range: Optional page range to extract:
+                - tuple (start, end): Extract pages from start to end (inclusive, 1-based)
+                - list [p1, p2, ...]: Extract specific page numbers (1-based)
+                - None: Extract all pages
             
         Returns:
             List of ContentBlock objects with type annotations
@@ -281,6 +286,7 @@ class SectionExtractor:
         Raises:
             FileNotFoundError: If PDF file doesn't exist
             RuntimeError: If PDF is corrupted or password-protected
+            ValueError: If page_range contains invalid page numbers
         """
         pdf_path = Path(pdf_path)
         
@@ -302,10 +308,39 @@ class SectionExtractor:
         
         blocks: list[ContentBlock] = []
         
+        # Determine which pages to extract
+        total_pages = doc.page_count
+        if page_range is None:
+            page_indices = list(range(total_pages))
+        elif isinstance(page_range, tuple):
+            start, end = page_range
+            if start < 1 or end > total_pages or start > end:
+                doc.close()
+                raise ValueError(
+                    f"Invalid page range: {page_range} "
+                    f"(document has {total_pages} pages)"
+                )
+            page_indices = list(range(start - 1, end))  # Convert to 0-based
+        elif isinstance(page_range, list):
+            if not page_range:
+                doc.close()
+                raise ValueError("Page range list is empty")
+            invalid = [p for p in page_range if p < 1 or p > total_pages]
+            if invalid:
+                doc.close()
+                raise ValueError(
+                    f"Invalid page numbers: {invalid} "
+                    f"(document has {total_pages} pages)"
+                )
+            page_indices = [p - 1 for p in page_range]  # Convert to 0-based
+        else:
+            doc.close()
+            raise ValueError(f"Invalid page_range type: {type(page_range)}")
+        
         try:
             # First pass: collect font statistics to determine body text size
             font_sizes = []
-            for page_num in range(doc.page_count):
+            for page_num in page_indices:
                 page = doc.load_page(page_num)
                 text_dict = page.get_text("dict")
                 
@@ -329,7 +364,7 @@ class SectionExtractor:
             block_index = 0
             prev_block: ContentBlock | None = None
             
-            for page_num in range(doc.page_count):
+            for page_num in page_indices:
                 page = doc.load_page(page_num)
                 text_dict = page.get_text("dict")
                 
@@ -1447,3 +1482,492 @@ def load_blocks_from_json(input_path: Path | str) -> list[ContentBlock]:
     data = json.loads(input_path.read_text())
     
     return [ContentBlock.from_dict(b) for b in data.get("blocks", [])]
+
+
+# =============================================================================
+# CHAPTER DETECTOR CLASS
+# =============================================================================
+
+@dataclass
+class ChapterInfo:
+    """Chapter structure information."""
+    chapter_num: int
+    title: str
+    start_page: int
+    end_page: int
+    sections: list[SectionInfo] = field(default_factory=list)
+
+
+@dataclass  
+class SectionInfo:
+    """Section within a chapter."""
+    title: str
+    page: int
+    level: int = 1
+
+
+class ChapterDetector:
+    """
+    Detects chapter structure from PDF content.
+    
+    Identifies chapters from:
+    - PDF bookmarks/outline
+    - "Chapter X" headings in text
+    - Table of contents page patterns
+    """
+    
+    # Chapter detection patterns
+    CHAPTER_PATTERNS = [
+        r'^chapter\s+(\d+)[\s:.-]*(.*)$',  # "Chapter 1: Introduction"
+        r'^ch\.?\s*(\d+)[\s:.-]+(.*)$',    # "Ch. 1 Introduction"
+        r'^(\d+)\s*\.\s*([A-Z][^\n]{3,100})$',  # "1. Introduction to SQL"
+        r'^part\s+([ivxlc\d]+)[\s:.-]+(.*)$',  # "Part I: Fundamentals"
+    ]
+    
+    # Section patterns
+    SECTION_PATTERNS = [
+        r'^(\d+\.\d+(?:\.\d+)?)\s+(.+)$',  # "1.1 SELECT Basics" or "1.1.1 Subsection"
+        r'^(\d+)\s+([A-Z][^\n]{2,100})$',   # "1 Introduction"
+    ]
+    
+    # Exercise section patterns
+    EXERCISE_SECTION_PATTERNS = [
+        r'^\s*exercises?\s*$',
+        r'^\s*practice\s+(?:exercises?|problems?)\s*$',
+        r'^\s*review\s+questions?\s*$',
+        r'^\s*end\s+of\s+chapter\s+exercises?\s*$',
+        r'^\s*programming\s+exercises?\s*$',
+        r'^\s*sql\s+exercises?\s*$',
+    ]
+    
+    def __init__(self):
+        """Initialize chapter detector with compiled patterns."""
+        self.chapter_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.CHAPTER_PATTERNS
+        ]
+        self.section_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.SECTION_PATTERNS
+        ]
+        self.exercise_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.EXERCISE_SECTION_PATTERNS
+        ]
+    
+    def detect_chapters(
+        self,
+        blocks: list[ContentBlock],
+        pdf_path: Path | str | None = None,
+    ) -> list[ChapterInfo]:
+        """
+        Detect chapter structure from content blocks.
+        
+        Args:
+            blocks: Content blocks from PDF
+            pdf_path: Optional path to PDF for bookmark extraction
+            
+        Returns:
+            List of ChapterInfo objects
+        """
+        chapters: list[ChapterInfo] = []
+        
+        # Try to extract from PDF bookmarks first
+        if pdf_path:
+            bookmark_chapters = self._extract_from_bookmarks(pdf_path)
+            if bookmark_chapters:
+                chapters = bookmark_chapters
+        
+        # If no bookmarks, detect from text headings
+        if not chapters:
+            chapters = self._detect_from_headings(blocks)
+        
+        # Detect sections within each chapter
+        chapters = self._assign_sections_to_chapters(chapters, blocks)
+        
+        return chapters
+    
+    def _extract_from_bookmarks(self, pdf_path: Path | str) -> list[ChapterInfo]:
+        """Extract chapter structure from PDF bookmarks/outline."""
+        chapters: list[ChapterInfo] = []
+        pdf_path = Path(pdf_path)
+        
+        try:
+            doc = fitz.open(pdf_path)
+            try:
+                toc = doc.get_toc()
+                
+                for item in toc:
+                    level, title, page = item
+                    
+                    # Try to extract chapter number from title
+                    match = None
+                    for pattern in self.chapter_patterns:
+                        match = pattern.match(title.strip())
+                        if match:
+                            break
+                    
+                    if match:
+                        try:
+                            chapter_num = int(match.group(1))
+                        except ValueError:
+                            # Handle Roman numerals or skip
+                            chapter_num = len(chapters) + 1
+                        
+                        chapter_title = match.group(2).strip() if match.group(2) else title
+                        
+                        chapters.append(ChapterInfo(
+                            chapter_num=chapter_num,
+                            title=chapter_title,
+                            start_page=page,
+                            end_page=page,  # Will be updated
+                        ))
+                
+                # Sort by chapter number and set end pages
+                chapters.sort(key=lambda c: c.chapter_num)
+                for i, chapter in enumerate(chapters):
+                    if i < len(chapters) - 1:
+                        chapter.end_page = chapters[i + 1].start_page - 1
+                    else:
+                        chapter.end_page = doc.page_count
+                        
+            finally:
+                doc.close()
+                
+        except Exception:
+            # Silently fail and fall back to heading detection
+            pass
+        
+        return chapters
+    
+    def _detect_from_headings(self, blocks: list[ContentBlock]) -> list[ChapterInfo]:
+        """Detect chapters from "Chapter X" headings in text."""
+        chapters: list[ChapterInfo] = []
+        
+        for block in blocks:
+            if not block.is_structural:
+                continue
+            
+            text = block.text_content.strip()
+            
+            for pattern in self.chapter_patterns:
+                match = pattern.match(text)
+                if match:
+                    try:
+                        chapter_num = int(match.group(1))
+                    except ValueError:
+                        chapter_num = len(chapters) + 1
+                    
+                    title = match.group(2).strip() if match.group(2) else f"Chapter {chapter_num}"
+                    
+                    chapters.append(ChapterInfo(
+                        chapter_num=chapter_num,
+                        title=title,
+                        start_page=block.page_number,
+                        end_page=block.page_number,
+                    ))
+                    break
+        
+        # Sort and set end pages
+        chapters.sort(key=lambda c: c.chapter_num)
+        for i, chapter in enumerate(chapters):
+            if i < len(chapters) - 1:
+                chapter.end_page = chapters[i + 1].start_page - 1
+        
+        return chapters
+    
+    def _assign_sections_to_chapters(
+        self,
+        chapters: list[ChapterInfo],
+        blocks: list[ContentBlock],
+    ) -> list[ChapterInfo]:
+        """Assign section headings to their parent chapters."""
+        if not chapters:
+            return chapters
+        
+        for block in blocks:
+            if not block.is_structural:
+                continue
+            
+            # Find which chapter this section belongs to
+            for chapter in chapters:
+                if chapter.start_page <= block.page_number <= chapter.end_page:
+                    # Check if it looks like a section heading
+                    text = block.text_content.strip()
+                    
+                    # Skip chapter headings themselves
+                    is_chapter_heading = False
+                    for pattern in self.chapter_patterns:
+                        if pattern.match(text):
+                            is_chapter_heading = True
+                            break
+                    
+                    if not is_chapter_heading and len(text) < 100:
+                        # Determine section level
+                        level = block.metadata.get("heading_level", 2)
+                        
+                        chapter.sections.append(SectionInfo(
+                            title=text,
+                            page=block.page_number,
+                            level=level,
+                        ))
+                    break
+        
+        return chapters
+    
+    def is_exercise_section(self, text: str) -> bool:
+        """Check if text appears to be an exercise section header."""
+        text_lower = text.lower().strip()
+        for pattern in self.exercise_patterns:
+            if pattern.match(text_lower):
+                return True
+        return False
+
+
+# =============================================================================
+# EXERCISE EXTRACTOR CLASS
+# =============================================================================
+
+@dataclass
+class ExerciseInfo:
+    """Extracted exercise information."""
+    exercise_id: str
+    chapter: int
+    number: str
+    text: str
+    solution_sql: str | None = None
+    solution_text: str | None = None
+    concepts_tested: list[str] = field(default_factory=list)
+    difficulty: str = "beginner"
+    exercise_type: str = "coding"
+    page: int | None = None
+    hints: list[str] = field(default_factory=list)
+
+
+class ExerciseExtractor:
+    """
+    Extracts end-of-chapter exercises from PDF content.
+    
+    Detects exercises sections and extracts individual exercises
+    with their problem statements and solutions.
+    """
+    
+    # Exercise number patterns
+    EXERCISE_PATTERNS = [
+        r'^\s*(\d+)[.\)]\s*(.+)',  # "1. Problem text" or "1) Problem text"
+        r'^\s*\[(\d+)\]\s*(.+)',   # "[1] Problem text"
+        r'^\s*\((\d+)\)\s*(.+)',   # "(1) Problem text"
+        r'^\s*(\d+[a-z])[.\)]\s*(.+)',  # "1a. Problem text"
+    ]
+    
+    # Solution patterns
+    SOLUTION_PATTERNS = [
+        r'^\s*solution[s]?\s*:?\s*$',
+        r'^\s*answer[s]?\s*:?\s*$',
+        r'^\s*explanation\s*:?\s*$',
+    ]
+    
+    def __init__(self):
+        """Initialize exercise extractor."""
+        self.exercise_patterns = [
+            re.compile(p, re.DOTALL) for p in self.EXERCISE_PATTERNS
+        ]
+        self.solution_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.SOLUTION_PATTERNS
+        ]
+    
+    def extract_exercises(
+        self,
+        blocks: list[ContentBlock],
+        chapters: list[ChapterInfo],
+        doc_id: str,
+    ) -> list[ExerciseInfo]:
+        """
+        Extract exercises from content blocks.
+        
+        Args:
+            blocks: Content blocks from PDF
+            chapters: Detected chapter structure
+            doc_id: Document identifier for exercise ID generation
+            
+        Returns:
+            List of ExerciseInfo objects
+        """
+        exercises: list[ExerciseInfo] = []
+        
+        # Group blocks by chapter
+        chapter_blocks: dict[int, list[ContentBlock]] = {c.chapter_num: [] for c in chapters}
+        for block in blocks:
+            for chapter in chapters:
+                if chapter.start_page <= block.page_number <= chapter.end_page:
+                    chapter_blocks[chapter.chapter_num].append(block)
+                    break
+        
+        # Extract exercises from each chapter
+        for chapter in chapters:
+            blocks_in_chapter = chapter_blocks.get(chapter.chapter_num, [])
+            chapter_exercises = self._extract_from_chapter(
+                blocks_in_chapter, chapter, doc_id
+            )
+            exercises.extend(chapter_exercises)
+        
+        return exercises
+    
+    def _extract_from_chapter(
+        self,
+        blocks: list[ContentBlock],
+        chapter: ChapterInfo,
+        doc_id: str,
+    ) -> list[ExerciseInfo]:
+        """Extract exercises from a single chapter."""
+        exercises: list[ExerciseInfo] = []
+        
+        # Find exercise section
+        in_exercise_section = False
+        exercise_start_page: int | None = None
+        
+        for i, block in enumerate(blocks):
+            text = block.text_content.strip()
+            
+            # Check if this is an exercise section header
+            detector = ChapterDetector()
+            if detector.is_exercise_section(text):
+                in_exercise_section = True
+                exercise_start_page = block.page_number
+                continue
+            
+            if not in_exercise_section:
+                continue
+            
+            # Check for next chapter indicator - end of exercises
+            for pattern in detector.chapter_patterns:
+                if pattern.match(text):
+                    in_exercise_section = False
+                    break
+            
+            if not in_exercise_section:
+                continue
+            
+            # Try to match exercise pattern
+            for pattern in self.exercise_patterns:
+                match = pattern.match(text)
+                if match:
+                    exercise_num = match.group(1)
+                    problem_text = match.group(2).strip()
+                    
+                    # Look for solution in following blocks
+                    solution_sql, solution_text = self._find_solution(
+                        blocks, i
+                    )
+                    
+                    exercise_id = f"{doc_id}-ch{chapter.chapter_num}-ex{exercise_num}"
+                    
+                    exercises.append(ExerciseInfo(
+                        exercise_id=exercise_id,
+                        chapter=chapter.chapter_num,
+                        number=exercise_num,
+                        text=problem_text,
+                        solution_sql=solution_sql,
+                        solution_text=solution_text,
+                        page=block.page_number,
+                    ))
+                    break
+        
+        return exercises
+    
+    def _find_solution(
+        self,
+        blocks: list[ContentBlock],
+        exercise_index: int,
+    ) -> tuple[str | None, str | None]:
+        """Find solution for an exercise in subsequent blocks."""
+        solution_sql: str | None = None
+        solution_text: str | None = None
+        
+        for j in range(exercise_index + 1, min(exercise_index + 5, len(blocks))):
+            block = blocks[j]
+            text = block.text_content.strip()
+            
+            # Check if this is a solution header
+            is_solution_header = False
+            for pattern in self.solution_patterns:
+                if pattern.match(text):
+                    is_solution_header = True
+                    continue
+            
+            if is_solution_header:
+                continue
+            
+            # Check if this is next exercise
+            for pattern in self.exercise_patterns:
+                if pattern.match(text):
+                    return solution_sql, solution_text
+            
+            # Accumulate solution content
+            if block.block_type == BlockType.SQL_CODE:
+                if solution_sql:
+                    solution_sql += "\n" + text
+                else:
+                    solution_sql = text
+            else:
+                if solution_text:
+                    solution_text += "\n" + text
+                else:
+                    solution_text = text
+        
+        return solution_sql, solution_text
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def extract_chapter_structure(
+    pdf_path: Path | str,
+    blocks: list[ContentBlock] | None = None,
+) -> list[ChapterInfo]:
+    """
+    Extract chapter structure from PDF.
+    
+    Args:
+        pdf_path: Path to PDF file
+        blocks: Optional pre-extracted content blocks
+        
+    Returns:
+        List of ChapterInfo objects
+    """
+    detector = ChapterDetector()
+    
+    if blocks is None:
+        extractor = SectionExtractor()
+        doc_id = Path(pdf_path).stem
+        blocks = extractor.extract_blocks(pdf_path, doc_id)
+    
+    return detector.detect_chapters(blocks, pdf_path)
+
+
+def extract_exercises(
+    pdf_path: Path | str,
+    blocks: list[ContentBlock] | None = None,
+    chapters: list[ChapterInfo] | None = None,
+) -> list[ExerciseInfo]:
+    """
+    Extract exercises from PDF.
+    
+    Args:
+        pdf_path: Path to PDF file
+        blocks: Optional pre-extracted content blocks
+        chapters: Optional pre-detected chapter structure
+        
+    Returns:
+        List of ExerciseInfo objects
+    """
+    pdf_path = Path(pdf_path)
+    doc_id = pdf_path.stem
+    
+    if blocks is None:
+        extractor = SectionExtractor()
+        blocks = extractor.extract_blocks(pdf_path, doc_id)
+    
+    if chapters is None:
+        chapters = extract_chapter_structure(pdf_path, blocks)
+    
+    exercise_extractor = ExerciseExtractor()
+    return exercise_extractor.extract_exercises(blocks, chapters, doc_id)

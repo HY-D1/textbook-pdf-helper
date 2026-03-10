@@ -177,11 +177,18 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
+def extract_pages_fitz(
+    pdf_path: Path,
+    page_range: tuple[int, int] | list[int] | None = None
+) -> list[tuple[int, str]]:
     """Extract text pages from a PDF using PyMuPDF.
     
     Args:
         pdf_path: Path to the PDF file
+        page_range: Optional page range to extract:
+            - tuple (start, end): Extract pages from start to end (inclusive, 1-based)
+            - list [p1, p2, ...]: Extract specific page numbers (1-based)
+            - None: Extract all pages
         
     Returns:
         List of (page_number, text) tuples
@@ -190,6 +197,7 @@ def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
         FileNotFoundError: If the PDF file does not exist
         PermissionError: If the path is a directory or permission denied
         RuntimeError: If the PDF is corrupted, invalid, or password-protected
+        ValueError: If page_range contains invalid page numbers
     """
     # Check if file exists
     if not pdf_path.exists():
@@ -230,7 +238,42 @@ def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
     
     pages: list[tuple[int, str]] = []
     try:
-        for i in range(doc.page_count):
+        total_pages = doc.page_count
+        
+        # Determine which pages to extract
+        if page_range is None:
+            # Extract all pages
+            page_indices = range(total_pages)
+        elif isinstance(page_range, tuple):
+            # Extract range (start, end) - convert to 0-based indices
+            start, end = page_range
+            # Validate range
+            if start < 1:
+                doc.close()
+                raise ValueError(f"Page range start must be >= 1, got {start}")
+            if end > total_pages:
+                doc.close()
+                raise ValueError(f"Page range end ({end}) exceeds total pages ({total_pages})")
+            if start > end:
+                doc.close()
+                raise ValueError(f"Page range start ({start}) must be <= end ({end})")
+            page_indices = range(start - 1, end)  # Convert to 0-based
+        elif isinstance(page_range, list):
+            # Extract specific pages - convert to 0-based indices
+            page_indices = []
+            for p in page_range:
+                if p < 1:
+                    doc.close()
+                    raise ValueError(f"Page number must be >= 1, got {p}")
+                if p > total_pages:
+                    doc.close()
+                    raise ValueError(f"Page number {p} exceeds total pages ({total_pages})")
+                page_indices.append(p - 1)  # Convert to 0-based
+        else:
+            doc.close()
+            raise ValueError(f"Invalid page_range type: {type(page_range)}")
+        
+        for i in page_indices:
             page = doc.load_page(i)
             text = page.get_text("text")
             text = normalize_text(text)
@@ -241,13 +284,17 @@ def extract_pages_fitz(pdf_path: Path) -> list[tuple[int, str]]:
     return pages
 
 
-def extract_pages_with_page_map(pdf_path: Path) -> tuple[list[tuple[int, str]], dict]:
+def extract_pages_with_page_map(
+    pdf_path: Path,
+    page_range: tuple[int, int] | list[int] | None = None
+) -> tuple[list[tuple[int, str]], dict]:
     """Extract pages and return with page number mapping.
     
     This ensures page numbers remain stable after OCR processing.
     
     Args:
         pdf_path: Path to PDF file
+        page_range: Optional page range to extract (see extract_pages_fitz)
         
     Returns:
         Tuple of (pages, metadata) where metadata includes page count and mapping info
@@ -256,9 +303,22 @@ def extract_pages_with_page_map(pdf_path: Path) -> tuple[list[tuple[int, str]], 
     pages: list[tuple[int, str]] = []
     
     try:
-        page_count = doc.page_count
+        total_pages = doc.page_count
         
-        for i in range(page_count):
+        # Determine which pages to extract (same logic as extract_pages_fitz)
+        if page_range is None:
+            page_indices = range(total_pages)
+        elif isinstance(page_range, tuple):
+            start, end = page_range
+            if start < 1 or end > total_pages or start > end:
+                raise ValueError(f"Invalid page range: {page_range} (document has {total_pages} pages)")
+            page_indices = range(start - 1, end)
+        elif isinstance(page_range, list):
+            page_indices = [p - 1 for p in page_range if 1 <= p <= total_pages]
+        else:
+            raise ValueError(f"Invalid page_range type: {type(page_range)}")
+        
+        for i in page_indices:
             page = doc.load_page(i)
             text = page.get_text("text")
             text = normalize_text(text)
@@ -266,9 +326,11 @@ def extract_pages_with_page_map(pdf_path: Path) -> tuple[list[tuple[int, str]], 
             pages.append((i + 1, text))
         
         metadata = {
-            "page_count": page_count,
+            "page_count": len(pages),
+            "total_pages_in_document": total_pages,
             "source": "fitz",
             "page_numbers_stable": True,
+            "page_range": page_range,
         }
     finally:
         doc.close()
@@ -497,6 +559,7 @@ def extract_with_strategy(
     force_ocr: bool = False,
     auto_ocr: bool = True,
     smart_skip_threshold: float = 0.90,
+    page_range: tuple[int, int] | list[int] | None = None,
 ) -> tuple[list[tuple[int, str]], dict]:
     """Extract PDF text using specified strategy with quality validation.
     
@@ -517,6 +580,7 @@ def extract_with_strategy(
         auto_ocr: Automatically try OCR if direct extraction quality is poor
         smart_skip_threshold: Quality threshold above which OCR is skipped
                              even if force_ocr=True (default 0.90 = 90%)
+        page_range: Optional page range to extract (1-based indexing)
         
     Returns:
         Tuple of (pages, extraction_info) where:
@@ -543,6 +607,7 @@ def extract_with_strategy(
         "coverage_score": 0.0,
         "meets_threshold": False,
         "warnings": [],
+        "page_range": page_range,
     }
     
     temp_pdf_path: Path | None = None
