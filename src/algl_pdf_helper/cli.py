@@ -1228,6 +1228,36 @@ try:
             max=1.0,
             help="Quality threshold below which to trigger Ollama repair",
         ),
+        page_range: str | None = typer.Option(
+            None,
+            "--page-range",
+            help="Process only specific pages (e.g., '1-100' or '50,75,100-120')",
+        ),
+        chapter_range: str | None = typer.Option(
+            None,
+            "--chapter-range",
+            help="Process only specific chapters (e.g., '1-5' or '3,4,7'). Note: Requires PDF bookmarks/table of contents",
+        ),
+        resume: bool = typer.Option(
+            False,
+            "--resume",
+            help="Resume from last checkpoint (if available)",
+        ),
+        cache_extraction: bool = typer.Option(
+            True,
+            "--cache-extraction/--no-cache-extraction",
+            help="Cache and reuse PDF extraction (speeds up re-runs)",
+        ),
+        allow_offbook_curated: bool = typer.Option(
+            False,
+            "--allow-offbook-curated",
+            help="Allow off-book curated concepts not present in source PDF (opt-in augmentation)",
+        ),
+        clear_repair_cache: bool = typer.Option(
+            False,
+            "--clear-repair-cache",
+            help="Clear the repair cache before processing",
+        ),
     ):
         """Process a PDF into a unit library.
         
@@ -1247,12 +1277,21 @@ try:
                 Blocks: placeholder practice links, default L2 examples, 
                 synthetic-only L3, weak curated content.
         
+        Page/Chapter Range:
+            Use --page-range to process specific pages (e.g., '1-100' or '50,75,100-120').
+            Use --chapter-range to process specific chapters (requires PDF bookmarks).
+            Use --resume to continue from a previous interrupted run.
+            Use --no-cache-extraction to force re-extraction of the PDF.
+        
         Example:
             algl-pdf process ./textbook.pdf --output-dir ./output
             algl-pdf process ./textbook.pdf -o ./output --filter-level production
             algl-pdf process ./textbook.pdf -o ./output --export-mode student_ready
             algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
             algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
+            algl-pdf process ./textbook.pdf -o ./output --page-range 1-50
+            algl-pdf process ./textbook.pdf -o ./output --chapter-range 1-3
+            algl-pdf process ./textbook.pdf -o ./output --resume
         """
         _process_cmd(
             pdf_path=pdf_path,
@@ -1269,6 +1308,12 @@ try:
             use_ollama_repair=use_ollama_repair,
             ollama_model=ollama_model,
             ollama_repair_threshold=ollama_repair_threshold,
+            page_range=page_range,
+            chapter_range=chapter_range,
+            resume=resume,
+            cache_extraction=cache_extraction,
+            allow_offbook_curated=allow_offbook_curated,
+            clear_repair_cache=clear_repair_cache,
         )
 
     @app.command()

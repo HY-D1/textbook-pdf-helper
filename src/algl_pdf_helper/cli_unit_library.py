@@ -364,8 +364,8 @@ def process_command(
         doc_id = generate_doc_id()
     
     # Parse page/chapter ranges
-    parsed_page_range = _parse_range(page_range) if page_range else None
-    parsed_chapter_range = _parse_range(chapter_range) if chapter_range else None
+    parsed_page_range = _parse_range(page_range)
+    parsed_chapter_range = _parse_range(chapter_range)
     
     # Show range info in header
     range_info = ""
@@ -628,18 +628,27 @@ def process_command(
         console.print(f"[yellow]Warning: Could not verify exported library: {e}[/yellow]")
 
 
-def _parse_range(range_str: str) -> tuple[int, int] | list[int]:
+def _parse_range(range_str: str | None) -> tuple[int, int] | list[int] | None:
     """Parse a range string like '1-100' or '1,2,3' into a tuple or list.
     
     Args:
-        range_str: Range string (e.g., '1-100', '50,75,100-120', '1,2,3')
+        range_str: Range string (e.g., '1-100', '50,75,100-120', '1,2,3') or None
         
     Returns:
-        Tuple (start, end) for ranges, or list of integers for comma-separated values
+        Tuple (start, end) for ranges, list of integers for comma-separated values,
+        or None if range_str is None or an OptionInfo object
         
     Raises:
         ValueError: If the range string is invalid
     """
+    # Handle None or OptionInfo objects (when option is not provided)
+    if range_str is None:
+        return None
+    
+    # Handle OptionInfo objects (typer internal type when option not provided)
+    if type(range_str).__name__ == 'OptionInfo':
+        return None
+    
     range_str = range_str.strip()
     
     # Handle range format: "1-100"
