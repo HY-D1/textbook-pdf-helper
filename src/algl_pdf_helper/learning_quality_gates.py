@@ -87,6 +87,49 @@ HEADING_FRAGMENT_PATTERNS = [
     r"^part\s+[ivx]+",  # "Part IV"
 ]
 
+# Placeholder content patterns (test data, boilerplate)
+PLACEHOLDER_CONTENT_PATTERNS = [
+    r"golden\s+reference\s+document",
+    r"test\s+string",
+    r"lorem\s+ipsum",
+    r"sample\s+content",
+    r"placeholder\s+text",
+    r"your\s+text\s+here",
+    r"insert\s+content\s+here",
+    r"example\s+text",
+]
+
+# Generic "why it matters" patterns (filler content)
+GENERIC_WHY_PATTERNS = [
+    r"this\s+is\s+important\s+because",
+    r"understanding\s+this\s+concept\s+is\s+crucial",
+    r"this\s+is\s+a\s+fundamental\s+concept",
+    r"it\s+is\s+essential\s+to\s+understand",
+    r"this\s+helps\s+you\s+learn\s+sql",
+    r"mastering\s+this\s+will\s+help\s+you",
+    r"this\s+concept\s+is\s+widely\s+used",
+    r"you\s+will\s+use\s+this\s+feature\s+often",
+]
+
+# Broken SQL patterns that should fail validation
+BROKEN_SQL_PATTERNS = [
+    r"^\s*SELECT\s*;?\s*$",  # Just "SELECT" or "SELECT;"
+    r"^\s*FROM\s*;?\s*$",    # Just "FROM"
+    r"^\s*WHERE\s*;?\s*$",   # Just "WHERE"
+    r"^\s*INSERT\s*;?\s*$",  # Just "INSERT"
+    r"^\s*UPDATE\s*;?\s*$",  # Just "UPDATE"
+    r"^\s*DELETE\s*;?\s*$",  # Just "DELETE"
+    r"^\s*JOIN\s*;?\s*$",    # Just "JOIN"
+    r"^\s*GROUP\s+BY\s*;?\s*$",  # Just "GROUP BY"
+    r"^\s*ORDER\s+BY\s*;?\s*$",  # Just "ORDER BY"
+    r"^\s*SELECT\s+\*\s*$",  # "SELECT *" without FROM
+]
+
+# Minimum lengths for substantive content
+MIN_DEFINITION_LENGTH = 50
+MIN_WHY_IT_MATTERS_LENGTH = 40
+MIN_EXAMPLE_EXPLANATION_LENGTH = 30
+
 
 # =============================================================================
 # DATA CLASSES
@@ -170,6 +213,310 @@ class LearningQualityGates:
         """
         self.ontology = ontology or ConceptOntology()
         self._error_subtype_cache: set[str] | None = None
+        self._boilerplate_cache: set[str] = set()  # Track repeated boilerplate
+    
+    # =====================================================================
+    # CONTENT QUALITY HELPER METHODS
+    # =====================================================================
+    
+    def _is_valid_sql_example(self, sql: str) -> bool:
+        """
+        Check if SQL is valid (not just "SELECT;" etc.).
+        
+        Args:
+            sql: The SQL string to validate
+            
+        Returns:
+            True if SQL appears valid and complete, False otherwise
+        """
+        if not sql or not sql.strip():
+            return False
+        
+        sql_stripped = sql.strip()
+        sql_upper = sql_stripped.upper()
+        
+        # Check for broken SQL patterns
+        for pattern in BROKEN_SQL_PATTERNS:
+            if re.search(pattern, sql_upper):
+                return False
+        
+        # Check for placeholder patterns
+        for pattern in PLACEHOLDER_PATTERNS:
+            if re.search(pattern, sql, re.IGNORECASE):
+                return False
+        
+        # Must have at least one complete clause with identifiers
+        # A valid SQL should have keywords AND table/column references
+        has_keywords = any(kw in sql_upper for kw in ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP'])
+        
+        # Check for identifiers (not just keywords and punctuation)
+        # Remove SQL keywords and punctuation, check if anything substantive remains
+        sql_clean = re.sub(r'[;,()\'"]', ' ', sql_upper)
+        sql_keywords = ['SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 
+                       'DELETE', 'JOIN', 'ON', 'GROUP', 'BY', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET',
+                       'CREATE', 'TABLE', 'ALTER', 'DROP', 'ADD', 'AND', 'OR', 'NOT', 'NULL',
+                       'IS', 'AS', 'DISTINCT', 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'FULL',
+                       'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'EXISTS', 'UNION', 'ALL']
+        
+        words = [w for w in sql_clean.split() if w and w not in sql_keywords]
+        # At least 1 non-keyword identifier (e.g., table name) or wildcard (*) with table
+        has_identifiers = len(words) >= 1
+        # Also check for minimal structure: SELECT ... FROM ...
+        has_basic_structure = 'SELECT' in sql_upper and 'FROM' in sql_upper
+        
+        return has_keywords and has_identifiers and has_basic_structure
+    
+    def _is_heading_like(self, text: str) -> tuple[bool, str]:
+        """
+        Detect if text looks like a chapter/section heading.
+        
+        Args:
+            text: The text to check
+            
+        Returns:
+            Tuple of (is_heading, reason)
+        """
+        if not text or not text.strip():
+            return False, ""
+        
+        text_stripped = text.strip()
+        text_lower = text_stripped.lower()
+        
+        # Chapter/Section/Part patterns
+        heading_patterns = [
+            (r"^(Chapter|Section|Part|Unit|Module|Lesson)\s+\d+", "chapter/section title"),
+            (r"^\d+\.\d+\s+", "numbered section"),
+            (r"^(How to|Working with|Understanding|Introduction to|Overview of)", "instructional heading"),
+            (r"^(In this chapter|Learning objectives|Summary|Exercises|Review|Quiz)", "section marker"),
+            (r"^[A-Z][a-z]+ing\s+[A-Z]", "gerund phrase heading"),  # "Creating Tables"
+            (r"^Reference\s+(Document|Manual|Guide)", "reference marker"),
+            (r"^Golden\s+Reference", "reference marker"),
+            (r"^Table of Contents", "TOC marker"),
+        ]
+        
+        for pattern, reason in heading_patterns:
+            if re.search(pattern, text_stripped, re.IGNORECASE):
+                return True, reason
+        
+        # All uppercase (likely a heading)
+        if text_stripped.isupper() and len(text_stripped) > 5:
+            return True, "all uppercase"
+        
+        # Title case without small words (likely a heading)
+        words = text_stripped.split()
+        if 2 <= len(words) < 10:
+            small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by']
+            content_words = [w for w in words if w.isalpha()]
+            if content_words:
+                capitalized = sum(1 for w in content_words if w[0].isupper())
+                if capitalized / len(content_words) > 0.8 and not any(w.lower() in small_words for w in words):
+                    return True, "title case without sentence structure"
+        
+        # Ends with colon (often a heading)
+        if text_stripped.endswith(':'):
+            return True, "ends with colon"
+        
+        return False, ""
+    
+    def _is_placeholder_content(self, content: str) -> tuple[bool, str]:
+        """
+        Detect placeholder or test content.
+        
+        Args:
+            content: The content to check
+            
+        Returns:
+            Tuple of (is_placeholder, reason)
+        """
+        if not content or not content.strip():
+            return False, ""
+        
+        content_lower = content.lower()
+        
+        # Check for placeholder patterns
+        for pattern in PLACEHOLDER_CONTENT_PATTERNS:
+            if re.search(pattern, content_lower):
+                return True, "placeholder content pattern"
+        
+        # Check for test data indicators
+        test_indicators = ['test_', '_test', 'sample_', 'example_', 'dummy']
+        for indicator in test_indicators:
+            if indicator in content_lower:
+                return True, "test data indicator"
+        
+        return False, ""
+    
+    def _is_generic_why_it_matters(self, text: str) -> tuple[bool, str]:
+        """
+        Detect generic filler content in why_it_matters.
+        
+        Args:
+            text: The text to check
+            
+        Returns:
+            Tuple of (is_generic, reason)
+        """
+        if not text or not text.strip():
+            return True, "empty content"
+        
+        text_stripped = text.strip()
+        text_lower = text_stripped.lower()
+        
+        # Check length
+        if len(text_stripped) < MIN_WHY_IT_MATTERS_LENGTH:
+            return True, f"too short ({len(text_stripped)} chars, min {MIN_WHY_IT_MATTERS_LENGTH})"
+        
+        # Check for generic patterns
+        for pattern in GENERIC_WHY_PATTERNS:
+            if re.search(pattern, text_lower):
+                return True, "generic filler pattern"
+        
+        # Check for vague statements
+        vague_phrases = [
+            'it is important',
+            'this is useful',
+            'you need to know',
+            'this helps',
+            'good to know',
+        ]
+        for phrase in vague_phrases:
+            if phrase in text_lower and len(text_stripped) < 80:
+                return True, "vague statement"
+        
+        return False, ""
+    
+    def _check_example_appropriateness(self, sql: str, concept_id: str) -> tuple[bool, str]:
+        """
+        Check if example SQL is appropriate for the concept being taught.
+        
+        Args:
+            sql: The SQL example
+            concept_id: The concept ID
+            
+        Returns:
+            Tuple of (is_appropriate, reason)
+        """
+        if not sql or not sql.strip():
+            return False, "empty SQL"
+        
+        sql_upper = sql.upper()
+        
+        # Concept-appropriate keyword mappings
+        concept_requirements = {
+            "select-basic": (["SELECT", "FROM"], "needs SELECT and FROM"),
+            "where-clause": (["WHERE"], "should demonstrate WHERE clause"),
+            "null-handling": (["NULL", "IS"], "should demonstrate NULL handling"),
+            "pattern-matching": (["LIKE"], "should use LIKE operator"),
+            "order-by": (["ORDER", "BY"], "should demonstrate ORDER BY"),
+            "limit-offset": (["LIMIT"], "should demonstrate LIMIT/OFFSET"),
+            "alias": (["AS"], "should demonstrate AS alias"),
+            "distinct": (["DISTINCT"], "should use DISTINCT"),
+            "inner-join": (["JOIN", "ON"], "should demonstrate JOIN"),
+            "outer-join": (["LEFT", "JOIN"], "should demonstrate LEFT/RIGHT JOIN"),
+            "self-join": (["JOIN"], "should demonstrate self-join"),
+            "aggregate-functions": (["COUNT", "SUM", "AVG", "MIN", "MAX"], "should use aggregate function"),
+            "group-by": (["GROUP", "BY"], "should demonstrate GROUP BY"),
+            "having-clause": (["HAVING", "GROUP"], "should demonstrate HAVING with GROUP BY"),
+            "subqueries-intro": (["SELECT"], "should contain nested SELECT"),
+            "correlated-subquery": (["EXISTS"], "should demonstrate EXISTS or correlation"),
+            "union": (["UNION"], "should demonstrate UNION"),
+            "insert-statement": (["INSERT", "INTO"], "should demonstrate INSERT"),
+            "update-statement": (["UPDATE", "SET"], "should demonstrate UPDATE"),
+            "delete-statement": (["DELETE", "FROM"], "should demonstrate DELETE"),
+            "create-table": (["CREATE", "TABLE"], "should demonstrate CREATE TABLE"),
+            "alter-table": (["ALTER", "TABLE"], "should demonstrate ALTER TABLE"),
+            "constraints": (["PRIMARY", "FOREIGN", "UNIQUE", "CHECK"], "should demonstrate constraints"),
+        }
+        
+        requirements = concept_requirements.get(concept_id)
+        if requirements:
+            required_keywords, reason = requirements
+            has_any_keyword = any(kw in sql_upper for kw in required_keywords)
+            if not has_any_keyword:
+                return False, f"Example inappropriate for {concept_id}: {reason}"
+        
+        return True, ""
+    
+    def _is_using_default_example(self, sql: str, concept_id: str) -> bool:
+        """
+        Check if the example appears to be a default/generic example.
+        
+        Args:
+            sql: The SQL example
+            concept_id: The concept ID
+            
+        Returns:
+            True if appears to be default example, False otherwise
+        """
+        if not sql or not sql.strip():
+            return True  # Empty is treated as default
+        
+        sql_upper = sql.upper()
+        
+        # Common default example patterns
+        default_patterns = [
+            "SELECT * FROM table",
+            "SELECT * FROM users",
+            "SELECT * FROM customers",
+            "SELECT column FROM table",
+        ]
+        
+        # Normalize SQL for comparison (remove extra whitespace)
+        normalized = ' '.join(sql_upper.split())
+        
+        for pattern in default_patterns:
+            if pattern.upper() in normalized:
+                return True
+        
+        # Check for generic table/column names without specificity
+        generic_tables = ['TABLE1', 'TABLE2', 'T1', 'T2', 'A', 'B', 'X', 'Y']
+        generic_columns = ['COL1', 'COL2', 'C1', 'C2', 'COLUMN1', 'COLUMN2']
+        
+        has_generic_table = any(f' FROM {t}' in sql_upper or f' JOIN {t}' in sql_upper 
+                               for t in generic_tables)
+        has_generic_column = any(c in sql_upper for c in generic_columns)
+        
+        if has_generic_table and has_generic_column:
+            return True
+        
+        return False
+    
+    def _detect_boilerplate_across_units(self, units: list[InstructionalUnit]) -> dict[str, list[str]]:
+        """
+        Detect repeated boilerplate content across multiple units.
+        
+        Args:
+            units: List of instructional units
+            
+        Returns:
+            Dictionary mapping boilerplate text to list of concept_ids
+        """
+        content_occurrences: dict[str, list[str]] = {}
+        
+        for unit in units:
+            content = unit.content or {}
+            if not isinstance(content, dict):
+                continue
+            
+            concept_id = unit.concept_id
+            
+            # Check fields that might have boilerplate
+            fields_to_check = ['why_it_matters', 'definition', 'example_explanation', 'hint_text']
+            
+            for field in fields_to_check:
+                text = content.get(field, '')
+                if text and len(text) > 20:
+                    # Normalize for comparison
+                    normalized = text.lower().strip()
+                    if normalized not in content_occurrences:
+                        content_occurrences[normalized] = []
+                    content_occurrences[normalized].append(f"{concept_id}.{field}")
+        
+        # Find content that appears in 3+ different concepts
+        boilerplate = {text: occurrences for text, occurrences in content_occurrences.items() 
+                      if len(occurrences) >= 3}
+        
+        return boilerplate
     
     # =========================================================================
     # CONTENT VALIDITY GATES
@@ -740,6 +1087,25 @@ class LearningQualityGates:
                 ("example_explanation", content.get("example_explanation", "")),
             ]
             min_score = 0.6
+            
+            # NEW: Validate example_sql is valid SQL
+            example_sql = content.get("example_sql", "")
+            if example_sql:
+                if not self._is_valid_sql_example(example_sql):
+                    score -= 0.4
+                    issues.append("example_sql is invalid or incomplete (e.g., 'SELECT;')")
+                else:
+                    # NEW: Check example is appropriate for concept
+                    is_appropriate, reason = self._check_example_appropriateness(example_sql, unit.concept_id)
+                    if not is_appropriate:
+                        score -= 0.2
+                        issues.append(f"example not appropriate for concept: {reason}")
+                
+                # NEW: Check for default example usage
+                if self._is_using_default_example(example_sql, unit.concept_id):
+                    score -= 0.15
+                    issues.append("appears to use default/generic example")
+            
             # Optional: common_pitfall gives bonus
             if content.get("common_pitfall"):
                 score = min(1.0, score + 0.1)
@@ -751,6 +1117,46 @@ class LearningQualityGates:
                 ("why_it_matters", content.get("why_it_matters", "")),
             ]
             min_score = 0.7
+            
+            # NEW: Check definition doesn't look like heading
+            definition = content.get("definition", "")
+            if definition:
+                is_heading, reason = self._is_heading_like(definition)
+                if is_heading:
+                    score -= 0.5
+                    issues.append(f"definition appears to be heading ({reason})")
+                
+                # NEW: Check for placeholder content
+                is_placeholder, placeholder_reason = self._is_placeholder_content(definition)
+                if is_placeholder:
+                    score -= 0.4
+                    issues.append(f"definition contains placeholder content ({placeholder_reason})")
+                
+                # Check definition length
+                if len(definition.strip()) < MIN_DEFINITION_LENGTH:
+                    score -= 0.2
+                    issues.append(f"definition too short ({len(definition)} chars, min {MIN_DEFINITION_LENGTH})")
+            
+            # NEW: Check why_it_matters is substantive
+            why_it_matters = content.get("why_it_matters", "")
+            if why_it_matters:
+                is_generic, generic_reason = self._is_generic_why_it_matters(why_it_matters)
+                if is_generic:
+                    score -= 0.3
+                    issues.append(f"why_it_matters appears generic ({generic_reason})")
+            
+            # NEW: Verify at least one example has valid SQL
+            examples = content.get("examples", [])
+            if examples:
+                has_valid_sql = False
+                for ex in examples:
+                    ex_sql = ex.get("sql", "") if isinstance(ex, dict) else str(ex)
+                    if self._is_valid_sql_example(ex_sql):
+                        has_valid_sql = True
+                        break
+                if not has_valid_sql:
+                    score -= 0.2
+                    issues.append("no examples with valid SQL found")
             
             # Check for misconceptions/common mistakes
             common_mistakes = content.get("common_mistakes", [])
@@ -1653,6 +2059,138 @@ class LearningQualityGates:
             severity=Severity.INFO,
         )
     
+    def validate_l3_for_core_concepts(
+        self,
+        unit_library: UnitLibraryExport,
+    ) -> QualityCheck:
+        """
+        Validate that L3 (explanation) units exist for core concepts.
+        
+        Core concepts (non-admin, non-reference) should have L3 explanations
+        for comprehensive learning coverage.
+        
+        Args:
+            unit_library: The complete unit library export
+            
+        Returns:
+            QualityCheck with validation results
+        """
+        units = unit_library.instructional_units
+        
+        if not units:
+            return QualityCheck(
+                check_name="l3_for_core_concepts",
+                passed=False,
+                score=0.0,
+                message="No units in library",
+                severity=Severity.WARNING,
+            )
+        
+        # Group units by concept and collect stages
+        concept_stages: dict[str, set[str]] = {}
+        concept_units: dict[str, list[InstructionalUnit]] = {}
+        
+        for unit in units:
+            cid = unit.concept_id
+            if cid not in concept_stages:
+                concept_stages[cid] = set()
+                concept_units[cid] = []
+            concept_stages[cid].add(unit.target_stage)
+            concept_units[cid].append(unit)
+        
+        # Find core concepts (non-admin)
+        core_concepts = []
+        admin_concepts = []
+        
+        for concept_id in concept_stages:
+            is_admin = any(
+                re.search(pattern, concept_id, re.IGNORECASE)
+                for pattern in ADMIN_CONCEPT_PATTERNS
+            )
+            if is_admin:
+                admin_concepts.append(concept_id)
+            else:
+                core_concepts.append(concept_id)
+        
+        # Check which core concepts are missing L3
+        missing_l3 = []
+        for concept_id in core_concepts:
+            if "L3_explanation" not in concept_stages.get(concept_id, set()):
+                missing_l3.append(concept_id)
+        
+        if missing_l3:
+            score = 1.0 - (len(missing_l3) / max(1, len(core_concepts)))
+            sample = missing_l3[:5]
+            return QualityCheck(
+                check_name="l3_for_core_concepts",
+                passed=False,
+                score=score,
+                message=f"{len(missing_l3)} core concepts missing L3 explanations: {', '.join(sample)}",
+                severity=Severity.WARNING,
+            )
+        
+        return QualityCheck(
+            check_name="l3_for_core_concepts",
+            passed=True,
+            score=1.0,
+            message=f"All {len(core_concepts)} core concepts have L3 explanations",
+            severity=Severity.INFO,
+        )
+    
+    def validate_boilerplate_content(
+        self,
+        unit_library: UnitLibraryExport,
+    ) -> QualityCheck:
+        """
+        Validate that content doesn't have excessive boilerplate across units.
+        
+        Checks:
+        - Same why_it_matters text repeated across multiple concepts
+        - Identical definitions across concepts
+        - Repeated example_explanation text
+        
+        Args:
+            unit_library: The complete unit library export
+            
+        Returns:
+            QualityCheck with validation results
+        """
+        units = unit_library.instructional_units
+        
+        if not units:
+            return QualityCheck(
+                check_name="boilerplate_detection",
+                passed=True,
+                score=1.0,
+                message="No units to check",
+                severity=Severity.INFO,
+            )
+        
+        # Detect boilerplate
+        boilerplate = self._detect_boilerplate_across_units(units)
+        
+        if boilerplate:
+            total_instances = sum(len(instances) for instances in boilerplate.values())
+            # Sample for message
+            sample_text = list(boilerplate.keys())[0][:50] if boilerplate else ""
+            sample_count = len(list(boilerplate.values())[0]) if boilerplate else 0
+            
+            return QualityCheck(
+                check_name="boilerplate_detection",
+                passed=False,
+                score=0.6,
+                message=f"Detected {len(boilerplate)} boilerplate texts repeated across {total_instances} instances (e.g., {sample_count} uses of '{sample_text}...')",
+                severity=Severity.WARNING,
+            )
+        
+        return QualityCheck(
+            check_name="boilerplate_detection",
+            passed=True,
+            score=1.0,
+            message="No excessive boilerplate detected",
+            severity=Severity.INFO,
+        )
+    
     # =========================================================================
     # EXPORT INTEGRITY GATES
     # =========================================================================
@@ -1665,6 +2203,7 @@ class LearningQualityGates:
         - No "see textbook" or "content could not be extracted"
         - No empty required fields (stage-dependent)
         - No placeholder examples
+        - No test data or boilerplate content
         
         Different stages have different required fields:
         - L1_hint: requires hint_text
@@ -1686,11 +2225,18 @@ class LearningQualityGates:
         placeholder_count = 0
         placeholder_types = []
         
+        # Check standard placeholder patterns
         for pattern in PLACEHOLDER_PATTERNS:
             matches = re.findall(pattern, content_str, re.IGNORECASE)
             if matches:
                 placeholder_count += len(matches)
                 placeholder_types.append(pattern[:30])
+        
+        # NEW: Check for test/placeholder content patterns
+        is_placeholder, placeholder_reason = self._is_placeholder_content(content_str)
+        if is_placeholder:
+            placeholder_count += 1
+            placeholder_types.append(f"placeholder content ({placeholder_reason})")
         
         # Stage-aware check for empty required fields
         if isinstance(content, dict):
@@ -1700,6 +2246,9 @@ class LearningQualityGates:
                 if not definition or len(definition.strip()) < 20:
                     placeholder_count += 1
                     placeholder_types.append("empty/missing definition")
+                elif len(definition.strip()) < MIN_DEFINITION_LENGTH:
+                    placeholder_count += 0.5
+                    placeholder_types.append("short definition")
                     
             elif target_stage == "L1_hint":
                 # L1 requires hint_text
@@ -1714,11 +2263,15 @@ class LearningQualityGates:
                 if not hint or len(hint.strip()) < 10:
                     placeholder_count += 1
                     placeholder_types.append("empty/missing hint")
-                    # Also check for example if present but empty
-                    example = content.get("example_sql", "")
-                    if example and len(example.strip()) < 5:
+                # Also check for example if present but empty or broken
+                example = content.get("example_sql", "")
+                if example:
+                    if len(example.strip()) < 5:
                         placeholder_count += 1
                         placeholder_types.append("empty example_sql")
+                    elif not self._is_valid_sql_example(example):
+                        placeholder_count += 1
+                        placeholder_types.append("invalid/broken SQL in example")
                         
             elif target_stage == "L4_reflective_note":
                 # L4 requires key_concept_summary
@@ -1756,6 +2309,73 @@ class LearningQualityGates:
             passed=True,
             score=1.0,
             message="No placeholder content detected",
+            severity=Severity.INFO,
+        )
+    
+    def validate_no_broken_sql(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Validate that no broken SQL exists in the unit.
+        
+        Checks:
+        - example_sql is valid (not "SELECT;" etc.)
+        - Any SQL in examples is valid
+        - No incomplete SQL statements
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with validation results
+        """
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="no_broken_sql",
+                passed=True,
+                score=1.0,
+                message="Content format not supported for SQL validation",
+                severity=Severity.INFO,
+            )
+        
+        broken_sql_found = []
+        
+        # Check example_sql
+        example_sql = content.get("example_sql", "")
+        if example_sql and not self._is_valid_sql_example(example_sql):
+            broken_sql_found.append("example_sql")
+        
+        # Check examples list
+        examples = content.get("examples", [])
+        for i, ex in enumerate(examples):
+            if isinstance(ex, dict):
+                ex_sql = ex.get("sql", "")
+            else:
+                ex_sql = str(ex)
+            if ex_sql and not self._is_valid_sql_example(ex_sql):
+                broken_sql_found.append(f"examples[{i}]")
+        
+        # Check common_mistakes for fix_sql
+        mistakes = content.get("common_mistakes", [])
+        for i, mistake in enumerate(mistakes):
+            if isinstance(mistake, dict):
+                fix_sql = mistake.get("fix_sql", "")
+                if fix_sql and not self._is_valid_sql_example(fix_sql):
+                    broken_sql_found.append(f"common_mistakes[{i}].fix_sql")
+        
+        if broken_sql_found:
+            return QualityCheck(
+                check_name="no_broken_sql",
+                passed=False,
+                score=0.0,
+                message=f"Broken SQL found in: {', '.join(broken_sql_found[:3])}",
+                severity=Severity.BLOCKING,
+            )
+        
+        return QualityCheck(
+            check_name="no_broken_sql",
+            passed=True,
+            score=1.0,
+            message="No broken SQL detected",
             severity=Severity.INFO,
         )
     
@@ -1954,6 +2574,7 @@ class QualityReport:
             self.gates.validate_prerequisite_tags(unit),
             self.gates.validate_error_subtype_tags(unit),
             self.gates.validate_no_placeholders(unit),
+            self.gates.validate_no_broken_sql(unit),
             self.gates.validate_learner_ready(unit),
         ]
         
@@ -1984,15 +2605,18 @@ class QualityReport:
         return {
             "stage_variants": self.gates.validate_stage_variants(unit_library),
             "reinforcement_present": self.gates.validate_reinforcement_present(unit_library),
+            "l3_for_core_concepts": self.gates.validate_l3_for_core_concepts(unit_library),
+            "boilerplate_detection": self.gates.validate_boilerplate_content(unit_library),
         }
     
     def _categorize_check(self, check_name: str) -> str | None:
         """Categorize a check by type."""
         content_validity = {
             "canonical_mapping", "source_evidence", "content_relevance", "definition_not_heading",
+            "l3_for_core_concepts", "boilerplate_detection",
         }
         example_quality = {
-            "sql_executable", "sql_semantic", "example_difficulty",
+            "sql_executable", "sql_semantic", "example_difficulty", "no_broken_sql",
         }
         instruction_quality = {
             "explanation_quality", "practice_included", "takeaway_present",
@@ -2049,9 +2673,17 @@ class QualityReport:
                 recommendations.append(
                     f"[{count} units] Replace placeholder text with actual content"
                 )
+            elif check_name == "no_broken_sql":
+                recommendations.append(
+                    f"[{count} units] Fix broken SQL examples (e.g., 'SELECT;', incomplete statements)"
+                )
             elif check_name == "explanation_quality":
                 recommendations.append(
                     f"[{count} units] Add 'why it matters' and common misconceptions to explanations"
+                )
+            elif check_name == "definition_not_heading":
+                recommendations.append(
+                    f"[{count} units] Replace heading-like definitions with actual concept explanations"
                 )
             elif check_name == "takeaway_present":
                 recommendations.append(
@@ -2081,6 +2713,16 @@ class QualityReport:
                 "[Library] Create reinforcement items (recall prompts, quick checks) for concepts"
             )
         
+        if "l3_for_core_concepts" in library_checks and not library_checks["l3_for_core_concepts"].passed:
+            recommendations.append(
+                "[Library] Generate L3 explanation units for all core concepts"
+            )
+        
+        if "boilerplate_detection" in library_checks and not library_checks["boilerplate_detection"].passed:
+            recommendations.append(
+                "[Library] Review and replace repeated boilerplate content across units"
+            )
+        
         # Gate-level recommendations
         for gate_name, stats in gate_pass_rates.items():
             if stats["average_score"] < 0.7:
@@ -2101,20 +2743,185 @@ class QualityReport:
 def validate_unit_library(
     unit_library: UnitLibraryExport,
     min_pass_rate: float = 0.9,
+    strict_mode: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """
-    Quick validation function for unit libraries.
+    Quick validation function for unit libraries with teaching quality metrics.
     
     Args:
         unit_library: The unit library to validate
         min_pass_rate: Minimum required pass rate (default 90%)
+        strict_mode: If True, validation fails on broken SQL, excessive defaults, 
+                    or heading-like content (default False)
         
     Returns:
-        Tuple of (passed, report_dict)
+        Tuple of (passed, report_dict) where report_dict includes:
+        - summary: Overall pass rate and status
+        - issue_counts: Count of each issue type
+        - problematic_concepts: Dict mapping issue types to list of concept_ids
+        - quality_score: Overall teaching content quality score (0-1)
+        - strict_failures: List of strict-mode failures (if strict_mode=True)
     """
-    report = QualityReport().generate_full_report(unit_library)
-    passed = report["summary"]["overall_pass_rate"] >= min_pass_rate
-    return passed, report
+    gates = LearningQualityGates()
+    report = QualityReport(gates).generate_full_report(unit_library)
+    
+    units = unit_library.instructional_units
+    
+    # Collect detailed issue information
+    issue_counts: dict[str, int] = {}
+    problematic_concepts: dict[str, list[str]] = {}
+    strict_failures: list[dict[str, Any]] = []
+    
+    # Track specific issues
+    broken_sql_units = []
+    default_example_units = []
+    heading_definition_units = []
+    missing_l3_concepts = []
+    
+    for unit in units:
+        concept_id = unit.concept_id
+        content = unit.content or {}
+        
+        # Check for broken SQL
+        if isinstance(content, dict):
+            example_sql = content.get("example_sql", "")
+            if example_sql and not gates._is_valid_sql_example(example_sql):
+                broken_sql_units.append({
+                    "concept_id": concept_id,
+                    "unit_id": unit.unit_id,
+                    "issue": "broken_sql",
+                    "sql": example_sql[:100],
+                })
+            
+            # Check for default example overuse
+            if example_sql and gates._is_using_default_example(example_sql, concept_id):
+                default_example_units.append({
+                    "concept_id": concept_id,
+                    "unit_id": unit.unit_id,
+                    "issue": "default_example",
+                })
+            
+            # Check for heading-like definitions (L3 only)
+            if unit.target_stage == "L3_explanation":
+                definition = content.get("definition", "")
+                if definition:
+                    is_heading, reason = gates._is_heading_like(definition)
+                    if is_heading:
+                        heading_definition_units.append({
+                            "concept_id": concept_id,
+                            "unit_id": unit.unit_id,
+                            "issue": "heading_definition",
+                            "reason": reason,
+                        })
+    
+    # Calculate issue counts
+    issue_counts["broken_sql"] = len(broken_sql_units)
+    issue_counts["default_examples"] = len(default_example_units)
+    issue_counts["heading_definitions"] = len(heading_definition_units)
+    
+    # Build problematic concepts dict
+    if broken_sql_units:
+        problematic_concepts["broken_sql"] = [u["concept_id"] for u in broken_sql_units]
+    if default_example_units:
+        problematic_concepts["default_examples"] = [u["concept_id"] for u in default_example_units]
+    if heading_definition_units:
+        problematic_concepts["heading_definitions"] = [u["concept_id"] for u in heading_definition_units]
+    
+    # Check for missing L3 for core concepts
+    l3_check = gates.validate_l3_for_core_concepts(unit_library)
+    if not l3_check.passed:
+        # Extract concept list from message
+        issue_counts["missing_l3"] = l3_check.message.count(",") + 1 if ":" in l3_check.message else 0
+        # Parse missing L3 concepts from message
+        if "missing L3 explanations:" in l3_check.message:
+            concepts_str = l3_check.message.split("missing L3 explanations:")[1]
+            missing_l3_concepts = [c.strip() for c in concepts_str.split(",")]
+            problematic_concepts["missing_l3"] = missing_l3_concepts
+    else:
+        issue_counts["missing_l3"] = 0
+    
+    # Calculate teaching quality score (0-1)
+    # Based on: valid SQL, appropriate examples, substantive definitions, no boilerplate
+    total_units = len(units) if units else 1
+    l2_units = [u for u in units if u.target_stage == "L2_hint_plus_example"]
+    l3_units = [u for u in units if u.target_stage == "L3_explanation"]
+    
+    # SQL quality score
+    l2_with_sql = len(l2_units)
+    sql_quality_score = 1.0
+    if l2_with_sql > 0:
+        sql_quality_score = 1.0 - (len(broken_sql_units) / l2_with_sql)
+    
+    # Default example score
+    default_example_score = 1.0
+    if l2_with_sql > 0:
+        default_example_score = 1.0 - (len(default_example_units) / l2_with_sql)
+    
+    # Definition quality score
+    definition_quality_score = 1.0
+    if l3_units:
+        definition_quality_score = 1.0 - (len(heading_definition_units) / len(l3_units))
+    
+    # L3 coverage score
+    core_concepts = len(set(u.concept_id for u in units)) - len(problematic_concepts.get("missing_l3", []))
+    l3_coverage_score = 1.0
+    if core_concepts > 0:
+        l3_coverage_score = 1.0 - (issue_counts.get("missing_l3", 0) / core_concepts)
+    
+    # Overall teaching quality score (weighted average)
+    teaching_quality_score = (
+        sql_quality_score * 0.3 +
+        default_example_score * 0.2 +
+        definition_quality_score * 0.25 +
+        l3_coverage_score * 0.25
+    )
+    
+    # Strict mode checks
+    if strict_mode:
+        # Fail on any broken SQL
+        if broken_sql_units:
+            strict_failures.extend(broken_sql_units)
+        
+        # Fail if >50% of L2 units use defaults
+        if l2_with_sql > 0 and len(default_example_units) / l2_with_sql > 0.5:
+            strict_failures.append({
+                "concept_id": "LIBRARY",
+                "issue": "excessive_default_examples",
+                "details": f"{len(default_example_units)}/{l2_with_sql} L2 units use default examples (>50%)",
+            })
+        
+        # Fail on any heading-like definitions
+        if heading_definition_units:
+            strict_failures.extend(heading_definition_units)
+    
+    # Update report with enhanced information
+    enhanced_report = {
+        **report,
+        "issue_counts": issue_counts,
+        "problematic_concepts": problematic_concepts,
+        "teaching_quality_score": round(teaching_quality_score, 3),
+        "quality_breakdown": {
+            "sql_validity": round(sql_quality_score, 3),
+            "example_originality": round(default_example_score, 3),
+            "definition_quality": round(definition_quality_score, 3),
+            "l3_coverage": round(l3_coverage_score, 3),
+        },
+        "strict_failures": strict_failures if strict_mode else None,
+        "detailed_failures": {
+            "broken_sql": broken_sql_units,
+            "default_examples": default_example_units,
+            "heading_definitions": heading_definition_units,
+        },
+    }
+    
+    # Determine if passed
+    base_passed = report["summary"]["overall_pass_rate"] >= min_pass_rate
+    if strict_mode:
+        passed = base_passed and len(strict_failures) == 0
+    else:
+        passed = base_passed
+    
+    return passed, enhanced_report
 
 
 def format_report_markdown(report: dict[str, Any]) -> str:
@@ -2139,13 +2946,42 @@ def format_report_markdown(report: dict[str, Any]) -> str:
         f"- **Failed:** {summary['failed_units']} ❌",
         f"- **Pass Rate:** {summary['overall_pass_rate']:.1%}",
         f"- **Overall Passed:** {'Yes ✅' if summary['overall_passed'] else 'No ❌'}",
-        "",
-        "## Gate Pass Rates",
-        "",
     ]
+    
+    # Add teaching quality score if available
+    if "teaching_quality_score" in report:
+        tqs = report["teaching_quality_score"]
+        tqs_emoji = "✅" if tqs >= 0.8 else "⚠️" if tqs >= 0.6 else "❌"
+        lines.append(f"- **Teaching Quality Score:** {tqs:.1%} {tqs_emoji}")
+    
+    lines.extend(["", "## Gate Pass Rates", ""])
     
     for gate_name, stats in report.get("gate_pass_rates", {}).items():
         lines.append(f"- **{gate_name}:** {stats['average_score']:.1%} avg score ({stats['pass_rate']:.1%} pass rate)")
+    
+    # Add quality breakdown if available
+    if "quality_breakdown" in report:
+        lines.extend(["", "## Teaching Quality Breakdown", ""])
+        qb = report["quality_breakdown"]
+        for metric, score in qb.items():
+            emoji = "✅" if score >= 0.8 else "⚠️" if score >= 0.6 else "❌"
+            lines.append(f"- **{metric.replace('_', ' ').title()}:** {score:.1%} {emoji}")
+    
+    # Add issue counts if available
+    if "issue_counts" in report and report["issue_counts"]:
+        lines.extend(["", "## Issue Counts", ""])
+        for issue_type, count in report["issue_counts"].items():
+            if count > 0:
+                lines.append(f"- **{issue_type.replace('_', ' ').title()}:** {count}")
+    
+    # Add problematic concepts if available
+    if "problematic_concepts" in report and report["problematic_concepts"]:
+        lines.extend(["", "## Problematic Concepts", ""])
+        for issue_type, concepts in report["problematic_concepts"].items():
+            if concepts:
+                lines.append(f"- **{issue_type.replace('_', ' ').title()}:** {', '.join(concepts[:5])}")
+                if len(concepts) > 5:
+                    lines.append(f"  - *...and {len(concepts) - 5} more*")
     
     lines.extend([
         "",
@@ -2166,5 +3002,15 @@ def format_report_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- **{unit['unit_id']}** (score: {unit['score']:.2f})")
             for fc in unit.get("failed_checks", [])[:3]:
                 lines.append(f"  - {fc['name']}: {fc['message']}")
+    
+    # Add strict failures if in strict mode
+    if report.get("strict_failures"):
+        lines.extend([
+            "",
+            "## Strict Mode Failures",
+            "",
+        ])
+        for failure in report["strict_failures"][:10]:
+            lines.append(f"- **{failure.get('concept_id', 'Unknown')}:** {failure.get('issue', 'Unknown issue')}")
     
     return "\n".join(lines)
