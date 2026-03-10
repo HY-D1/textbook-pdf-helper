@@ -244,7 +244,7 @@ class GenerationConfig:
         allow_synthetic_examples: Whether to allow synthetic SQL examples when no real ones found
         enable_ollama_repair: Whether to enable Ollama-based selective repair pass
         repair_threshold: Quality score threshold below which to trigger repair (0.0-1.0)
-        ollama_model: Ollama model to use for repairs (default: qwen2.5:3b)
+        ollama_model: Ollama model to use for repairs (default: qwen3.5:9b-q8_0)
     """
     llm_provider: str = "kimi"
     model_name: str = "kimi-k2-5"
@@ -259,7 +259,7 @@ class GenerationConfig:
     allow_synthetic_examples: bool = False  # Default to False for production
     enable_ollama_repair: bool = True  # Enable selective Ollama repair by default
     repair_threshold: float = 0.6  # Quality threshold for triggering repair
-    ollama_model: str = "qwen2.5:3b"  # Default Ollama model for repairs
+    ollama_model: str = "qwen3.5:9b-q8_0"  # Default Ollama model for repairs
     
     def __post_init__(self):
         """Validate configuration."""
@@ -1517,17 +1517,10 @@ class UnitGenerator:
             if not mistakes:
                 mistakes = self._get_default_misconceptions(concept_id)
             
-            # Build practice links - check for real problems first
+            # Build practice links - check for real problems from SQL-Engage
             practice_links = self._lookup_real_problems(concept_id)
-            if not practice_links:
-                # Use unresolved placeholder to indicate these need resolution
-                practice_links = [
-                    PracticeLink(
-                        concept_id=concept_id,
-                        problem_ids=[f"unresolved-{concept_id}"],
-                        needs_resolution=True,  # Mark as needing resolution
-                    )
-                ]
+            # If no real problems found, practice_links will be None
+            # and L3Content will have empty practice_links list
             
             # Get learning objectives from ontology (preferred over LLM generation)
             learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
@@ -1903,6 +1896,7 @@ class UnitGenerator:
         and the concept being taught.
         """
         sql_lower = sql.lower()
+        sql_upper = sql.upper()
         concept_lower = concept_id.lower()
         
         # Base score
@@ -3063,6 +3057,35 @@ class UnitGenerator:
         except Exception:
             return None
 
+    def _load_curated_l2_content(self, concept_id: str) -> dict | None:
+        """Load curated L2 content for concepts missing good source examples.
+
+        This method loads from concept_curated_units.json and extracts the
+        L2_hint_plus_example section for the given concept.
+
+        Args:
+            concept_id: The canonical concept ID
+
+        Returns:
+            Dictionary with keys: hint_text, example_sql, example_explanation,
+            common_pitfall, or None if no curated L2 content exists.
+        """
+        # Reuse the unit pack loader and extract L2 section
+        curated_pack = self._load_curated_unit_pack(concept_id)
+        if not curated_pack:
+            return None
+
+        l2_data = curated_pack.get("L2_hint_plus_example")
+        if not l2_data:
+            return None
+
+        return {
+            "hint_text": l2_data.get("hint_text", ""),
+            "example_sql": l2_data.get("example_sql", ""),
+            "example_explanation": l2_data.get("example_explanation", ""),
+            "common_pitfall": l2_data.get("common_pitfall", ""),
+        }
+
     def _assess_l3_quality(self, content: dict) -> float:
         """Score L3 content quality 0-1."""
         # If curated content was used, it's high quality
@@ -3090,6 +3113,7 @@ class UnitGenerator:
         config: GenerationConfig,
         prerequisites: list[str] | None = None,
         error_subtypes: list[str] | None = None,
+        source_mode: str = "curated_only",
     ) -> InstructionalUnit | None:
         """Generate L3 unit directly from curated content for concepts with no blocks.
         
@@ -3157,16 +3181,8 @@ class UnitGenerator:
         # Get learning objectives from ontology
         learning_objectives = self._get_learning_objectives_from_ontology(concept_id)
         
-        # Build practice links
+        # Build practice links from SQL-Engage integration
         practice_links = self._lookup_real_problems(concept_id)
-        if not practice_links:
-            practice_links = [
-                PracticeLink(
-                    concept_id=concept_id,
-                    problem_ids=[f"unresolved-{concept_id}"],
-                    needs_resolution=True,
-                )
-            ]
         
         # Build L3 content
         content = L3Content(
@@ -3184,8 +3200,11 @@ class UnitGenerator:
         content_dict["_used_curated_fallback"] = True
         content_dict["_metadata"] = {
             "content_source": "curated",
-            "review_needed": False,
+            "review_needed": source_mode == "curated_only_offbook",
             "content_quality": "curated",
+            "source_mode": source_mode,
+            "offbook_concept": source_mode == "curated_only_offbook",
+            "exclude_from_coverage": source_mode == "curated_only_offbook",
         }
         
         # Create a synthetic evidence span for curated content to pass grounding checks
@@ -3253,23 +3272,36 @@ class UnitGenerator:
 
     def _lookup_real_problems(self, concept_id: str) -> list[PracticeLink] | None:
         """
-        Look up real problem IDs for a concept.
+        Look up real problem IDs for a concept from SQL-Engage integration.
         
-        Returns a list of PracticeLink objects if found, or None if no mapping exists.
-        Handles both simple string IDs and rich metadata objects.
+        Returns a list of PracticeLink objects with real problem IDs if found,
+        or None if no mapping exists. Never returns placeholder/unresolved IDs.
         
-        Supports format_version 2.0 with fields:
-        - real_problem_id: The actual SQL-Engage problem ID
-        - supports_hintwise: Whether the problem supports HintWise hints
-        - supports_replay: Whether the problem supports replay functionality
-        - url: Direct URL to the problem
-        - is_placeholder: Whether this is a placeholder entry
+        Supports format_version 2.0 with nested "concepts" structure:
+        {
+            "concepts": {
+                "concept-id": {
+                    "problems": [
+                        {
+                            "problem_id": "sql-engage/...",
+                            "title": "...",
+                            "difficulty": "...",
+                            "concepts": [...],
+                            "error_subtypes": [...],
+                            "supports_hintwise": true,
+                            "supports_replay": true,
+                            "url": "..."
+                        }
+                    ]
+                }
+            }
+        }
         
         Args:
             concept_id: The concept ID to look up
             
         Returns:
-            List of PracticeLink objects, or None if no mapping found
+            List of PracticeLink objects with real problem IDs, or None if no mapping found
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -3283,109 +3315,80 @@ class UnitGenerator:
             with open(practice_map_path) as f:
                 practice_map = json.load(f)
             
-            concept_problems = practice_map.get(concept_id)
+            # Get metadata
+            metadata = practice_map.get("_metadata", {})
+            format_version = metadata.get("format_version", "1.0")
+            
+            # Get concept data from nested "concepts" structure (v2.0+)
+            concepts_data = practice_map.get("concepts", {})
+            concept_data = concepts_data.get(concept_id)
+            
+            if not concept_data:
+                return None
+            
+            # Get problems list
+            concept_problems = concept_data.get("problems", [])
             if not concept_problems:
                 return None
             
-            # Check metadata for format version and status
-            metadata = practice_map.get("_metadata", {})
-            metadata_status = metadata.get("status", "")
-            format_version = metadata.get("format_version", "1.0")
-            is_placeholder_format = metadata_status == "placeholder"
-            is_v2_format = format_version == "2.0" and metadata_status == "active"
-            
-            links = []
+            # Build PracticeLink objects from real problems
             problem_ids = []
-            real_problem_ids = []
+            problem_metadatas = []
             
             for problem in concept_problems:
-                if isinstance(problem, str):
-                    # Simple string ID format (legacy v1.0)
-                    problem_ids.append(problem)
-                    links.append(
-                        PracticeLink(
-                            concept_id=concept_id,
-                            problem_ids=[problem],
-                            needs_resolution=problem.startswith("problem-") and is_placeholder_format,
-                        )
-                    )
-                elif isinstance(problem, dict):
-                    # Rich object with metadata (v2.0 format)
-                    problem_id = problem.get("id", f"unresolved-{concept_id}")
-                    problem_ids.append(problem_id)
-                    
-                    # Extract real_problem_id if available (v2.0)
-                    real_problem_id = problem.get("real_problem_id", problem_id)
-                    real_problem_ids.append(real_problem_id)
-                    
-                    # Determine if this needs resolution
-                    # In v2.0, check is_placeholder flag; in v1.0, infer from ID pattern
-                    needs_resolution = problem.get("is_placeholder", False)
-                    if not needs_resolution and is_placeholder_format:
-                        needs_resolution = problem_id.startswith("problem-")
-                    
-                    # Build metadata with v2.0 fields if available
-                    problem_metadata = {
-                        # Core fields
-                        "id": problem_id,
-                        "real_problem_id": real_problem_id,
-                        "title": problem.get("title", ""),
-                        "difficulty": problem.get("difficulty", ""),
-                        "concepts": problem.get("concepts", []),
-                        "error_subtypes": problem.get("error_subtypes", []),
-                        # Feature flags (v2.0+)
-                        "supports_hintwise": problem.get("supports_hintwise", False),
-                        "supports_replay": problem.get("supports_replay", False),
-                        # Integration fields
-                        "url": problem.get("url", ""),
-                        "is_placeholder": problem.get("is_placeholder", False),
-                    }
-                    
-                    links.append(
-                        PracticeLink(
-                            concept_id=concept_id,
-                            problem_ids=[problem_id],
-                            needs_resolution=needs_resolution,
-                            metadata=problem_metadata,
-                        )
-                    )
-            
-            # If we have multiple problem IDs, consolidate into a single PracticeLink
-            if problem_ids:
-                # Check if any need resolution
-                any_needs_resolution = any(link.needs_resolution for link in links)
+                if not isinstance(problem, dict):
+                    continue
                 
-                # Collect metadata from all links
-                problem_metadatas = [link.metadata for link in links if link.metadata]
-                combined_metadata = {
-                    "problems": problem_metadatas,
-                    "format_version": format_version,
-                    "status": metadata_status,
-                    "is_v2_format": is_v2_format,
+                # Extract real problem_id (required field)
+                problem_id = problem.get("problem_id")
+                if not problem_id:
+                    continue
+                
+                # Skip any entries that look like placeholders
+                if problem_id.startswith("unresolved-") or problem_id.startswith("problem-"):
+                    continue
+                
+                problem_ids.append(problem_id)
+                
+                # Build rich metadata for this problem
+                problem_metadata = {
+                    "problem_id": problem_id,
+                    "title": problem.get("title", ""),
+                    "difficulty": problem.get("difficulty", "beginner"),
+                    "concepts": problem.get("concepts", [concept_id]),
+                    "error_subtypes": problem.get("error_subtypes", []),
+                    "supports_hintwise": problem.get("supports_hintwise", True),
+                    "supports_replay": problem.get("supports_replay", True),
+                    "url": problem.get("url", f"https://sql-engage.example.com/problems/{problem_id}"),
                 }
-                
-                # Add summary fields for v2.0 format
-                if is_v2_format and problem_metadatas:
-                    combined_metadata["has_hintwise_support"] = any(
-                        p.get("supports_hintwise", False) for p in problem_metadatas
-                    )
-                    combined_metadata["has_replay_support"] = any(
-                        p.get("supports_replay", False) for p in problem_metadatas
-                    )
-                    combined_metadata["real_problem_ids"] = [
-                        p.get("real_problem_id", p.get("id")) for p in problem_metadatas
-                    ]
-                
-                return [
-                    PracticeLink(
-                        concept_id=concept_id,
-                        problem_ids=problem_ids,
-                        needs_resolution=any_needs_resolution,
-                        metadata=combined_metadata if combined_metadata["problems"] else None,
-                    )
-                ]
+                problem_metadatas.append(problem_metadata)
             
-            return links if links else None
+            if not problem_ids:
+                return None
+            
+            # Build combined metadata
+            combined_metadata = {
+                "problems": problem_metadatas,
+                "format_version": format_version,
+                "status": metadata.get("status", "active"),
+                "has_hintwise_support": any(
+                    p.get("supports_hintwise", False) for p in problem_metadatas
+                ),
+                "has_replay_support": any(
+                    p.get("supports_replay", False) for p in problem_metadatas
+                ),
+                "problem_count": len(problem_ids),
+            }
+            
+            # Return single PracticeLink with all real problem IDs
+            return [
+                PracticeLink(
+                    concept_id=concept_id,
+                    problem_ids=problem_ids,
+                    needs_resolution=False,  # Real problem IDs - no resolution needed
+                    metadata=combined_metadata,
+                )
+            ]
             
         except Exception as e:
             logger.warning(f"Failed to load practice map for {concept_id}: {e}")
@@ -3932,17 +3935,10 @@ class UnitGenerator:
         if not mistakes:
             mistakes = self._get_default_misconceptions(concept_id)
         
-        # Practice links: Check for real problems, otherwise use unresolved placeholder
+        # Practice links: Check for real problems from SQL-Engage integration
         practice_links = self._lookup_real_problems(concept_id)
-        if not practice_links:
-            # Use unresolved placeholder with metadata flag so it can be filtered in production
-            practice_links = [
-                PracticeLink(
-                    concept_id=concept_id,
-                    problem_ids=[f"unresolved-{concept_id}"],
-                    needs_resolution=True,  # Explicitly mark as needing resolution
-                )
-            ]
+        # If no real problems found, practice_links will be None/empty
+        # Export filters will handle validation for student-ready mode
         
         return L3Content(
             definition=definition[:1000],
