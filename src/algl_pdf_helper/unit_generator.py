@@ -173,6 +173,9 @@ class ExampleMetadata(BaseModel):
     example_selection_reason: str = Field(default="", description="Reason for selecting this example")
     example_matched_signals: list[str] = Field(default_factory=list, description="Signals that matched for this example")
     is_conceptual: bool = Field(default=False, description="True for non-executable conceptual examples")
+    # SQL CLEANING AUDIT FIELDS:
+    raw_sql_preview: str = Field(default="", description="Preview of raw SQL before cleaning (first 100 chars)")
+    cleaning_changes: bool = Field(default=False, description="Whether cleaning modified the SQL")
 
 
 class L2Content(BaseModel):
@@ -188,6 +191,9 @@ class L2Content(BaseModel):
     source_example_sql: str | None = Field(default=None, max_length=500, description="Original SQL from textbook before transformation")
     practice_example_sql: str | None = Field(default=None, max_length=500, description="SQL transformed for practice schemas")
     conceptual_example: str | None = Field(default=None, max_length=1000, description="For SQL-optional concepts: conceptual explanation text")
+    # RAW/CLEANED SQL DEBUG FIELDS:
+    raw_extracted_sql: str | None = Field(default=None, max_length=500, description="Raw SQL as extracted from textbook before any cleaning")
+    cleaning_applied: bool = Field(default=False, description="Whether cleaning/normalization modified the SQL")
 
 
 class L3Content(BaseModel):
@@ -2557,11 +2563,57 @@ class UnitGenerator:
                     score += 5.0
                     matched_signals.append(f'normalization_{term.lower().replace(" ", "_")}')
         
+        # ===== CLAUSE-SPECIFIC BOOSTING FOR CRITICAL CONCEPTS =====
+        # Additional scoring to ensure WHERE, JOIN, GROUP BY patterns are properly recognized
+        
+        if 'where' in concept_id.lower():
+            if 'WHERE' in sql_upper:
+                score += 2.0
+                if 'where_clause_present' not in matched_signals:
+                    matched_signals.append('where_clause_present')
+                print(f"[SQL SCORE]   +2.0 boost for WHERE clause present")
+            if re.search(r'WHERE\s+\w+\s*[<>=]', sql, re.IGNORECASE):
+                score += 1.0
+                if 'where_condition' not in matched_signals:
+                    matched_signals.append('where_condition')
+                print(f"[SQL SCORE]   +1.0 boost for WHERE condition")
+        
+        if 'join' in concept_id.lower():
+            if 'JOIN' in sql_upper:
+                score += 2.0
+                if 'join_present' not in matched_signals:
+                    matched_signals.append('join_present')
+                print(f"[SQL SCORE]   +2.0 boost for JOIN present")
+            if 'ON' in sql_upper:
+                score += 1.0
+                if 'on_clause' not in matched_signals:
+                    matched_signals.append('on_clause')
+                print(f"[SQL SCORE]   +1.0 boost for ON clause")
+        
+        if 'group' in concept_id.lower():
+            if 'GROUP BY' in sql_upper:
+                score += 2.0
+                if 'group_by_present' not in matched_signals:
+                    matched_signals.append('group_by_present')
+                print(f"[SQL SCORE]   +2.0 boost for GROUP BY present")
+            if re.search(r'(COUNT|SUM|AVG|MAX|MIN)', sql_upper):
+                score += 1.0
+                if 'aggregate_function' not in matched_signals:
+                    matched_signals.append('aggregate_function')
+                print(f"[SQL SCORE]   +1.0 boost for aggregate function")
+        
+        if 'order' in concept_id.lower():
+            if 'ORDER BY' in sql_upper:
+                score += 2.0
+                if 'order_by_present' not in matched_signals:
+                    matched_signals.append('order_by_present')
+                print(f"[SQL SCORE]   +2.0 boost for ORDER BY present")
+        
         # DEBUG LOGGING START
         print(f"[SQL SCORE]   FINAL: score={score:.2f}, signals={matched_signals if matched_signals else ['none']}")
         
         # Additional debug for key concepts - show final score
-        if concept_id in ('select-basic', 'joins-intro', 'group-by'):
+        if concept_id in ('select-basic', 'joins-intro', 'group-by', 'where-clause', 'order-by'):
             print(f"[SQL SCORE] {concept_id}: SQL='{sql[:40]}...' -> score={score:.2f}")
         # DEBUG LOGGING END
         
@@ -3118,6 +3170,80 @@ class UnitGenerator:
         
         return examples
     
+    def _extract_clause_specific_sql(self, text: str, concept_id: str) -> list[dict]:
+        """Extract SQL using concept-specific heuristics for WHERE, JOIN, GROUP BY, ORDER BY.
+        
+        Uses targeted regex patterns to find SQL examples that specifically demonstrate
+        the target concept, ensuring higher quality extraction for critical clauses.
+        
+        Args:
+            text: Text to search for SQL examples
+            concept_id: Concept ID to determine which patterns to apply
+            
+        Returns:
+            List of extracted SQL examples with metadata
+        """
+        examples = []
+        text_upper = text.upper()
+        concept_lower = concept_id.lower()
+        
+        # WHERE clause extraction
+        if 'where' in concept_lower:
+            # Look for: SELECT ... FROM ... WHERE ...
+            where_patterns = [
+                r'(SELECT\s+.+?FROM\s+\w+.*?WHERE\s+.+?)(?=\s+(?:AND|OR|ORDER|GROUP|HAVING|$|;))',
+                r'(SELECT\s+.+?WHERE\s+.+?)(?=\s+ORDER|\s+GROUP|$|;)',
+            ]
+            for pattern in where_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+                    sql = match.group(1).strip()
+                    if len(sql) > 20:
+                        examples.append({'sql': sql, 'source': 'where_clause_pattern'})
+        
+        # JOIN extraction
+        if 'join' in concept_lower:
+            # Look for: ... JOIN ... ON ...
+            join_patterns = [
+                r'(SELECT\s+.+?JOIN\s+\w+.*?ON\s+.+?)(?=\s+WHERE|\s+ORDER|\s+GROUP|$|;)',
+                r'(FROM\s+\w+\s+JOIN\s+\w+.*?ON\s+.+?)(?=\s+WHERE|$|;)',
+            ]
+            for pattern in join_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+                    sql = match.group(1).strip()
+                    if 'JOIN' in sql.upper() and 'ON' in sql.upper():
+                        examples.append({'sql': sql, 'source': 'join_pattern'})
+        
+        # GROUP BY extraction
+        if 'group' in concept_lower or 'aggregate' in concept_lower:
+            # Look for: SELECT ... GROUP BY ...
+            # Or: SELECT COUNT(*), SUM(...), etc.
+            group_patterns = [
+                r'(SELECT\s+.+?GROUP\s+BY\s+.+?)(?=\s+HAVING|\s+ORDER|$|;)',
+                r'(SELECT\s+(?:COUNT|SUM|AVG|MAX|MIN)\s*\(.+?\).*?FROM\s+\w+)(?=\s+GROUP|\s+ORDER|$|;)',
+            ]
+            for pattern in group_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+                    sql = match.group(1).strip()
+                    if len(sql) > 20:
+                        examples.append({'sql': sql, 'source': 'group_by_pattern'})
+        
+        # ORDER BY extraction
+        if 'order' in concept_lower:
+            order_patterns = [
+                r'(SELECT\s+.+?ORDER\s+BY\s+.+?)(?=\s+LIMIT|\s+OFFSET|$|;)',
+            ]
+            for pattern in order_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+                    sql = match.group(1).strip()
+                    examples.append({'sql': sql, 'source': 'order_by_pattern'})
+        
+        # Add semicolons
+        for ex in examples:
+            if not ex['sql'].endswith(';'):
+                ex['sql'] += ';'
+        
+        return examples
+
     def _extract_sql_examples_from_blocks(
         self, blocks: list[ContentBlock], concept_id: str = ""
     ) -> list[dict]:
@@ -3187,21 +3313,29 @@ class UnitGenerator:
             if not is_allowed_type and not is_code_block:
                 continue
             
-            # Method 1: Line-based extraction (lenient)
+            # Method 1: Clause-specific extraction (for WHERE, JOIN, GROUP BY, ORDER BY)
+            # This runs first to capture concept-specific patterns with higher priority
+            clause_specific = self._extract_clause_specific_sql(text, concept_id)
+            for ex in clause_specific:
+                ex['page'] = block.page_number
+                ex['extraction_method'] = 'clause_specific'
+                candidates.append(ex)
+            
+            # Method 2: Line-based extraction (lenient)
             line_based = self._extract_line_based_sql(text, concept_id)
             for ex in line_based:
                 ex['page'] = block.page_number
                 ex['extraction_method'] = 'line_based'
                 candidates.append(ex)
             
-            # Method 2: Textbook prose extraction (lenient)
+            # Method 3: Textbook prose extraction (lenient)
             prose_based = self._extract_textbook_sql(text, concept_id)
             for ex in prose_based:
                 ex['page'] = block.page_number
                 ex['extraction_method'] = 'textbook_prose'
                 candidates.append(ex)
             
-            # Method 3: Regex patterns (more lenient than before)
+            # Method 4: Regex patterns (more lenient than before)
             regex_based = self._extract_sql_with_regex(text, concept_id, block.page_number)
             candidates.extend(regex_based)
         
@@ -3218,23 +3352,24 @@ class UnitGenerator:
         }
         
         for candidate in candidates:
-            sql = candidate.get('sql', '')
+            raw_sql = candidate.get('sql', '')
             
+            # Preserve raw SQL before normalization
             # Normalize
-            sql = self._normalize_sql(sql)
+            cleaned_sql = self._normalize_sql(raw_sql)
             
             # Validate (more lenient than before)
-            is_valid, reason = self._is_valid_sql_lenient(sql)
+            is_valid, reason = self._is_valid_sql_lenient(cleaned_sql)
             
             if not is_valid:
                 if reason in rejections:
                     rejections[reason] += 1
                 if debug_mode:
-                    print(f"[SQL EXTRACT DEBUG] REJECTED: {reason} - {sql[:60]}...")
+                    print(f"[SQL EXTRACT DEBUG] REJECTED: {reason} - {cleaned_sql[:60]}...")
                 continue
             
             # Deduplication check
-            sql_normalized = sql.lower().replace(' ', '').replace('\n', '')
+            sql_normalized = cleaned_sql.lower().replace(' ', '').replace('\n', '')
             if sql_normalized in seen_sql_normalized:
                 rejections['duplicate'] += 1
                 if debug_mode:
@@ -3242,13 +3377,15 @@ class UnitGenerator:
                 continue
             seen_sql_normalized.add(sql_normalized)
             
-            # Valid and unique - add to results
+            # Valid and unique - add to results with both raw and cleaned SQL
             validated.append({
-                'sql': sql,
+                'sql': cleaned_sql,  # Cleaned version for use
+                'raw_sql': raw_sql,  # NEW: Preserve raw extracted SQL
                 'page': candidate.get('page', 0),
                 'source': candidate.get('source', 'extracted'),
                 'extraction_method': candidate.get('extraction_method', 'regex'),
                 'pattern_used': candidate.get('pattern_used', 'unknown'),
+                'cleaning_applied': cleaned_sql != raw_sql,  # NEW: Track if cleaning changed anything
             })
         
         if debug_mode:
@@ -3269,17 +3406,127 @@ class UnitGenerator:
         
         return validated
     
-    def _normalize_sql(self, sql: str) -> str:
-        """Normalize extracted SQL.
+    def _strip_prose_from_sql(self, sql: str) -> str:
+        """Strip trailing explanatory prose from SQL.
+        
+        Converts: "SELECT * FROM users This retrieves all users"
+        To:       "SELECT * FROM users"
+        
+        Args:
+            sql: Raw SQL string that may contain trailing prose
+            
+        Returns:
+            SQL string with prose contamination removed
+        """
+        if not sql:
+            return sql
+        
+        original = sql
+        
+        # Common prose starters that indicate end of SQL
+        prose_indicators = [
+            r'\s+This\s+',
+            r'\s+Retrieves\s+',
+            r'\s+Returns\s+',
+            r'\s+Shows\s+',
+            r'\s+Displays\s+',
+            r'\s+Example\s*:?\s*',
+            r'\s+Use\s+this\s+',
+            r'\s+The\s+',
+            r'\s+Here\s+',
+            r'\s+In\s+this\s+',
+            r'\s+Note\s*:?\s*',
+            r'\s+See\s+',
+            r'\s+This\s+query\s+',
+            r'\s+This\s+statement\s+',
+            r'\s+which\s+',
+            r'\s+and\s+this\s+',
+            r'\s+that\s+',
+        ]
+        
+        # Try each prose indicator
+        for pattern in prose_indicators:
+            match = re.search(pattern, sql, re.IGNORECASE)
+            if match:
+                # Cut at the prose start
+                sql = sql[:match.start()].strip()
+                break
+        
+        # Also check for lowercase transition (English sentence start)
+        # Pattern: word boundary, then lowercase letter after space
+        # But be careful not to cut table/column names
+        words = sql.split()
+        cut_index = len(words)
+        
+        sql_keywords_upper = {'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'NULL', 'AS', 'BY', 'IN', 'ON', 
+                              'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'GROUP', 'ORDER', 'HAVING', 
+                              'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'TABLE', 
+                              'DISTINCT', 'LIMIT', 'OFFSET', 'UNION', 'INTERSECT', 'EXCEPT',
+                              'COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'}
+        
+        prose_words_lower = {'the', 'this', 'that', 'these', 'those', 'retrieves', 'returns', 
+                             'shows', 'displays', 'example', 'query', 'statement', 'result',
+                             'returns', 'gives', 'produces', 'outputs'}
+        
+        for i, word in enumerate(words):
+            word_upper = word.upper()
+            word_lower = word.lower().rstrip(',;')
+            
+            # Skip SQL keywords that might be lowercase
+            if word_upper in sql_keywords_upper:
+                continue
+            
+            # Skip table/column names (often mixed case or with underscores)
+            if '_' in word or (len(word) > 1 and any(c.isupper() for c in word[1:])):
+                continue
+            
+            # Skip quoted strings
+            if word.startswith(("'", '"')) or word.endswith(("'", '"')):
+                continue
+            
+            # If we see a common prose word, consider cutting
+            if word_lower in prose_words_lower:
+                cut_index = i
+                break
+            
+            # Check for lowercase word that could indicate start of sentence
+            # but only after we've seen enough SQL structure
+            if i > 3 and word[0].islower() and word_lower not in prose_words_lower:
+                # This might be prose - check next word too
+                if i + 1 < len(words) and words[i + 1][0].islower():
+                    cut_index = i
+                    break
+        
+        sql = ' '.join(words[:cut_index])
+        
+        # Ensure we end with semicolon
+        if sql and not sql.endswith(';'):
+            sql += ';'
+        
+        if sql != original and len(original) > 60:
+            print(f"[SQL CLEAN] Stripped prose: '{original[:60]}...' -> '{sql[:60]}...'")
+        elif sql != original:
+            print(f"[SQL CLEAN] Stripped prose: '{original}' -> '{sql}'")
+        
+        return sql
+    
+    def _normalize_sql(self, sql: str, concept_id: str = "") -> str:
+        """Normalize extracted SQL while tracking changes.
         
         Args:
             sql: Raw SQL string
+            concept_id: Optional concept ID for debug logging
             
         Returns:
             Normalized SQL string
         """
         if not sql:
             return ""
+        
+        original = sql
+        
+        # NEW: Strip prose contamination first
+        sql = self._strip_prose_from_sql(sql)
         
         # Remove backticks used as code markers
         sql = sql.strip('`')
@@ -3295,7 +3542,13 @@ class UnitGenerator:
         sql = re.sub(r'\s*,\s*', ', ', sql)
         sql = re.sub(r'\s*;\s*', ';', sql)
         
-        return sql.strip()
+        cleaned = sql.strip()
+        
+        # Track and log changes for debugging
+        if cleaned != original:
+            print(f"[SQL NORMALIZE] Changed: '{original[:50]}...' -> '{cleaned[:50]}...'")
+        
+        return cleaned
     
     def _is_valid_sql_lenient(self, sql: str) -> tuple[bool, str]:
         """Validate SQL more leniently for textbook examples.
@@ -3324,6 +3577,22 @@ class UnitGenerator:
         
         if not has_content:
             return False, 'no_content'
+        
+        # NEW: Check for prose contamination
+        prose_words = ['retrieves', 'returns', 'shows', 'displays', 'example', 'this query', 
+                       'this statement', 'the result', 'gives', 'produces', 'outputs']
+        sql_lower = sql.lower()
+        
+        # Count prose words (check for phrases too)
+        prose_count = 0
+        for w in prose_words:
+            if w in sql_lower:
+                prose_count += 1
+        
+        # If more than 1 prose word, likely contaminated
+        if prose_count > 1:
+            print(f"[SQL VALIDATE] Rejecting contaminated SQL: {sql[:60]}...")
+            return False, 'prose_contamination'
         
         return True, ''
     
@@ -4712,10 +4981,15 @@ class UnitGenerator:
         # For each extracted SQL example, create a candidate
         for ex in sql_examples:
             sql_text = ex["sql"]
+            # NEW: Preserve raw SQL for debugging
+            raw_sql = ex.get("raw_sql", sql_text)
+            cleaning_applied = ex.get("cleaning_applied", False)
             score, matched_signals = self._score_sql_for_concept(sql_text, concept_id)
             
             candidates.append({
                 'sql': sql_text,
+                'raw_sql': raw_sql,  # NEW: Preserve raw SQL
+                'cleaning_applied': cleaning_applied,  # NEW: Track cleaning
                 'score': score,
                 'source_type': 'extracted',
                 'source_block_id': f"page_{ex.get('page', 0)}",
@@ -4885,6 +5159,17 @@ class UnitGenerator:
         # Get matched signals from candidate
         matched_signals = best_candidate.get('matched_signals', [])
         
+        # NEW: Get raw SQL and cleaning info for debugging
+        raw_sql = best_candidate.get('raw_sql', source_example_sql)
+        cleaning_applied = best_candidate.get('cleaning_applied', False)
+        
+        # Debug output for cleaning changes on key concepts
+        if concept_id in ('select-basic', 'where-clause', 'joins-intro'):
+            if cleaning_applied and raw_sql != source_example_sql:
+                print(f"[SQL CLEAN DEBUG] {concept_id}:")
+                print(f"  Raw:    {raw_sql[:80]}...")
+                print(f"  Clean:  {source_example_sql[:80]}...")
+        
         # Create metadata with audit fields
         example_metadata = ExampleMetadata(
             source_type=best_candidate['source_type'],
@@ -4900,6 +5185,9 @@ class UnitGenerator:
             example_selection_reason=selection_reason,
             example_matched_signals=matched_signals if matched_signals else [],
             is_conceptual=is_conceptual,
+            # NEW: SQL cleaning audit fields
+            raw_sql_preview=raw_sql[:100] if len(raw_sql) > 100 else raw_sql,
+            cleaning_changes=cleaning_applied,
         )
         
         return L2Content(
@@ -4912,6 +5200,9 @@ class UnitGenerator:
             source_example_sql=source_example_sql[:500] if not is_conceptual else None,
             practice_example_sql=practice_example_sql[:500] if not is_conceptual else None,
             conceptual_example=conceptual_example[:1000] if conceptual_example else None,
+            # NEW: Raw/cleaned SQL debug fields
+            raw_extracted_sql=raw_sql[:500] if raw_sql != source_example_sql else None,
+            cleaning_applied=cleaning_applied,
         )
     
     def _extract_l3_from_blocks(self, blocks: list[ContentBlock], concept_id: str) -> dict:
