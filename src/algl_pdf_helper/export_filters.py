@@ -963,6 +963,47 @@ def _check_default_only_l2_example(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, "L2 unit has concept-appropriate SQL example"
 
 
+def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Block default L2 for core concepts in student_ready mode.
+    
+    Core SQL concepts (select-basic, where-clause, etc.) must have
+    proper textbook examples. This is a HARD BLOCK for student-ready export.
+    
+    Args:
+        unit: The instructional unit to check
+        
+    Returns:
+        Tuple of (passed, message)
+    """
+    # Only check L2 units
+    if unit.target_stage != "L2_hint_plus_example":
+        return True, "Not L2"
+    
+    # Check if this is a core concept
+    if unit.concept_id not in CORE_SQL_CONCEPTS:
+        return True, "Not core concept"
+    
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return True, "Content is not a dict, cannot check example metadata"
+    
+    # Check if using default example
+    metadata = content.get("_metadata", {})
+    example_metadata = content.get("example_metadata", {})
+    
+    is_default = (
+        content.get("used_default_example", False) or
+        metadata.get("used_default_example", False) or
+        example_metadata.get("used_default_example", False) or
+        example_metadata.get("example_source_type") == "default"
+    )
+    
+    if is_default:
+        return False, f"Core concept '{unit.concept_id}' using default L2 example - needs textbook example"
+    
+    return True, f"Core concept '{unit.concept_id}' has proper L2"
+
+
 def _check_synthetic_only_l3(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if L3 explanation is purely synthetic without source grounding.
     
@@ -992,10 +1033,11 @@ def _check_synthetic_only_l3(unit: InstructionalUnit) -> tuple[bool, str]:
 
 
 # Core concepts that require L3 explanation
-CORE_CONCEPTS = {
+CORE_CONCEPTS: set[str] = {
     "select-basic",
     "where-clause", 
     "joins",
+    "joins-intro",
     "join-inner",
     "join-outer",
     "join-left",
@@ -1004,8 +1046,38 @@ CORE_CONCEPTS = {
     "join-self",
     "group-by",
     "aggregation",
+    "aggregate-functions",
     "order-by",
     "limit-offset",
+    "having-clause",
+    "subqueries-intro",
+    "insert-statement",
+    "update-statement",
+    "delete-statement",
+    "null-handling",
+    "pattern-matching",
+}
+
+# Core SQL concepts that require proper textbook examples for L2 units.
+# These are blocked from student-ready export if they use default examples.
+CORE_SQL_CONCEPTS: set[str] = {
+    "select-basic",
+    "where-clause",
+    "order-by",
+    "group-by",
+    "joins-intro",
+    "join-inner",
+    "join-outer",
+    "join-left",
+    "join-right",
+    "aggregate-functions",
+    "having-clause",
+    "subqueries-intro",
+    "insert-statement",
+    "update-statement",
+    "delete-statement",
+    "null-handling",
+    "pattern-matching",
 }
 
 
@@ -2131,6 +2203,14 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         check_fn=_check_default_only_l2_example,
         error_message="L2 unit uses generic default example instead of concept-appropriate SQL"
     ),
+    # Block core concepts using default L2 examples (stricter than above)
+    ExportRule(
+        rule_id="core_concept_default_l2",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Core SQL concept using default L2 example - requires textbook example",
+        check_fn=_check_core_concept_default_l2,
+        error_message="Core concept must have textbook-sourced L2 example, not default/generic"
+    ),
     # Block purely synthetic L3 without source grounding
     ExportRule(
         rule_id="synthetic_only_l3",
@@ -2917,8 +2997,9 @@ __all__ = [
     "PROTOTYPE_FILTERS",
     "STUDENT_READY_FILTERS",
     
-    # Core concepts list
+    # Core concepts lists
     "CORE_CONCEPTS",
+    "CORE_SQL_CONCEPTS",
     
     # Main engine
     "ExportFilterEngine",
@@ -2944,4 +3025,5 @@ __all__ = [
     "_check_offbook_curated_concept",
     "_check_placeholder_practice_links_strict",
     "_check_default_example_no_source_evidence",
+    "_check_core_concept_default_l2",
 ]

@@ -86,6 +86,33 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# CORE SQL CONCEPTS
+# =============================================================================
+
+# Core SQL concepts that require proper textbook examples for L2 units.
+# These concepts are fundamental to SQL learning and should not use default/generic examples.
+CORE_SQL_CONCEPTS: set[str] = {
+    'select-basic',
+    'where-clause',
+    'order-by',
+    'group-by',
+    'joins-intro',
+    'join-inner',
+    'join-outer',
+    'join-left',
+    'join-right',
+    'aggregate-functions',
+    'having-clause',
+    'subqueries-intro',
+    'insert-statement',
+    'update-statement',
+    'delete-statement',
+    'null-handling',
+    'pattern-matching',
+}
+
+
+# =============================================================================
 # PIPELINE STAGE ENUM
 # =============================================================================
 
@@ -1288,6 +1315,53 @@ class InstructionalPipeline:
         
         return keywords
     
+    def _validate_core_concept_l2(self, units: list[InstructionalUnit]) -> list[InstructionalUnit]:
+        """Mark core concepts with default L2 as needing review.
+        
+        Post-generation quality check that flags core SQL concepts using
+        default examples in their L2 units. This helps identify content gaps
+        before export filtering.
+        
+        Args:
+            units: List of generated instructional units
+            
+        Returns:
+            List of units with metadata updated for flagged core concepts
+        """
+        flagged_count = 0
+        
+        for unit in units:
+            if unit.target_stage != 'L2_hint_plus_example':
+                continue
+            
+            if unit.concept_id not in CORE_SQL_CONCEPTS:
+                continue
+            
+            # Check if using default example
+            content = unit.content or {}
+            metadata = content.get('example_metadata', {})
+            is_default = metadata.get('used_default_example', False) or \
+                        metadata.get('example_source_type') == 'default'
+            
+            if is_default:
+                # Mark for review
+                if unit.content is None:
+                    unit.content = {}
+                if '_metadata' not in unit.content:
+                    unit.content['_metadata'] = {}
+                
+                unit.content['_metadata']['review_needed'] = True
+                unit.content['_metadata']['review_reason'] = 'Core concept using default L2 example'
+                unit.content['_metadata']['core_concept_default_l2'] = True
+                
+                flagged_count += 1
+                print(f"[QUALITY GATE] {unit.concept_id}: Default L2 flagged for review")
+        
+        if flagged_count > 0:
+            print(f"[QUALITY GATE] Flagged {flagged_count} core concepts with default L2 examples")
+        
+        return units
+
     def _generate_units(self, concept_blocks: dict[str, list[ContentBlock]] | None = None) -> list[InstructionalUnit]:
         """
         Stage 5: Generate instructional units for all variants with Ollama repair.
@@ -1649,6 +1723,8 @@ class InstructionalPipeline:
         Analyzes L2 units and logs statistics about example source types,
         highlighting when a high percentage of units use default examples.
         
+        Also validates core concepts and warns if any use default examples.
+        
         Args:
             units: List of generated instructional units
         """
@@ -1657,16 +1733,29 @@ class InstructionalPipeline:
             return
         
         default_count = 0
+        core_concept_defaults: list[str] = []
+        
         for unit in l2_units:
             content = unit.content or {}
             metadata = content.get('example_metadata', {})
-            if metadata.get('used_default_example', False):
+            is_default = metadata.get('used_default_example', False)
+            
+            if is_default:
                 default_count += 1
+                # Check if this is a core concept
+                if unit.concept_id in CORE_SQL_CONCEPTS:
+                    core_concept_defaults.append(unit.concept_id)
         
         default_pct = default_count / len(l2_units) * 100
         
         print(f"[Pipeline] Generated {len(l2_units)} L2 units, "
               f"{default_count} using defaults ({default_pct:.1f}%)")
+        
+        # CRITICAL: Warn about core concepts using default L2
+        if core_concept_defaults:
+            print(f"[WARNING] {len(core_concept_defaults)} core concepts using default L2: "
+                  f"{', '.join(sorted(core_concept_defaults))}")
+            print("[WARNING] Consider expanding curated content or fixing extraction")
         
         if default_pct > 30:  # More than 30% defaults
             print("[Pipeline] WARNING: High default L2 rate - consider expanding curated content")
