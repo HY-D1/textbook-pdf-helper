@@ -987,7 +987,7 @@ def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
     if not isinstance(content, dict):
         return True, "Content is not a dict, cannot check example metadata"
     
-    # Check if using default example
+    # Check if using default example (check multiple possible locations)
     metadata = content.get("_metadata", {})
     example_metadata = content.get("example_metadata", {})
     
@@ -995,6 +995,7 @@ def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
         content.get("used_default_example", False) or
         metadata.get("used_default_example", False) or
         example_metadata.get("used_default_example", False) or
+        metadata.get("example_source_type") == "default" or
         example_metadata.get("example_source_type") == "default"
     )
     

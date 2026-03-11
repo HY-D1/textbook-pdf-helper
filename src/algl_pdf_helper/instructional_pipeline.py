@@ -74,6 +74,7 @@ from .export_filters import (
     DEVELOPMENT_FILTERS,
     PROTOTYPE_FILTERS,
     STUDENT_READY_FILTERS,
+    CORE_SQL_CONCEPTS as EXPORT_CORE_SQL_CONCEPTS,
 )
 from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLevel
 
@@ -1361,6 +1362,63 @@ class InstructionalPipeline:
             print(f"[QUALITY GATE] Flagged {flagged_count} core concepts with default L2 examples")
         
         return units
+    
+    def _pre_validate_core_concepts(self, units: list[InstructionalUnit]) -> list[str]:
+        """Pre-flight check: Warn if core concepts will be blocked in student_ready.
+        
+        This check runs before export filtering to give early warning about
+        which core concepts will be blocked when using student_ready mode.
+        
+        Args:
+            units: List of instructional units to validate
+            
+        Returns:
+            List of concept IDs that will be blocked in student_ready mode
+        """
+        blocked: list[str] = []
+        
+        for unit in units:
+            if unit.target_stage != 'L2_hint_plus_example':
+                continue
+            
+            if unit.concept_id not in CORE_SQL_CONCEPTS:
+                continue
+            
+            # Check metadata for default example indicator
+            content = unit.content or {}
+            metadata = content.get('example_metadata', {})
+            content_metadata = content.get('_metadata', {})
+            
+            # Multiple ways to detect default example
+            is_default = (
+                metadata.get('used_default_example', False) or
+                metadata.get('example_source_type') == 'default' or
+                content_metadata.get('used_default_example', False) or
+                content_metadata.get('example_source_type') == 'default' or
+                content.get('used_default_example', False)
+            )
+            
+            if is_default:
+                blocked.append(unit.concept_id)
+        
+        if blocked:
+            unique_blocked = sorted(set(blocked))
+            mode_indicator = "🔴 WILL BE BLOCKED" if self.config.export_mode == "student_ready" else "⚠️  WARNING"
+            print(f"\n{'='*70}")
+            print(f"[EXPORT PRE-CHECK] {mode_indicator} in '{self.config.export_mode}' mode:")
+            print(f"  {len(unique_blocked)} core concept(s) using default L2 examples:")
+            for cid in unique_blocked:
+                print(f"    - {cid}")
+            
+            if self.config.export_mode == "student_ready":
+                print(f"\n  These units will be BLOCKED from student-ready export.")
+                print(f"  Fix extraction or add curated content for these concepts.")
+            else:
+                print(f"\n  These units will be BLOCKED if you use --export-mode student_ready.")
+                print(f"  In prototype mode, they will be included with warnings.")
+            print(f"{'='*70}\n")
+        
+        return blocked
 
     def _generate_units(self, concept_blocks: dict[str, list[ContentBlock]] | None = None) -> list[InstructionalUnit]:
         """
@@ -1577,6 +1635,9 @@ class InstructionalPipeline:
         
         # Log L2 generation statistics
         self._log_l2_generation_stats(self._instructional_units)
+        
+        # Pre-validate core concepts for student_ready export
+        self._pre_validate_core_concepts(self._instructional_units)
         
         # Log repair summary (only if repair was attempted)
         if self._repair_status.get("available"):
