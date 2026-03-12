@@ -125,6 +125,43 @@ BROKEN_SQL_PATTERNS = [
     r"^\s*SELECT\s+\*\s*$",  # "SELECT *" without FROM
 ]
 
+# SQL prose contamination patterns - words that indicate prose description mixed with SQL
+SQL_PROSE_PATTERNS = [
+    r"\bretrieves\b",
+    r"\breturns\b",
+    r"\bshows\b",
+    r"\bdisplays\b",
+    r"\blists\b",
+    r"\bfetches\b",
+    r"\bselects\b",
+    r"\bfor\s+retrieving",
+    r"\bfor\s+selecting",
+    r"\bthis\s+query\b",
+    r"\bthis\s+example\b",
+    r"\bexample\s+of\b",
+    r"\bquery\s+that\b",
+    r"\bused\s+to\b",
+    r"\bwill\s+(return|show|display|retrieve)",
+    r"\bget\s+all\b",
+    r"\bget\s+the\b",
+]
+
+# Core concepts that should not use default L2 examples
+CORE_CONCEPTS = {
+    "select-basic",
+    "where-clause",
+    "order-by",
+    "group-by",
+    "join-operations",
+    "inner-join",
+    "outer-join",
+    "aggregate-functions",
+    "subqueries",
+    "insert-statement",
+    "update-statement",
+    "delete-statement",
+}
+
 # Minimum lengths for substantive content
 MIN_DEFINITION_LENGTH = 50
 MIN_WHY_IT_MATTERS_LENGTH = 40
@@ -2427,6 +2464,488 @@ class LearningQualityGates:
             severity=Severity.INFO,
         )
 
+    # =========================================================================
+    # TEACHING USEFULNESS QUALITY GATES
+    # =========================================================================
+
+    def check_sql_prose_contamination(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Check if SQL examples contain prose contamination.
+        
+        Prose patterns indicate that explanatory text has been mixed with the SQL,
+        making it invalid. Examples: "retrieves", "returns", "shows", "displays",
+        "for retrieving", "this query", "example".
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with BLOCKING severity if prose found in SQL
+        """
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="sql_prose_contamination",
+                passed=True,
+                score=1.0,
+                message="Content format not supported for prose check",
+                severity=Severity.INFO,
+            )
+        
+        # Collect all SQL to check
+        sql_blocks: list[tuple[str, str]] = []  # (field_name, sql)
+        
+        # Check example_sql
+        example_sql = content.get("example_sql", "")
+        if example_sql:
+            sql_blocks.append(("example_sql", example_sql))
+        
+        # Check examples list
+        examples = content.get("examples", [])
+        for i, ex in enumerate(examples):
+            if isinstance(ex, dict):
+                ex_sql = ex.get("sql", "")
+                if ex_sql:
+                    sql_blocks.append((f"examples[{i}]", ex_sql))
+            else:
+                sql_blocks.append((f"examples[{i}]", str(ex)))
+        
+        # Check common_mistakes for fix_sql
+        mistakes = content.get("common_mistakes", [])
+        for i, mistake in enumerate(mistakes):
+            if isinstance(mistake, dict):
+                fix_sql = mistake.get("fix_sql", "")
+                if fix_sql:
+                    sql_blocks.append((f"common_mistakes[{i}].fix_sql", fix_sql))
+        
+        if not sql_blocks:
+            return QualityCheck(
+                check_name="sql_prose_contamination",
+                passed=True,
+                score=1.0,
+                message="No SQL to check for prose contamination",
+                severity=Severity.INFO,
+            )
+        
+        # Check each SQL block for prose contamination
+        contaminated: list[tuple[str, str]] = []  # (field_name, found_pattern)
+        
+        for field_name, sql in sql_blocks:
+            sql_lower = sql.lower()
+            for pattern in SQL_PROSE_PATTERNS:
+                if re.search(pattern, sql_lower):
+                    contaminated.append((field_name, pattern))
+                    break
+        
+        if contaminated:
+            fields = list(set(c[0] for c in contaminated))
+            return QualityCheck(
+                check_name="sql_prose_contamination",
+                passed=False,
+                score=0.0,
+                message=f"Prose contamination found in SQL ({', '.join(fields[:3])}): descriptive text mixed with code",
+                severity=Severity.BLOCKING,
+            )
+        
+        return QualityCheck(
+            check_name="sql_prose_contamination",
+            passed=True,
+            score=1.0,
+            message=f"No prose contamination in {len(sql_blocks)} SQL block(s)",
+            severity=Severity.INFO,
+        )
+
+    def check_concept_example_match(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Check if example matches concept requirements.
+        
+        Validates that SQL examples contain keywords appropriate for the concept:
+        - outer-join should have LEFT/RIGHT/FULL
+        - group-by should have GROUP BY
+        - where-clause should have WHERE with condition
+        - etc.
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with WARNING severity if mismatch detected
+        """
+        concept_id = unit.concept_id
+        content = unit.content or {}
+        
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="concept_example_match",
+                passed=True,
+                score=1.0,
+                message="Content format not supported for concept matching",
+                severity=Severity.INFO,
+            )
+        
+        # Get example SQL
+        example_sql = content.get("example_sql", "")
+        if not example_sql:
+            # Try to get from examples list
+            examples = content.get("examples", [])
+            for ex in examples:
+                if isinstance(ex, dict) and ex.get("sql"):
+                    example_sql = ex.get("sql", "")
+                    break
+        
+        if not example_sql:
+            return QualityCheck(
+                check_name="concept_example_match",
+                passed=True,
+                score=1.0,
+                message="No example SQL to check",
+                severity=Severity.INFO,
+            )
+        
+        sql_upper = example_sql.upper()
+        
+        # Concept-keyword requirements
+        concept_requirements: dict[str, tuple[list[str], str]] = {
+            "outer-join": (["LEFT", "RIGHT", "FULL"], "should use LEFT, RIGHT, or FULL JOIN"),
+            "left-join": (["LEFT"], "should use LEFT JOIN"),
+            "right-join": (["RIGHT"], "should use RIGHT JOIN"),
+            "full-join": (["FULL"], "should use FULL JOIN"),
+            "group-by": (["GROUP", "BY"], "should demonstrate GROUP BY"),
+            "having-clause": (["HAVING"], "should demonstrate HAVING clause"),
+            "where-clause": (["WHERE"], "should demonstrate WHERE clause"),
+            "order-by": (["ORDER", "BY"], "should demonstrate ORDER BY"),
+            "limit-offset": (["LIMIT"], "should demonstrate LIMIT"),
+            "distinct": (["DISTINCT"], "should use DISTINCT"),
+            "pattern-matching": (["LIKE"], "should use LIKE operator"),
+            "null-handling": (["NULL", "IS"], "should demonstrate NULL handling"),
+            "alias": (["AS"], "should demonstrate AS alias"),
+            "aggregate-functions": (["COUNT", "SUM", "AVG", "MIN", "MAX"], "should use aggregate function"),
+            "subqueries-intro": (["SELECT"], "should contain nested SELECT"),
+            "correlated-subquery": (["EXISTS"], "should demonstrate EXISTS"),
+            "union": (["UNION"], "should demonstrate UNION"),
+            "insert-statement": (["INSERT", "INTO"], "should demonstrate INSERT"),
+            "update-statement": (["UPDATE", "SET"], "should demonstrate UPDATE"),
+            "delete-statement": (["DELETE"], "should demonstrate DELETE"),
+        }
+        
+        requirements = concept_requirements.get(concept_id)
+        if not requirements:
+            # No specific requirements for this concept
+            return QualityCheck(
+                check_name="concept_example_match",
+                passed=True,
+                score=1.0,
+                message=f"No specific keyword requirements for concept '{concept_id}'",
+                severity=Severity.INFO,
+            )
+        
+        required_keywords, reason = requirements
+        has_any_keyword = any(kw in sql_upper for kw in required_keywords)
+        
+        if not has_any_keyword:
+            return QualityCheck(
+                check_name="concept_example_match",
+                passed=False,
+                score=0.5,
+                message=f"Example {reason} for '{concept_id}'",
+                severity=Severity.WARNING,
+            )
+        
+        return QualityCheck(
+            check_name="concept_example_match",
+            passed=True,
+            score=1.0,
+            message=f"Example matches concept requirements for '{concept_id}'",
+            severity=Severity.INFO,
+        )
+
+    def check_default_l2_core_concepts(
+        self,
+        unit: InstructionalUnit,
+        strict_mode: bool = False,
+    ) -> QualityCheck:
+        """
+        Check if core concept uses default L2.
+        
+        Core concepts (like joins, aggregates, etc.) should have specific,
+        well-crafted examples, not generic defaults like "SELECT * FROM table".
+        
+        Args:
+            unit: The instructional unit to validate
+            strict_mode: If True, treat as BLOCKING (student_ready mode).
+                        If False, treat as WARNING (prototype mode).
+            
+        Returns:
+            QualityCheck with WARNING in prototype mode, BLOCKING in student_ready mode
+        """
+        if unit.target_stage != "L2_hint_plus_example":
+            return QualityCheck(
+                check_name="default_l2_core_concepts",
+                passed=True,
+                score=1.0,
+                message="Check only applies to L2 units",
+                severity=Severity.INFO,
+            )
+        
+        concept_id = unit.concept_id
+        
+        # Check if this is a core concept
+        is_core = concept_id in CORE_CONCEPTS or any(
+            core in concept_id for core in ["join", "group", "aggregate", "subquery"]
+        )
+        
+        if not is_core:
+            return QualityCheck(
+                check_name="default_l2_core_concepts",
+                passed=True,
+                score=1.0,
+                message=f"'{concept_id}' is not a core concept",
+                severity=Severity.INFO,
+            )
+        
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="default_l2_core_concepts",
+                passed=True,
+                score=1.0,
+                message="Content format not supported",
+                severity=Severity.INFO,
+            )
+        
+        example_sql = content.get("example_sql", "")
+        if not example_sql:
+            return QualityCheck(
+                check_name="default_l2_core_concepts",
+                passed=False,
+                score=0.0,
+                message=f"Core concept '{concept_id}' has no example SQL",
+                severity=Severity.BLOCKING if strict_mode else Severity.WARNING,
+            )
+        
+        # Check if using default example
+        is_default = self._is_using_default_example(example_sql, concept_id)
+        
+        if is_default:
+            severity = Severity.BLOCKING if strict_mode else Severity.WARNING
+            return QualityCheck(
+                check_name="default_l2_core_concepts",
+                passed=False,
+                score=0.3,
+                message=f"Core concept '{concept_id}' uses default/generic example - needs specific example",
+                severity=severity,
+            )
+        
+        return QualityCheck(
+            check_name="default_l2_core_concepts",
+            passed=True,
+            score=1.0,
+            message=f"Core concept '{concept_id}' has specific example",
+            severity=Severity.INFO,
+        )
+
+    def check_heading_like_why_it_matters(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Check why_it_matters is not a heading fragment.
+        
+        Rejects patterns like:
+        - "Chapter X", "Section Y"
+        - "Understanding Z"
+        - "Working with..."
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with WARNING if heading-like
+        """
+        if unit.target_stage != "L3_explanation":
+            return QualityCheck(
+                check_name="heading_like_why_it_matters",
+                passed=True,
+                score=1.0,
+                message="Check only applies to L3 units",
+                severity=Severity.INFO,
+            )
+        
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="heading_like_why_it_matters",
+                passed=True,
+                score=1.0,
+                message="Content format not supported",
+                severity=Severity.INFO,
+            )
+        
+        why_it_matters = content.get("why_it_matters", "")
+        if not why_it_matters:
+            return QualityCheck(
+                check_name="heading_like_why_it_matters",
+                passed=True,
+                score=1.0,
+                message="No why_it_matters to check",
+                severity=Severity.INFO,
+            )
+        
+        text_stripped = why_it_matters.strip()
+        text_lower = text_stripped.lower()
+        
+        # Heading patterns to reject
+        heading_patterns = [
+            (r"^(Chapter|Section|Part|Unit|Module|Lesson)\s+\d+", "chapter/section title"),
+            (r"^\d+\.\d+\s+", "numbered section"),
+            (r"^(Understanding|Working with|Introduction to|Overview of)", "instructional heading"),
+            (r"^(In this chapter|Learning objectives|Summary|Exercises)", "section marker"),
+            (r"^[A-Z][a-z]+ing\s+[A-Z]", "gerund phrase heading"),  # "Creating Tables"
+            (r"^The\s+[A-Z][a-z]+\s+(Clause|Operator|Function)", "article + noun heading"),
+        ]
+        
+        for pattern, pattern_name in heading_patterns:
+            if re.search(pattern, text_stripped, re.IGNORECASE):
+                return QualityCheck(
+                    check_name="heading_like_why_it_matters",
+                    passed=False,
+                    score=0.3,
+                    message=f"why_it_matters appears to be a {pattern_name}: '{text_stripped[:50]}...'",
+                    severity=Severity.WARNING,
+                )
+        
+        # Check for all caps (likely a heading)
+        if text_stripped.isupper() and len(text_stripped) > 10:
+            return QualityCheck(
+                check_name="heading_like_why_it_matters",
+                passed=False,
+                score=0.2,
+                message="why_it_matters is all uppercase - appears to be a heading",
+                severity=Severity.WARNING,
+            )
+        
+        # Check for title case without sentence structure
+        words = text_stripped.split()
+        if 2 <= len(words) < 8:
+            small_words = ['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'with', 'by']
+            content_words = [w for w in words if w.isalpha()]
+            if content_words:
+                capitalized = sum(1 for w in content_words if w[0].isupper())
+                if capitalized / len(content_words) > 0.8 and not any(w.lower() in small_words for w in words):
+                    return QualityCheck(
+                        check_name="heading_like_why_it_matters",
+                        passed=False,
+                        score=0.4,
+                        message=f"why_it_matters appears to be title-case heading: '{text_stripped[:50]}...'",
+                        severity=Severity.WARNING,
+                    )
+        
+        return QualityCheck(
+            check_name="heading_like_why_it_matters",
+            passed=True,
+            score=1.0,
+            message="why_it_matters does not appear to be a heading",
+            severity=Severity.INFO,
+        )
+
+    def check_broken_l3_example(self, unit: InstructionalUnit) -> QualityCheck:
+        """
+        Check L3 examples are not broken/too short.
+        
+        Requirements:
+        - Example must be > 30 characters
+        - Must have SQL keywords (SELECT, INSERT, etc.)
+        - Must have FROM clause (for SELECT queries)
+        
+        Args:
+            unit: The instructional unit to validate
+            
+        Returns:
+            QualityCheck with BLOCKING severity if example is broken
+        """
+        if unit.target_stage != "L3_explanation":
+            return QualityCheck(
+                check_name="broken_l3_example",
+                passed=True,
+                score=1.0,
+                message="Check only applies to L3 units",
+                severity=Severity.INFO,
+            )
+        
+        content = unit.content or {}
+        if not isinstance(content, dict):
+            return QualityCheck(
+                check_name="broken_l3_example",
+                passed=True,
+                score=1.0,
+                message="Content format not supported",
+                severity=Severity.INFO,
+            )
+        
+        # Get examples list
+        examples = content.get("examples", [])
+        if not examples:
+            return QualityCheck(
+                check_name="broken_l3_example",
+                passed=True,
+                score=1.0,
+                message="No examples to check",
+                severity=Severity.INFO,
+            )
+        
+        broken_examples: list[tuple[int, str]] = []  # (index, reason)
+        
+        for i, ex in enumerate(examples):
+            if isinstance(ex, dict):
+                sql = ex.get("sql", "")
+            else:
+                sql = str(ex)
+            
+            if not sql:
+                broken_examples.append((i, "empty"))
+                continue
+            
+            sql_stripped = sql.strip()
+            sql_upper = sql_stripped.upper()
+            
+            # Check length
+            if len(sql_stripped) <= 30:
+                broken_examples.append((i, f"too short ({len(sql_stripped)} chars)"))
+                continue
+            
+            # Check for SQL keywords
+            sql_keywords = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP']
+            has_keyword = any(kw in sql_upper for kw in sql_keywords)
+            if not has_keyword:
+                broken_examples.append((i, "missing SQL keywords"))
+                continue
+            
+            # For SELECT queries, check for FROM
+            if 'SELECT' in sql_upper and 'FROM' not in sql_upper:
+                broken_examples.append((i, "SELECT without FROM"))
+                continue
+            
+            # Check for broken patterns
+            for pattern in BROKEN_SQL_PATTERNS:
+                if re.search(pattern, sql_upper):
+                    broken_examples.append((i, "matches broken SQL pattern"))
+                    break
+        
+        if broken_examples:
+            reasons_str = "; ".join(f"[{idx}] {reason}" for idx, reason in broken_examples[:3])
+            return QualityCheck(
+                check_name="broken_l3_example",
+                passed=False,
+                score=0.0,
+                message=f"Broken L3 examples: {reasons_str}",
+                severity=Severity.BLOCKING,
+            )
+        
+        return QualityCheck(
+            check_name="broken_l3_example",
+            passed=True,
+            score=1.0,
+            message=f"All {len(examples)} L3 example(s) are valid",
+            severity=Severity.INFO,
+        )
+
 
 # =============================================================================
 # LIBRARY-LEVEL VALIDATION
@@ -2828,6 +3347,12 @@ class QualityReport:
             self.gates.validate_no_placeholders(unit),
             self.gates.validate_no_broken_sql(unit),
             self.gates.validate_learner_ready(unit),
+            # Teaching usefulness checks
+            self.gates.check_sql_prose_contamination(unit),
+            self.gates.check_concept_example_match(unit),
+            self.gates.check_default_l2_core_concepts(unit),
+            self.gates.check_heading_like_why_it_matters(unit),
+            self.gates.check_broken_l3_example(unit),
         ]
         
         failed_checks = [
@@ -2918,15 +3443,18 @@ class QualityReport:
         }
         example_quality = {
             "sql_executable", "sql_semantic", "example_difficulty", "no_broken_sql",
+            "sql_prose_contamination", "concept_example_match", "broken_l3_example",
         }
         instruction_quality = {
             "explanation_quality", "practice_included", "takeaway_present",
+            "heading_like_why_it_matters",
         }
         adaptive_readiness = {
             "prerequisite_tags", "error_subtype_tags", "stage_variants", "reinforcement_present",
         }
         export_integrity = {
             "no_placeholders", "learner_ready", "practice_links_real",
+            "default_l2_core_concepts",
         }
         
         if check_name in content_validity:
@@ -3001,6 +3529,26 @@ class QualityReport:
             elif check_name == "prerequisite_tags":
                 recommendations.append(
                     f"[{count} units] Add prerequisite concept tags for adaptive pathing"
+                )
+            elif check_name == "sql_prose_contamination":
+                recommendations.append(
+                    f"[{count} units] Clean SQL examples - remove prose descriptions like 'retrieves', 'returns'"
+                )
+            elif check_name == "concept_example_match":
+                recommendations.append(
+                    f"[{count} units] Fix concept-example mismatches - ensure examples demonstrate the concept"
+                )
+            elif check_name == "default_l2_core_concepts":
+                recommendations.append(
+                    f"[{count} units] Replace default examples with specific ones for core concepts"
+                )
+            elif check_name == "heading_like_why_it_matters":
+                recommendations.append(
+                    f"[{count} units] Rewrite 'why it matters' as substantive explanation, not heading"
+                )
+            elif check_name == "broken_l3_example":
+                recommendations.append(
+                    f"[{count} units] Fix broken L3 examples - ensure valid SQL with proper structure"
                 )
         
         # Library-level recommendations
@@ -3078,6 +3626,10 @@ def validate_unit_library(
     default_example_units = []
     heading_definition_units = []
     missing_l3_concepts = []
+    prose_contaminated_units = []
+    concept_mismatch_units = []
+    heading_why_units = []
+    broken_l3_units = []
     
     for unit in units:
         concept_id = unit.concept_id
@@ -3114,11 +3666,57 @@ def validate_unit_library(
                             "issue": "heading_definition",
                             "reason": reason,
                         })
+                
+                # Check for heading-like why_it_matters
+                why_it_matters = content.get("why_it_matters", "")
+                if why_it_matters:
+                    check_result = gates.check_heading_like_why_it_matters(unit)
+                    if not check_result.passed:
+                        heading_why_units.append({
+                            "concept_id": concept_id,
+                            "unit_id": unit.unit_id,
+                            "issue": "heading_why_it_matters",
+                            "message": check_result.message,
+                        })
+                
+                # Check for broken L3 examples
+                check_result = gates.check_broken_l3_example(unit)
+                if not check_result.passed:
+                    broken_l3_units.append({
+                        "concept_id": concept_id,
+                        "unit_id": unit.unit_id,
+                        "issue": "broken_l3_example",
+                        "message": check_result.message,
+                    })
+            
+            # Check for prose contamination (all stages)
+            check_result = gates.check_sql_prose_contamination(unit)
+            if not check_result.passed:
+                prose_contaminated_units.append({
+                    "concept_id": concept_id,
+                    "unit_id": unit.unit_id,
+                    "issue": "sql_prose_contamination",
+                    "message": check_result.message,
+                })
+            
+            # Check for concept-example match (all stages)
+            check_result = gates.check_concept_example_match(unit)
+            if not check_result.passed:
+                concept_mismatch_units.append({
+                    "concept_id": concept_id,
+                    "unit_id": unit.unit_id,
+                    "issue": "concept_example_mismatch",
+                    "message": check_result.message,
+                })
     
     # Calculate issue counts
     issue_counts["broken_sql"] = len(broken_sql_units)
     issue_counts["default_examples"] = len(default_example_units)
     issue_counts["heading_definitions"] = len(heading_definition_units)
+    issue_counts["sql_prose_contamination"] = len(prose_contaminated_units)
+    issue_counts["concept_example_mismatch"] = len(concept_mismatch_units)
+    issue_counts["heading_why_it_matters"] = len(heading_why_units)
+    issue_counts["broken_l3_examples"] = len(broken_l3_units)
     
     # Build problematic concepts dict
     if broken_sql_units:
@@ -3127,6 +3725,14 @@ def validate_unit_library(
         problematic_concepts["default_examples"] = [u["concept_id"] for u in default_example_units]
     if heading_definition_units:
         problematic_concepts["heading_definitions"] = [u["concept_id"] for u in heading_definition_units]
+    if prose_contaminated_units:
+        problematic_concepts["sql_prose_contamination"] = [u["concept_id"] for u in prose_contaminated_units]
+    if concept_mismatch_units:
+        problematic_concepts["concept_example_mismatch"] = [u["concept_id"] for u in concept_mismatch_units]
+    if heading_why_units:
+        problematic_concepts["heading_why_it_matters"] = [u["concept_id"] for u in heading_why_units]
+    if broken_l3_units:
+        problematic_concepts["broken_l3_examples"] = [u["concept_id"] for u in broken_l3_units]
     
     # Check for missing L3 for core concepts
     l3_check = gates.validate_l3_for_core_concepts(unit_library)
@@ -3212,6 +3818,10 @@ def validate_unit_library(
             "broken_sql": broken_sql_units,
             "default_examples": default_example_units,
             "heading_definitions": heading_definition_units,
+            "sql_prose_contamination": prose_contaminated_units,
+            "concept_example_mismatch": concept_mismatch_units,
+            "heading_why_it_matters": heading_why_units,
+            "broken_l3_examples": broken_l3_units,
         },
     }
     

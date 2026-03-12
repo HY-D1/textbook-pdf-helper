@@ -585,12 +585,16 @@ def _check_unresolved_practice_links(unit: InstructionalUnit) -> tuple[bool, str
 
 
 def _check_broken_sql_example(unit: InstructionalUnit) -> tuple[bool, str]:
-    """Block units with broken SQL like 'SELECT;' (verb-only SQL).
+    """Block units with broken SQL like 'SELECT;' or 'S...' (verb-only or fragment SQL).
     
     Applies to all stages that contain SQL examples (L2_hint_plus_example, L3_explanation).
     Blocks SQL that contains:
     - "SELECT;", "INSERT;", "UPDATE;", "DELETE;" (verb-only statements)
     - Any SQL statement that is just the verb followed by semicolon
+    - Single-character or fragment SQL like "S", "SE", "SEL"
+    - SQL without proper structure (missing FROM after SELECT)
+    - SQL shorter than 30 characters
+    - SQL without SQL keywords
     """
     # Check applicable stages
     applicable_stages = {"L2_hint_plus_example", "L3_explanation"}
@@ -627,19 +631,49 @@ def _check_broken_sql_example(unit: InstructionalUnit) -> tuple[bool, str]:
         r"^\s*INSERT\s*;\s*$",
         r"^\s*UPDATE\s*;\s*$",
         r"^\s*DELETE\s*;\s*$",
+        r"^\s*CREATE\s*;\s*$",
+        r"^\s*ALTER\s*;\s*$",
+        r"^\s*DROP\s*;\s*$",
     ]
+    
+    # Pattern for incomplete extraction (fragments like "S", "SE", "SEL", "SELE", "SELEC")
+    fragment_pattern = re.compile(r'^(S|SE|SEL|SELE|SELEC|SELECT)\s*;?\s*$', re.IGNORECASE)
+    
+    # Required SQL keywords
+    sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "WITH"]
     
     for i, sql in enumerate(sql_statements):
         if not sql or not isinstance(sql, str):
             continue
-            
+        
+        sql_stripped = sql.strip()
+        sql_upper = sql_stripped.upper()
+        
+        # Check for broken/verb-only SQL patterns
         for pattern in broken_patterns:
-            if re.match(pattern, sql, re.IGNORECASE):
+            if re.match(pattern, sql_stripped, re.IGNORECASE):
                 return False, f"Broken SQL (verb-only): {sql[:40]}..."
         
-        # Check for too-short examples
-        if len(sql.strip()) < 25:
+        # Check for incomplete extraction fragments (e.g., "S", "SE", "SEL")
+        if fragment_pattern.match(sql_stripped):
+            return False, f"Broken SQL (incomplete extraction): {sql[:40]}..."
+        
+        # Check for too-short examples (30 chars minimum for meaningful SQL)
+        if len(sql_stripped) < 30:
             return False, f"SQL example too short to be useful: {sql[:40]}..."
+        
+        # Check for at least 3 words (minimum structure)
+        if len(sql_stripped.split()) < 3:
+            return False, f"SQL example has too few tokens: {sql[:40]}..."
+        
+        # Check for SQL keyword presence
+        has_keyword = any(kw in sql_upper for kw in sql_keywords)
+        if not has_keyword:
+            return False, f"SQL example missing keywords: {sql[:40]}..."
+        
+        # Check for SELECT without FROM (broken structure)
+        if sql_upper.startswith('SELECT') and 'FROM' not in sql_upper:
+            return False, f"SQL example missing FROM clause: {sql[:40]}..."
     
     return True, "All SQL examples look valid"
 
@@ -963,11 +997,77 @@ def _check_default_only_l2_example(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, "L2 unit has concept-appropriate SQL example"
 
 
+def _detect_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Detect if L2 unit uses default-backed example.
+    
+    Checks multiple indicators of default example usage:
+    - Metadata flags (used_default_example, l2_source)
+    - Content fields indicating default source
+    - Lack of evidence spans for core concepts
+    - Specific default patterns in example_sql
+    
+    Args:
+        unit: The instructional unit to check
+        
+    Returns:
+        Tuple of (is_default, reason_message)
+    """
+    content = unit.content or {}
+    if not isinstance(content, dict):
+        return False, "Cannot check - content not dict"
+    
+    metadata = content.get("_metadata", {})
+    example_metadata = content.get("example_metadata", {})
+    
+    # Check 1: Direct flags in content
+    if content.get("used_default_example", False):
+        return True, "used_default_example=True in content"
+    
+    # Check 2: Direct flags in metadata
+    if metadata.get("used_default_example", False):
+        return True, "used_default_example=True in _metadata"
+    
+    # Check 3: l2_source indicator
+    if metadata.get("l2_source") == "default":
+        return True, "l2_source='default' in _metadata"
+    
+    # Check 4: example_source_type indicators
+    if metadata.get("example_source_type") == "default":
+        return True, "example_source_type='default' in _metadata"
+    if example_metadata.get("example_source_type") == "default":
+        return True, "example_source_type='default' in example_metadata"
+    
+    # Check 5: Evidence-based detection for core concepts
+    # If no evidence spans or very low grounding, likely default
+    if not unit.evidence_spans or len(unit.evidence_spans) == 0:
+        if not unit.source_pages or len(unit.source_pages) == 0:
+            return True, "No evidence spans or source pages - likely default example"
+    
+    # Check 6: Check example_sql for known default patterns
+    example_sql = content.get("example_sql", "")
+    if example_sql:
+        default_patterns = [
+            "SELECT * FROM table",
+            "SELECT column FROM table",
+            "INSERT INTO table",
+            "UPDATE table SET",
+            "DELETE FROM table",
+        ]
+        for pattern in default_patterns:
+            if pattern in example_sql and "customers" not in example_sql.lower():
+                # If it matches a generic pattern AND doesn't have realistic table names
+                return True, f"Example matches default pattern: {pattern}"
+    
+    return False, "Example appears to be properly sourced"
+
+
 def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
     """Block default L2 for core concepts in student_ready mode.
     
     Core SQL concepts (select-basic, where-clause, etc.) must have
-    proper textbook examples. This is a HARD BLOCK for student-ready export.
+    proper textbook examples, not default/generic ones. This is a 
+    HARD BLOCK for student-ready export, and SOFT BLOCK (warn) for 
+    prototype mode.
     
     Args:
         unit: The instructional unit to check
@@ -977,32 +1077,19 @@ def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
     """
     # Only check L2 units
     if unit.target_stage != "L2_hint_plus_example":
-        return True, "Not L2"
+        return True, "Not L2 - check skipped"
     
     # Check if this is a core concept
     if unit.concept_id not in CORE_SQL_CONCEPTS:
-        return True, "Not core concept"
+        return True, f"Not core concept ('{unit.concept_id}') - check skipped"
     
-    content = unit.content or {}
-    if not isinstance(content, dict):
-        return True, "Content is not a dict, cannot check example metadata"
-    
-    # Check if using default example (check multiple possible locations)
-    metadata = content.get("_metadata", {})
-    example_metadata = content.get("example_metadata", {})
-    
-    is_default = (
-        content.get("used_default_example", False) or
-        metadata.get("used_default_example", False) or
-        example_metadata.get("used_default_example", False) or
-        metadata.get("example_source_type") == "default" or
-        example_metadata.get("example_source_type") == "default"
-    )
+    # Detect if using default example
+    is_default, reason = _detect_default_l2(unit)
     
     if is_default:
-        return False, f"Core concept '{unit.concept_id}' using default L2 example - needs textbook example"
+        return False, f"Core concept '{unit.concept_id}' using default L2 example - {reason}"
     
-    return True, f"Core concept '{unit.concept_id}' has proper L2"
+    return True, f"Core concept '{unit.concept_id}' has proper textbook-sourced L2 example"
 
 
 def _check_synthetic_only_l3(unit: InstructionalUnit) -> tuple[bool, str]:
@@ -1062,23 +1149,22 @@ CORE_CONCEPTS: set[str] = {
 # Core SQL concepts that require proper textbook examples for L2 units.
 # These are blocked from student-ready export if they use default examples.
 CORE_SQL_CONCEPTS: set[str] = {
-    "select-basic",
-    "where-clause",
-    "order-by",
-    "group-by",
-    "joins-intro",
-    "join-inner",
-    "join-outer",
-    "join-left",
-    "join-right",
-    "aggregate-functions",
-    "having-clause",
-    "subqueries-intro",
-    "insert-statement",
-    "update-statement",
-    "delete-statement",
-    "null-handling",
-    "pattern-matching",
+    'select-basic',
+    'where-clause',
+    'joins-intro',
+    'inner-join',
+    'outer-join',
+    'group-by',
+    'order-by',
+    'aggregate-functions',
+    'subqueries-intro',
+    'null-handling',
+    'pattern-matching',
+    'insert-statement',
+    'update-statement',
+    'delete-statement',
+    'self-join',
+    'having-clause',
 }
 
 
@@ -3027,4 +3113,5 @@ __all__ = [
     "_check_placeholder_practice_links_strict",
     "_check_default_example_no_source_evidence",
     "_check_core_concept_default_l2",
+    "_detect_default_l2",
 ]
