@@ -74,7 +74,7 @@ algl-pdf process ./textbook.pdf \
   --llm-provider kimi \
   --llm-model kimi-k2-5 \
   --use-ollama-repair \
-  --ollama-model qwen2.5:3b \
+  --ollama-model qwen3.5:9b-q8_0 \
   --skip-reinforcement \
   --skip-misconceptions \
   --min-quality-score 0.8
@@ -87,7 +87,7 @@ Available options:
 - `--llm-provider` - LLM provider: `kimi`, `openai`, or `ollama`
 - `--llm-model` - LLM model to use (default: `kimi-k2-5`)
 - `--use-ollama-repair/--no-ollama-repair` - Use Ollama to repair weak L3 content (default: enabled)
-- `--ollama-model` - Ollama model for repair (default: `qwen2.5:3b`)
+- `--ollama-model` - Ollama model for repair (default: `qwen3.5:9b-q8_0`)
 - `--skip-reinforcement` - Skip generating reinforcement items
 - `--skip-misconceptions` - Skip generating misconception units
 - `--validate-sql/--no-validate-sql` - Validate SQL examples (default: enabled)

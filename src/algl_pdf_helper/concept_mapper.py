@@ -41,7 +41,7 @@ def _match_pdf_to_textbook(pdf_path: Path, textbooks: dict[str, Any]) -> str | N
     
     def extract_keywords(text: str) -> set[str]:
         """Extract meaningful keywords from text."""
-        words = set(re.split(r'[-_\.\s\(\),]+', text.lower()))
+        words = set(re.split(r'[-_\.\(\),]+', text.lower()))
         return {w for w in words if len(w) > 2 and w not in stop_words}
     
     def partial_match(word1: str, word2: str) -> bool:
@@ -163,7 +163,7 @@ def load_concepts_config(config_path: Path, pdf_path: Path | None = None) -> dic
     
     # Validate we have concepts
     if "concepts" not in config:
-        raise ValueError("Invalid concepts config: must have 'concepts' or 'textbooks' key")
+        raise ValueError("must have 'concepts' or 'textbooks' key")
     
     return config
 
@@ -307,8 +307,11 @@ def find_concepts_config(input_path: Path) -> Path | None:
     
     Looks for concepts.yaml in:
     1. Same directory as input file
-    2. Parent directory of input directory
-    3. Current working directory
+    2. Input directory itself (if input is a directory)
+    3. Parent directory of input directory
+    
+    Does NOT fall back to current working directory to ensure
+    deterministic, input-scoped config discovery.
     
     Args:
         input_path: Path to PDF file or directory
@@ -333,9 +336,5 @@ def find_concepts_config(input_path: Path) -> Path | None:
     if parent_config.exists():
         return parent_config
     
-    # Look in current working directory
-    cwd_config = Path("concepts.yaml")
-    if cwd_config.exists():
-        return cwd_config
-    
+    # Do NOT fall back to CWD - return None for deterministic behavior
     return None
