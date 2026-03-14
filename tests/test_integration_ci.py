@@ -1991,5 +1991,177 @@ concepts:
                 )
 
 
+# =============================================================================
+# ADAPTIVE HANDOFF EXPORT TESTS
+# =============================================================================
+
+class TestAdaptiveHandoffExport:
+    """Test the index + export workflow for adaptive app integration."""
+    
+    def test_index_export_produces_required_files(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Verify the textbook-static export produces all files required by the adaptive app.
+        
+        This test verifies the helper→adaptive handoff contract:
+        - concept-map.json exists and has namespaced concept IDs
+        - textbook-manifest.json exists with schema v1
+        - chunks-metadata.json exists
+        - concepts/{docId}/{conceptId}.md files exist
+        """
+        import subprocess
+        import json
+        
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+        
+        # Step 1: Index the PDF
+        index_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        assert index_result.returncode == 0, f"Index failed: {index_result.stderr}"
+        
+        # Verify index produced required files
+        assert (index_output / "concept-manifest.json").exists(), "concept-manifest.json not created"
+        assert (index_output / "chunks.json").exists(), "chunks.json not created"
+        assert (index_output / "index.json").exists(), "index.json not created"
+        
+        # Step 2: Export to textbook-static format
+        export_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        
+        assert export_result.returncode == 0, f"Export failed: {export_result.stderr}"
+        
+        # Step 3: Verify all required adaptive app files exist
+        
+        # Required: concept-map.json
+        concept_map_file = export_output / "concept-map.json"
+        assert concept_map_file.exists(), "concept-map.json not created"
+        
+        concept_map = json.loads(concept_map_file.read_text())
+        assert "concepts" in concept_map, "concept-map.json missing 'concepts' key"
+        assert "version" in concept_map, "concept-map.json missing 'version' key"
+        
+        # Required: textbook-manifest.json
+        textbook_manifest_file = export_output / "textbook-manifest.json"
+        assert textbook_manifest_file.exists(), "textbook-manifest.json not created"
+        
+        textbook_manifest = json.loads(textbook_manifest_file.read_text())
+        assert "schemaVersion" in textbook_manifest, "textbook-manifest.json missing 'schemaVersion'"
+        assert textbook_manifest["schemaVersion"] == "1.0.0", "textbook-manifest.json has wrong schema version"
+        
+        # Required: chunks-metadata.json
+        chunks_meta_file = export_output / "chunks-metadata.json"
+        assert chunks_meta_file.exists(), "chunks-metadata.json not created"
+        
+        chunks_metadata = json.loads(chunks_meta_file.read_text())
+        assert isinstance(chunks_metadata, dict), "chunks-metadata.json should be a dict"
+        
+        # Required: concepts/{docId}/{conceptId}.md files
+        concepts_dir = export_output / "concepts"
+        assert concepts_dir.exists(), "concepts/ directory not created"
+        
+        # Find docId subdirectory
+        doc_dirs = [d for d in concepts_dir.iterdir() if d.is_dir()]
+        assert len(doc_dirs) >= 1, f"Expected at least one doc directory in concepts/, found {len(doc_dirs)}"
+        
+        doc_concepts_dir = doc_dirs[0]
+        
+        # Verify markdown files exist for concepts in concept-map
+        concept_ids = list(concept_map.get("concepts", {}).keys())
+        assert len(concept_ids) > 0, "concept-map.json has no concepts"
+        
+        for concept_id in concept_ids:
+            # Extract just the concept ID (after the / if namespaced)
+            if "/" in concept_id:
+                _, bare_id = concept_id.rsplit("/", 1)
+            else:
+                bare_id = concept_id
+            
+            md_file = doc_concepts_dir / f"{bare_id}.md"
+            assert md_file.exists(), f"Concept markdown not found: {md_file}"
+            
+            # Verify markdown has content
+            content = md_file.read_text()
+            assert len(content) > 0, f"Concept markdown is empty: {md_file}"
+            assert "---" in content, f"Concept markdown missing frontmatter: {md_file}"
+        
+        # Verify README.md exists
+        readme_file = doc_concepts_dir / "README.md"
+        assert readme_file.exists(), "README.md not created in concepts directory"
+    
+    def test_concept_ids_are_namespaced(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Verify concept IDs in concept-map.json are namespaced with docId."""
+        import subprocess
+        import json
+        
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+        
+        # Index and export
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+        
+        # Load concept map
+        concept_map_file = export_output / "concept-map.json"
+        if not concept_map_file.exists():
+            pytest.skip("concept-map.json not created")
+        
+        concept_map = json.loads(concept_map_file.read_text())
+        concepts = concept_map.get("concepts", {})
+        
+        if not concepts:
+            pytest.skip("No concepts in concept-map.json")
+        
+        # All concept IDs should be namespaced (contain /)
+        for concept_id in concepts.keys():
+            assert "/" in concept_id, f"Concept ID '{concept_id}' is not namespaced (expected 'docId/conceptId')"
+        
+        # All relatedConcepts should also be namespaced
+        for concept_id, concept_data in concepts.items():
+            related = concept_data.get("relatedConcepts", [])
+            for rel_id in related:
+                assert "/" in rel_id, f"Related concept '{rel_id}' referenced from '{concept_id}' is not namespaced"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

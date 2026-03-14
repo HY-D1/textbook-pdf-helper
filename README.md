@@ -31,29 +31,59 @@ Available extras:
 - `ocr` - OCR support for scanned PDFs (requires tesseract)
 - `dev` - Development dependencies (pytest, etc.)
 
-### Process a PDF
+---
+
+## 📚 Workflows
+
+This tool supports two distinct output workflows:
+
+### Workflow 1: Unit Library (Pedagogical Content)
+
+Generate instructional units with L1-L4 hint levels, explanations, and worked examples.
 
 ```bash
+# Process PDF into unit library
 algl-pdf process ./textbook.pdf --output-dir ./output
-```
 
-### Validate Output
-
-```bash
+# Validate output
 algl-pdf validate ./output/
-```
 
-### Inspect a Concept
-
-```bash
+# Inspect a specific concept
 algl-pdf inspect ./output/ --concept select-basic
 ```
+
+**Output files:**
+- `instructional_units.jsonl` - Generated instructional units (L1-L4)
+- `source_spans.jsonl` - Evidence grounding spans
+- `concept_graph.json` - Prerequisite relationships
+- `quality_report.json` - Content quality analysis
+- `export_manifest.json` - Provenance and statistics
+
+### Workflow 2: Adaptive App Handoff (Textbook-Static Export)
+
+Export PDF content for consumption by the adaptive web application.
+
+```bash
+# Step 1: Index the PDF
+algl-pdf index ./textbook.pdf \
+  --output-dir ./index_output \
+  --concepts-config ./concepts.yaml
+
+# Step 2: Export to textbook-static format
+algl-pdf export ./index_output --output-dir ./textbook_static
+```
+
+**Output files:**
+- `concept-map.json` - Concept index with namespaced IDs (`docId/conceptId`)
+- `textbook-manifest.json` - Textbook manifest (schema v1)
+- `chunks-metadata.json` - Chunk metadata per document
+- `concepts/{docId}/{conceptId}.md` - Individual concept markdown files
 
 ---
 
 ## 🔧 CLI Commands
 
-### Core Commands
+### Unit Library Commands
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -63,6 +93,13 @@ algl-pdf inspect ./output/ --concept select-basic
 | `filter` | Re-run export filters on existing library | `algl-pdf filter ./out/ --level strict` |
 | `diagnose` | Analyze unit library for content gaps | `algl-pdf diagnose ./output/` |
 | `export-legacy` | Convert old concept-map.json to new format | `algl-pdf export-legacy ./old.json -o ./new/` |
+
+### Textbook-Static Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `index` | Build PDF index to textbook-static format | `algl-pdf index ./book.pdf -o ./out` |
+| `export` | Export indexed PDF to SQL-Adapt format | `algl-pdf export ./index_out -o ./export_out` |
 
 ### Process Command Options
 
@@ -92,6 +129,24 @@ Available options:
 - `--skip-misconceptions` - Skip generating misconception units
 - `--validate-sql/--no-validate-sql` - Validate SQL examples (default: enabled)
 - `--min-quality-score` - Minimum quality score threshold (0.0-1.0, default: 0.8)
+
+### Index Command Options
+
+```bash
+algl-pdf index ./textbook.pdf \
+  --output-dir ./output \
+  --concepts-config ./concepts.yaml \
+  --chunk-words 180 \
+  --overlap-words 30
+```
+
+Available options:
+- `--output-dir, -o` - Output directory (required)
+- `--concepts-config` - Path to concepts.yaml config file
+- `--chunk-words` - Words per chunk (default: 180)
+- `--overlap-words` - Overlapping words between chunks (default: 30)
+- `--use-aliases` - Use stable doc aliases instead of SHA256 doc IDs
+- `--ocr` - Force OCR for scanned PDFs
 
 ### Document Processing Commands
 
@@ -143,7 +198,9 @@ algl-pdf serve --host 127.0.0.1 --port 7345
 
 ## 📁 Output Files
 
-The pipeline produces a unit library with these files:
+### Unit Library Output
+
+The `process` command produces a unit library with these files:
 
 - `concept_ontology.json` - Canonical SQL concept definitions
 - `concept_graph.json` - Prerequisite graph for mapped concepts
@@ -153,6 +210,15 @@ The pipeline produces a unit library with these files:
 - `reinforcement_bank.jsonl` - Spaced repetition items
 - `quality_report.json` - Content quality analysis
 - `export_manifest.json` - Provenance and statistics
+
+### Textbook-Static Output
+
+The `index` + `export` commands produce output for the adaptive app:
+
+- `concept-map.json` - Concept index with namespaced IDs (`docId/conceptId`)
+- `textbook-manifest.json` - Textbook manifest (schema v1)
+- `chunks-metadata.json` - Chunk metadata per document
+- `concepts/{docId}/{conceptId}.md` - Individual concept markdown files
 
 ---
 
@@ -259,17 +325,19 @@ make evaluate
 
 ### SQL-Adapt Integration
 
-```typescript
-// Load concept map with prerequisites
-const conceptMap = await fetch('/textbook-static/concept-map.json').then(r => r.json());
-const prereqDAG = await fetch('/textbook-static/prereq-dag.json').then(r => r.json());
+The textbook-static export produces files consumable by the adaptive web application:
 
-// Check prerequisites before showing hint
+```typescript
+// Load concept map
+const conceptMap = await fetch('/textbook-static/concept-map.json').then(r => r.json());
+
+// Load individual concept content
+const conceptContent = await fetch(`/textbook-static/concepts/${docId}/${conceptId}.md`).then(r => r.text());
+
+// Check prerequisites before showing hint (from concept-graph.json in unit library)
 function checkPrerequisites(conceptId: string): string[] {
-  const dag = prereqDAG;
-  return dag.edges
-    .filter(e => e.to === conceptId)
-    .map(e => e.from);
+  const concept = conceptMap.concepts[conceptId];
+  return concept?.relatedConcepts || [];
 }
 
 // Log interaction event
@@ -279,6 +347,8 @@ function logEvent(event: AttemptSubmittedEvent) {
   sendToTelemetry(event);
 }
 ```
+
+**Note:** The `prereq-dag.json` file referenced in earlier documentation has been replaced by the `concept-graph.json` file in the unit library workflow, or `relatedConcepts` within the `concept-map.json` entries in the textbook-static workflow.
 
 ---
 
