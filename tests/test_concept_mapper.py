@@ -346,13 +346,43 @@ def test_find_concepts_config_edge_cases() -> None:
         non_existent = tmp_path / "does_not_exist.pdf"
         found = find_concepts_config(non_existent)
         # Non-existent file's parent might have a config, so this is fine
+
+
+def test_find_concepts_config_boundary() -> None:
+    """Test the exact boundary of config discovery.
+    
+    Discovery order:
+    1. Same directory as input file (if file)
+    2. Input directory itself (if directory)
+    3. Parent directory of input
+    
+    Does NOT search beyond parent (no grandparent or deeper).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
         
-        # Test with deeply nested path
+        # Create a/b/c directory structure
         deep_dir = tmp_path / "a" / "b" / "c"
         deep_dir.mkdir(parents=True)
-        deep_config = tmp_path / "a" / "concepts.yaml"
-        deep_config.write_text(yaml.dump({"concepts": {}}))
+        
+        # Config at grandparent level (a/) - should NOT be found from c/
+        grandparent_config = tmp_path / "a" / "concepts.yaml"
+        grandparent_config.write_text(yaml.dump({"concepts": {}}))
+        
+        # From c/, should NOT find config at a/ (too far)
+        found = find_concepts_config(deep_dir)
+        assert found is None, f"Expected None (grandparent too far), got {found}"
+        
+        # Config at parent level (a/b/) - SHOULD be found from c/
+        parent_config = tmp_path / "a" / "b" / "concepts.yaml"
+        parent_config.write_text(yaml.dump({"concepts": {}}))
         
         found = find_concepts_config(deep_dir)
-        # Should find in parent (a/b) or grandparent (a)
-        assert found is not None
+        assert found == parent_config, f"Expected {parent_config}, got {found}"
+        
+        # Config at self level (a/b/c/) - takes priority over parent
+        self_config = tmp_path / "a" / "b" / "c" / "concepts.yaml"
+        self_config.write_text(yaml.dump({"concepts": {}}))
+        
+        found = find_concepts_config(deep_dir)
+        assert found == self_config, f"Expected {self_config} (self takes priority), got {found}"
