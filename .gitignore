@@ -104,11 +104,23 @@ smart_process.sh
 # Except root README.md
 !README.md
 
-# All docs/ markdown files are local-only
-docs/**/*.md
+# Root-level markdown files (move to docs/ for archival)
+AGENTS.md
+FILE_STRUCTURE_ANALYSIS_REPORT.md
+L2_EXTRACTION_FIX_SUMMARY.md
+L3_COVERAGE_IMPROVEMENTS_SUMMARY.md
+OLLAMA_REPAIR_GUIDE.md
+QUALITY_IMPROVEMENTS_SUMMARY.md
+
+# Archived docs (historical reference)
+docs/AGENTS.md
+docs/FILE_STRUCTURE_ANALYSIS_REPORT.md
+docs/L2_EXTRACTION_FIX_SUMMARY.md
+docs/L3_COVERAGE_IMPROVEMENTS_SUMMARY.md
+docs/OLLAMA_REPAIR_GUIDE.md
+docs/QUALITY_IMPROVEMENTS_SUMMARY.md
 
 # Ensure no other markdown exceptions
-AGENTS.md
 test_debug_output/
 test_exists_fix/
 
@@ -119,4 +131,16 @@ ramakrishnan-v*/
 ramakrishnan-output/
 outputs/
 test_output/
+output.txt
+*.log
+
+# Manual/utility scripts (archived in scripts/manual/)
+analyze_l2.py
+run_murach_pipeline.py
+run_murach_pipeline_debug.py
+run_pipelines.py
+run_ramakrishnan.py
+start.sh
 code_analysis_report.py
+test_l3_coverage.py
+smart_process.sh

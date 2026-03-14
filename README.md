@@ -289,6 +289,26 @@ This project is grounded in established learning science:
 
 ---
 
+## 📂 Repository Structure
+
+```
+.
+├── README.md              # This file
+├── pyproject.toml         # Package configuration
+├── Makefile              # Build automation
+├── src/                  # Source code (algl_pdf_helper package)
+├── tests/                # Test suite
+├── scripts/              # Utility scripts
+├── schemas/              # JSON schemas
+├── data/                 # Static data files
+├── raw_pdf/              # Input PDF storage
+└── docs/                 # Documentation
+```
+
+See [docs/REPO_LAYOUT.md](docs/REPO_LAYOUT.md) for detailed repository layout.
+
+Manual utility scripts are in `scripts/manual/` (not part of main CLI).
+
 ## 📖 Documentation
 
 | Document | Purpose |
@@ -296,7 +316,8 @@ This project is grounded in established learning science:
 | **[Usage Guide](docs/USAGE.md)** | Comprehensive CLI usage with examples |
 | **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
 | **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
-| **[Quality Improvements Summary](QUALITY_IMPROVEMENTS_SUMMARY.md)** | Recent quality enhancements and improvements |
+| **[Repository Layout](docs/REPO_LAYOUT.md)** | Canonical repo structure and organization |
+| **[Quality Improvements Summary](docs/QUALITY_IMPROVEMENTS_SUMMARY.md)** | Recent quality enhancements and improvements |
 
 ---
 
