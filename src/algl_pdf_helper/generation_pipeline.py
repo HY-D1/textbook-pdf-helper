@@ -165,7 +165,7 @@ def get_recommended_model() -> str:
     
     # For 8GB systems, prefer 3B models
     if system_memory <= 8:
-        return "qwen2.5:3b"  # Default recommendation
+        return "qwen3.5:9b-q8_0"  # Default recommendation for RTX 4080
     
     # For 16GB+ systems, can use 7B models
     return "qwen2.5-coder:7b"

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .models import AssetManifest, AssetReference, ConceptInfo, ConceptManifest, PdfIndexChunk
+    from .models import AssetManifest, AssetReference, ConceptInfo, ConceptManifest, ConceptSection, PdfIndexChunk
 
 
 # ============================================================================

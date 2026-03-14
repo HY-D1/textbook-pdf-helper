@@ -1,0 +1,147 @@
+{
+  "null-handling": [
+    {
+      "sql": "SELECT name, phone FROM customers WHERE phone IS NULL;",
+      "explanation": "Find customers with no phone number on file",
+      "scenario": "Data quality check"
+    },
+    {
+      "sql": "SELECT COALESCE(phone, 'No phone') FROM customers;",
+      "explanation": "Replace NULL with default text for display",
+      "scenario": "Handling missing data in reports"
+    }
+  ],
+  "order-by": [
+    {
+      "sql": "SELECT name, score FROM students ORDER BY score DESC LIMIT 10;",
+      "explanation": "Show top 10 students by score, highest first",
+      "scenario": "Ranking and leaderboards"
+    }
+  ],
+  "pattern-matching": [
+    {
+      "sql": "SELECT * FROM customers WHERE name LIKE 'Smith%';",
+      "explanation": "Find all customers whose last name starts with Smith",
+      "scenario": "Searching with wildcards"
+    }
+  ],
+  "subqueries-intro": [
+    {
+      "sql": "SELECT name FROM employees WHERE salary > (SELECT AVG(salary) FROM employees);",
+      "explanation": "Find employees earning above the company average",
+      "scenario": "Comparing to aggregate values"
+    }
+  ],
+  "transactions": [
+    {
+      "sql": "BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; UPDATE accounts SET balance = balance + 100 WHERE id = 2; COMMIT;",
+      "explanation": "Transfer $100 between accounts atomically",
+      "scenario": "Banking transfer"
+    }
+  ],
+  "constraints": [
+    {
+      "sql": "CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT NOT NULL, total DECIMAL(10,2) CHECK (total >= 0));",
+      "explanation": "Create table with primary key, not null, and check constraints",
+      "scenario": "Data integrity enforcement"
+    }
+  ],
+  "views": [
+    {
+      "sql": "CREATE VIEW active_customers AS SELECT * FROM customers WHERE status = 'active';",
+      "explanation": "Create a virtual table showing only active customers",
+      "scenario": "Simplifying complex queries"
+    }
+  ],
+  "window-functions": [
+    {
+      "sql": "SELECT name, salary, RANK() OVER (ORDER BY salary DESC) as rank FROM employees;",
+      "explanation": "Rank employees by salary without grouping",
+      "scenario": "Advanced analytics and ranking"
+    }
+  ],
+  "cte-common-table-expressions": [
+    {
+      "sql": "WITH recent_orders AS (SELECT * FROM orders WHERE order_date > '2024-01-01') SELECT * FROM recent_orders WHERE total > 100;",
+      "explanation": "Define a temporary result set for complex queries",
+      "scenario": "Breaking down complex queries"
+    }
+  ],
+  "coalesce-nullif": [
+    {
+      "sql": "SELECT COALESCE(discount, 0) FROM products;",
+      "explanation": "Return 0 when discount is NULL",
+      "scenario": "Default values for calculations"
+    }
+  ],
+  "case-expressions": [
+    {
+      "sql": "SELECT name, CASE WHEN score >= 90 THEN 'A' WHEN score >= 80 THEN 'B' ELSE 'C' END AS grade FROM students;",
+      "explanation": "Assign letter grades based on score ranges",
+      "scenario": "Conditional logic in queries"
+    }
+  ],
+  "string-functions": [
+    {
+      "sql": "SELECT UPPER(name), LENGTH(name) FROM customers;",
+      "explanation": "Convert names to uppercase and get their length",
+      "scenario": "Text manipulation and formatting"
+    }
+  ],
+  "date-functions": [
+    {
+      "sql": "SELECT name, DATEDIFF(day, hire_date, GETDATE()) AS days_employed FROM employees;",
+      "explanation": "Calculate how many days each employee has worked",
+      "scenario": "Date arithmetic and calculations"
+    }
+  ],
+  "indexes": [
+    {
+      "sql": "CREATE INDEX idx_email ON customers(email);",
+      "explanation": "Create an index on email column for faster lookups",
+      "scenario": "Query performance optimization"
+    }
+  ],
+  "isolation-levels": [
+    {
+      "sql": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN TRANSACTION; SELECT * FROM accounts; COMMIT;",
+      "explanation": "Set isolation level to prevent dirty reads",
+      "scenario": "Transaction consistency control"
+    }
+  ],
+  "triggers": [
+    {
+      "sql": "CREATE TRIGGER update_timestamp BEFORE UPDATE ON customers FOR EACH ROW SET NEW.updated_at = NOW();",
+      "explanation": "Automatically update timestamp when record is modified",
+      "scenario": "Audit trail maintenance"
+    }
+  ],
+  "stored-procedures": [
+    {
+      "sql": "CREATE PROCEDURE GetCustomerOrders(IN cust_id INT) BEGIN SELECT * FROM orders WHERE customer_id = cust_id; END;",
+      "explanation": "Create reusable procedure to get orders for a customer",
+      "scenario": "Encapsulating business logic"
+    }
+  ],
+  "functions": [
+    {
+      "sql": "CREATE FUNCTION CalculateTax(amount DECIMAL) RETURNS DECIMAL BEGIN RETURN amount * 0.08; END;",
+      "explanation": "Create reusable function to calculate tax",
+      "scenario": "Reusable calculations"
+    }
+  ],
+  "recursive-cte": [
+    {
+      "sql": "WITH RECURSIVE employee_hierarchy AS (SELECT id, name, manager_id FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.id, e.name, e.manager_id FROM employees e INNER JOIN employee_hierarchy eh ON e.manager_id = eh.id) SELECT * FROM employee_hierarchy;",
+      "explanation": "Recursively query hierarchical employee relationships",
+      "scenario": "Hierarchical data traversal"
+    }
+  ],
+  "normalization": [
+    {
+      "sql": "CREATE TABLE customers (customer_id INT PRIMARY KEY, name VARCHAR(100)); CREATE TABLE orders (order_id INT PRIMARY KEY, customer_id INT REFERENCES customers(customer_id), total DECIMAL(10,2));",
+      "explanation": "Separate customer and order data into related tables",
+      "scenario": "Eliminating data redundancy"
+    }
+  ]
+}

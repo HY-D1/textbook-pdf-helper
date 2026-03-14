@@ -31,6 +31,8 @@ try:
 except ImportError:
     pass  # Educational CLI is optional
 
+# Unit library commands are re-exported as top-level commands below (line ~1149)
+
 
 def resolve_output_dir(output_dir: Path | None) -> Path:
     """
@@ -337,7 +339,7 @@ def export_edu(
         from tqdm import tqdm
     except ImportError as e:
         typer.echo(f"❌ Error: Missing dependencies for educational export: {e}")
-        typer.echo("Install with: pip install -e '.[edu]'")
+        typer.echo("Install with: pip install -e '.[unit]'")
         raise typer.Exit(1)
     
     typer.echo(f"📚 Generating educational notes from: {pdf_path}")
@@ -1133,3 +1135,400 @@ def detect_regressions(
     
     if exit_code != 0:
         raise typer.Exit(exit_code)
+
+
+# =============================================================================
+# UNIT LIBRARY COMMANDS (re-exported from cli_unit_library)
+# =============================================================================
+
+try:
+    from .cli_unit_library import (
+        process_command as _process_cmd,
+        validate_command as _validate_cmd,
+        inspect_command as _inspect_cmd,
+        diagnose_command as _diagnose_cmd,
+        filter_command as _filter_cmd,
+        export_legacy_command as _export_legacy_cmd,
+    )
+    
+    @app.command()
+    def process(
+        pdf_path: Path = typer.Argument(
+            ...,
+            exists=True,
+            readable=True,
+            help="Path to the PDF file to process",
+        ),
+        output_dir: Path = typer.Option(
+            ...,
+            "--output-dir", "-o",
+            help="Output directory for the unit library (required)",
+        ),
+        doc_id: str | None = typer.Option(
+            None,
+            "--doc-id",
+            help="Document ID (auto-generated if not provided)",
+        ),
+        llm_provider: str = typer.Option(
+            "grounded",
+            "--llm-provider",
+            help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented.",
+        ),
+        llm_model: str | None = typer.Option(
+            None,
+            "--llm-model",
+            help="LLM model to use (only used with non-grounded providers)",
+        ),
+        filter_level: str = typer.Option(
+            "production",
+            "--filter-level",
+            help="Export filter level: strict, production (default), or development",
+        ),
+        skip_reinforcement: bool = typer.Option(
+            False,
+            "--skip-reinforcement",
+            help="Skip generating reinforcement items",
+        ),
+        skip_misconceptions: bool = typer.Option(
+            False,
+            "--skip-misconceptions",
+            help="Skip generating misconception units",
+        ),
+        validate_sql: bool = typer.Option(
+            True,
+            "--validate-sql/--no-validate-sql",
+            help="Validate SQL examples",
+        ),
+        min_quality_score: float = typer.Option(
+            0.8,
+            "--min-quality-score",
+            min=0.0,
+            max=1.0,
+            help="Minimum quality score threshold",
+        ),
+        export_mode: str = typer.Option(
+            "prototype",
+            "--export-mode",
+            help="Export mode: prototype (allows placeholders, default) or student_ready (strict)",
+        ),
+        use_ollama_repair: bool = typer.Option(
+            True,
+            "--use-ollama-repair/--no-ollama-repair",
+            help="Use Ollama to repair weak L3 content (requires local Ollama server)",
+        ),
+        ollama_model: str = typer.Option(
+            "qwen3.5:9b-q8_0",
+            "--ollama-model",
+            help="Ollama model for repair (qwen3.5:9b-q8_0 recommended for RTX 4080, qwen3.5:27b-q4_K_M for better quality)",
+        ),
+        ollama_repair_threshold: float = typer.Option(
+            0.6,
+            "--ollama-repair-threshold",
+            min=0.0,
+            max=1.0,
+            help="Quality threshold below which to trigger Ollama repair",
+        ),
+        page_range: str | None = typer.Option(
+            None,
+            "--page-range",
+            help="Process only specific pages (e.g., '1-100' or '50,75,100-120')",
+        ),
+        chapter_range: str | None = typer.Option(
+            None,
+            "--chapter-range",
+            help="Process only specific chapters (e.g., '1-5' or '3,4,7'). Note: Requires PDF bookmarks/table of contents",
+        ),
+        resume: bool = typer.Option(
+            False,
+            "--resume",
+            help="Resume from last checkpoint (if available)",
+        ),
+        cache_extraction: bool = typer.Option(
+            True,
+            "--cache-extraction/--no-cache-extraction",
+            help="Cache and reuse PDF extraction (speeds up re-runs)",
+        ),
+        allow_offbook_curated: bool = typer.Option(
+            False,
+            "--allow-offbook-curated",
+            help="Allow off-book curated concepts not present in source PDF (opt-in augmentation)",
+        ),
+        clear_repair_cache: bool = typer.Option(
+            False,
+            "--clear-repair-cache",
+            help="Clear the repair cache before processing",
+        ),
+    ):
+        """Process a PDF into a unit library.
+        
+        This command extracts content from a PDF, maps concepts, generates
+        instructional units at all adaptive stages (L1-L4), and exports
+        the grounded instructional unit graph.
+        
+        The Ollama repair pass automatically improves weak L3 content using
+        a local Ollama instance (requires qwen3.5:9b-q8_0 or similar model).
+        
+        Export Modes:
+            prototype (default): Allows placeholder content with warnings.
+                Use for development and testing.
+            
+            student_ready: Strict mode, blocks all placeholder and weak content.
+                Use when exporting for actual student consumption.
+                Blocks: placeholder practice links, default L2 examples, 
+                synthetic-only L3, weak curated content.
+        
+        Page/Chapter Range:
+            Use --page-range to process specific pages (e.g., '1-100' or '50,75,100-120').
+            Use --chapter-range to process specific chapters (requires PDF bookmarks).
+            Use --resume to continue from a previous interrupted run.
+            Use --no-cache-extraction to force re-extraction of the PDF.
+        
+        Example:
+            algl-pdf process ./textbook.pdf --output-dir ./output
+            algl-pdf process ./textbook.pdf -o ./output --filter-level production
+            algl-pdf process ./textbook.pdf -o ./output --export-mode student_ready
+            algl-pdf process ./textbook.pdf -o ./output --skip-reinforcement
+            algl-pdf process ./textbook.pdf -o ./output --no-ollama-repair
+            algl-pdf process ./textbook.pdf -o ./output --page-range 1-50
+            algl-pdf process ./textbook.pdf -o ./output --chapter-range 1-3
+            algl-pdf process ./textbook.pdf -o ./output --resume
+        """
+        _process_cmd(
+            pdf_path=pdf_path,
+            output_dir=output_dir,
+            doc_id=doc_id,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            filter_level=filter_level,
+            skip_reinforcement=skip_reinforcement,
+            skip_misconceptions=skip_misconceptions,
+            validate_sql=validate_sql,
+            min_quality_score=min_quality_score,
+            export_mode=export_mode,
+            use_ollama_repair=use_ollama_repair,
+            ollama_model=ollama_model,
+            ollama_repair_threshold=ollama_repair_threshold,
+            page_range=page_range,
+            chapter_range=chapter_range,
+            resume=resume,
+            cache_extraction=cache_extraction,
+            allow_offbook_curated=allow_offbook_curated,
+            clear_repair_cache=clear_repair_cache,
+        )
+
+    @app.command()
+    def validate(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        detailed: bool = typer.Option(
+            False,
+            "--detailed",
+            help="Show detailed validation report",
+        ),
+        use_generated_report: bool = typer.Option(
+            False,
+            "--use-generated-report",
+            help="Use the quality report generated during export (if available)",
+        ),
+        recompute: bool = typer.Option(
+            False,
+            "--recompute",
+            help="Force recompute validation instead of using cached report",
+        ),
+    ):
+        """Validate an existing unit library.
+        
+        Runs all quality gates on the unit library and displays a quality report.
+        
+        Example:
+            algl-pdf validate ./output/unit-library/
+            algl-pdf validate ./output/unit-library/ --detailed
+        """
+        _validate_cmd(
+            library_dir=library_dir,
+            detailed=detailed,
+            use_generated_report=use_generated_report,
+            recompute=recompute,
+        )
+
+    @app.command()
+    def inspect(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        concept: str = typer.Option(
+            ...,
+            "--concept", "-c",
+            help="Concept ID to inspect",
+        ),
+        show_sql: bool = typer.Option(
+            True,
+            "--show-sql/--no-show-sql",
+            help="Show SQL examples with syntax highlighting",
+        ),
+    ):
+        """Inspect units for a specific concept.
+        
+        Display all variants (L1-L4) for a concept with source evidence.
+        
+        Example:
+            algl-pdf inspect ./output/unit-library/ --concept select-basic
+            algl-pdf inspect ./output/unit-library/ -c join-operations --no-show-sql
+        """
+        _inspect_cmd(library_dir=library_dir, concept=concept, show_sql=show_sql)
+
+    @app.command(name="diagnose")
+    def diagnose(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        detailed: bool = typer.Option(
+            False,
+            "--detailed",
+            help="Show detailed diagnostic report",
+        ),
+    ):
+        """Diagnose content gaps and quality issues in a unit library.
+        
+        Analyzes the library and reports:
+        - L3 coverage gaps (concepts missing explanations)
+        - L2 units using default examples
+        - Unresolved practice links
+        - Heading-like content in why_it_matters
+        - Missing evidence spans
+        
+        Example:
+            algl-pdf diagnose ./output/unit-library/
+            algl-pdf diagnose ./output/unit-library/ --detailed
+        """
+        _diagnose_cmd(library_dir=library_dir, detailed=detailed)
+
+    @app.command()
+    def filter(
+        library_dir: Path = typer.Argument(
+            ...,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            help="Path to unit library directory",
+        ),
+        level: str = typer.Option(
+            "strict",
+            "--level",
+            help="Export filter level: strict, production, or development",
+        ),
+        output_dir: Path | None = typer.Option(
+            None,
+            "--output-dir", "-o",
+            help="Output directory for filtered library (default: in-place)",
+        ),
+    ):
+        """Re-run export filters on existing library.
+        
+        Creates a filtered subset of the unit library based on the specified level.
+        
+        Example:
+            algl-pdf filter ./output/unit-library/ --level strict
+            algl-pdf filter ./output/unit-library/ -o ./output/filtered/ --level production
+        """
+        _filter_cmd(library_dir=library_dir, level=level, output_dir=output_dir)
+
+    @app.command(name="export-legacy")
+    def export_legacy(
+        concept_map_path: Path = typer.Argument(
+            ...,
+            exists=True,
+            readable=True,
+            help="Path to old concept-map.json file",
+        ),
+        output_dir: Path = typer.Option(
+            ...,
+            "--output-dir", "-o",
+            help="Output directory for new format (required)",
+        ),
+        filter_level: str = typer.Option(
+            "strict",
+            "--filter-level",
+            help="Export filter level: strict, production, or development",
+        ),
+    ):
+        """Convert old concept-map.json to new unit library format.
+        
+        Transforms the legacy concept map structure into the new grounded
+        instructional unit graph format.
+        
+        Example:
+            algl-pdf export-legacy ./old-output/concept-map.json --output-dir ./new-output/
+            algl-pdf export-legacy ./old/concept-map.json -o ./new/ --filter-level strict
+        """
+        _export_legacy_cmd(
+            concept_map_path=concept_map_path,
+            output_dir=output_dir,
+            filter_level=filter_level,
+        )
+
+
+except ImportError:
+    pass  # Unit library commands not available
+
+
+# Cache management command (always available)
+@app.command(name="cache")
+def cache_command(
+    action: str = typer.Argument(
+        "stats",
+        help="Action: stats, clear, or show-path",
+    ),
+):
+    """
+    Manage the Ollama repair cache.
+    
+    View cache statistics, clear cached repairs, or show cache directory.
+    
+    Example:
+        algl-pdf cache stats     # Show cache statistics
+        algl-pdf cache clear     # Clear all cached repairs
+        algl-pdf cache show-path # Show cache directory path
+    """
+    try:
+        from .ollama_repair import RepairCache
+        
+        cache = RepairCache()
+        
+        if action == "clear":
+            count = cache.clear_cache()
+            typer.echo(f"✅ Cleared {count} cached repairs")
+        elif action == "show-path":
+            typer.echo(f"Cache directory: {cache.cache_dir}")
+        elif action == "stats":
+            stats = cache.get_cache_stats()
+            typer.echo("📊 Repair Cache Statistics:")
+            typer.echo(f"  Cache directory: {stats['cache_dir']}")
+            typer.echo(f"  Cached files: {stats['cached_files']}")
+            typer.echo(f"  Total size: {stats['total_size_bytes']:,} bytes")
+            if stats['hits'] + stats['misses'] > 0:
+                typer.echo(f"  Cache hits: {stats['hits']}")
+                typer.echo(f"  Cache misses: {stats['misses']}")
+                typer.echo(f"  Hit rate: {stats['hit_rate']:.1%}")
+        else:
+            typer.echo(f"❌ Unknown action: {action}")
+            typer.echo("Valid actions: stats, clear, show-path")
+            raise typer.Exit(1)
+            
+    except ImportError:
+        typer.echo("❌ Error: RepairCache not available")
+        raise typer.Exit(1)
+

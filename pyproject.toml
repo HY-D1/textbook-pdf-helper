@@ -16,20 +16,71 @@ dependencies = [
   "typer>=0.12",
   "pymupdf>=1.23",
   "pyyaml>=6.0",
+  "rich>=13.0",
+  "sqlparse>=0.4",
 ]
 
 [project.optional-dependencies]
+# New instructional unit pipeline
+unit = [
+  "rich>=13.0",
+  "sqlparse>=0.4",
+  "tqdm>=4.66",
+]
+
+# Legacy educational pipeline
+edu = [
+  "marker-pdf>=0.2",
+  "openai>=1.0",
+  "tqdm>=4.66",
+]
+
+# SQL validation features
+validation = [
+  "sqlparse>=0.4",
+]
+
+# OCR support
 ocr = [
   "ocrmypdf>=16.0",
   "tqdm>=4.66",
+  "pillow>=10.0",
 ]
+
+# Server mode
 server = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.27",
   "python-multipart>=0.0.9",
 ]
+
+# All features
+all = [
+  "rich>=13.0",
+  "sqlparse>=0.4",
+  "marker-pdf>=0.2",
+  "openai>=1.0",
+  "ocrmypdf>=16.0",
+  "tqdm>=4.66",
+  "pillow>=10.0",
+]
+
+# Development
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.1",
+  "mypy>=1.0",
+  "rich>=13.0",
+  "sqlparse>=0.4",
+  "tqdm>=4.66",
+  "pillow>=10.0",
+]
+
+# Test dependencies (backward compatibility)
 test = [
   "pytest>=8.0",
+  "pytest-cov>=4.0",
 ]
 
 [project.scripts]

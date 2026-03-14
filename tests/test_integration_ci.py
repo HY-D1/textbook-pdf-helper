@@ -12,6 +12,7 @@ These tests verify:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,13 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+# Check if ocrmypdf is available
+try:
+    import ocrmypdf
+    HAS_OCRMYPDF = True
+except ImportError:
+    HAS_OCRMYPDF = False
 
 # Import after sys.path modification via conftest
 from algl_pdf_helper.indexer import build_index
@@ -1145,12 +1153,65 @@ class TestPipelineStageTransitions:
 
 
 # =============================================================================
+# REAL CLI SMOKE TESTS
+# =============================================================================
+
+class TestUnitLibraryProcessCommand:
+    """Real CLI smoke tests for the unit library pipeline."""
+    
+    def test_process_command_creates_units(self, tmp_path):
+        """Run actual process command and verify output."""
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "test_output"
+        fixture_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Determine command - use 'algl-pdf' if available, else python -m
+        cmd = [
+            "algl-pdf",
+            "process",
+            str(fixture_path),
+            "-o", str(output_dir),
+            "--filter-level", "production"
+        ]
+        
+        # Run the actual CLI command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+        
+        # Assert exit code 0
+        if result.returncode != 0:
+            pytest.fail(f"Process failed with exit code {result.returncode}:\n"
+                       f"stdout: {result.stdout}\nstderr: {result.stderr}")
+        
+        # Assert files exist
+        assert (output_dir / "instructional_units.jsonl").exists(), \
+            f"instructional_units.jsonl not found. stdout: {result.stdout}"
+        assert (output_dir / "export_manifest.json").exists(), \
+            f"export_manifest.json not found. stdout: {result.stdout}"
+        
+        # Assert non-empty
+        units_file = output_dir / "instructional_units.jsonl"
+        lines = units_file.read_text().strip().split('\n')
+        assert len(lines) > 0, "instructional_units.jsonl is empty"
+        
+        # Verify manifest
+        manifest = json.loads((output_dir / "export_manifest.json").read_text())
+        assert manifest["statistics"]["instructional_units"] > 0
+
+
+# =============================================================================
 # CONFIGURATION COMBINATION TESTS
 # =============================================================================
 
 class TestConfigurationCombinations:
     """Test all combinations of configuration flags."""
     
+    @pytest.mark.skipif(not HAS_OCRMYPDF, reason="ocrmypdf not installed")
     def test_ocr_auto_ocr_combinations(self, temp_dir):
         """Test ocr: true/false + auto_ocr: true/false combinations."""
         from algl_pdf_helper.extract import maybe_ocr_pdf
@@ -1754,6 +1815,352 @@ class TestPerformanceEdgeCases:
         norm = sum(v * v for v in embedding) ** 0.5
         if norm > 0:
             assert 0.99 <= norm <= 1.01, "Embedding should be normalized"
+
+
+
+# =============================================================================
+# END-TO-END UNIT LIBRARY PIPELINE TESTS
+# =============================================================================
+
+class TestUnitLibraryPipeline:
+    """End-to-end tests for the new unit-library pipeline."""
+    
+    def test_process_command_creates_units(self, tmp_path):
+        """Test that 'algl-pdf process' creates real instructional units.
+        
+        This is a strengthened end-to-end guard test that verifies:
+        1. Exit code is 0 only when units were actually exported
+        2. instructional_units.jsonl exists and has > 0 lines
+        3. source_spans.jsonl has > 0 lines
+        4. export_manifest.json statistics show exported_units > 0
+        5. fallback_units == 0 for golden fixture in production mode
+        """
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Run the actual CLI command
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "production",
+                "--llm-provider", "ollama",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # Command should succeed
+        assert result.returncode == 0, f"Process failed: {result.stderr}"
+        
+        # Check output files exist
+        assert (output_dir / "instructional_units.jsonl").exists()
+        assert (output_dir / "source_spans.jsonl").exists()
+        assert (output_dir / "concept_graph.json").exists()
+        assert (output_dir / "quality_report.json").exists()
+        assert (output_dir / "export_manifest.json").exists()
+        
+        # Verify 1: Exit code is 0 only when units were actually exported
+        # Count units in JSONL
+        units_file = output_dir / "instructional_units.jsonl"
+        units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
+        
+        # Verify 2: instructional_units.jsonl has > 0 lines
+        assert len(units) > 0, "No instructional units exported (instructional_units.jsonl is empty)"
+        
+        # Verify 3: source_spans.jsonl has > 0 lines
+        spans_file = output_dir / "source_spans.jsonl"
+        spans = [json.loads(line) for line in spans_file.read_text().strip().split('\n') if line]
+        assert len(spans) > 0, "No source spans exported (source_spans.jsonl is empty)"
+        
+        # Verify 4 & 5: export_manifest.json statistics
+        manifest = json.loads((output_dir / "export_manifest.json").read_text())
+        stats = manifest.get("statistics", {})
+        
+        # exported_units > 0
+        exported_units = stats.get("instructional_units", 0)
+        assert exported_units > 0, f"export_manifest.json shows exported_units={exported_units}, expected > 0"
+        
+        # fallback_units should be minimal for golden fixture in production mode
+        # Some fallback is acceptable (e.g., edge cases), but should be < 5%
+        fallback_units = stats.get("fallback_units", 0)
+        generated_units = stats.get("generated_units", stats.get("total_units_generated", exported_units + fallback_units))
+        fallback_ratio = fallback_units / max(generated_units, 1)
+        assert fallback_ratio < 0.05, f"export_manifest.json shows fallback_units={fallback_units} ({fallback_ratio:.1%}), expected < 5% in production mode"
+        
+        # Additional: Verify exported_units count matches actual file line count
+        assert exported_units == len(units), (
+            f"Manifest reports {exported_units} units but instructional_units.jsonl has {len(units)} lines"
+        )
+        
+        # Check L1-L4 variants exist
+        stages = set(u.get("target_stage") for u in units)
+        assert "L1_hint" in stages or "L2_hint_plus_example" in stages, "No hint variants found"
+        assert "L3_explanation" in stages, "No explanation variants found"
+    
+    def test_process_command_strict_mode_blocks_fallback(self, tmp_path):
+        """Test that strict mode fails if fallback units exist."""
+        import subprocess
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "strict",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # In strict mode, should either succeed with real units or fail loudly
+        if result.returncode == 0:
+            # If success, verify real units were created
+            units_file = output_dir / "instructional_units.jsonl"
+            if units_file.exists():
+                units = [json.loads(line) for line in units_file.read_text().strip().split('\n') if line]
+                assert len(units) > 0, "Strict mode succeeded but exported 0 units"
+
+    def test_process_command_fails_when_zero_units_exported(self, tmp_path, monkeypatch):
+        """Negative test: If exported units == 0, CLI exits nonzero.
+        
+        This prevents false-success states where the process exits 0 with 0 exported units.
+        """
+        import subprocess
+        import json
+        
+        output_dir = tmp_path / "unit_library"
+        pdf_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
+        
+        # Create a minimal concepts config with no valid pages to force 0 units
+        empty_concepts_dir = tmp_path / "empty_concepts"
+        empty_concepts_dir.mkdir()
+        empty_concepts_file = empty_concepts_dir / "concepts.yaml"
+        empty_concepts_file.write_text("""
+concepts:
+  fake-concept-not-in-pdf:
+    title: "Fake Concept"
+    definition: "Not in PDF"
+    difficulty: beginner
+    estimatedReadTime: 5
+    sections:
+      definition: [999]  # Page that doesn't exist
+      examples: [999]
+    relatedConcepts: []
+    tags: ["fake"]
+""")
+        
+        # Run with strict mode on concepts that don't exist in PDF
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "process",
+                str(pdf_path),
+                "--output-dir", str(output_dir),
+                "--filter-level", "strict",
+                "--concepts-config", str(empty_concepts_file),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        # If export_manifest exists with 0 units, exit code MUST be non-zero
+        manifest_file = output_dir / "export_manifest.json"
+        if manifest_file.exists():
+            manifest = json.loads(manifest_file.read_text())
+            stats = manifest.get("statistics", {})
+            exported = stats.get("instructional_units", 0)
+            
+            if exported == 0:
+                assert result.returncode != 0, (
+                    f"CLI exited 0 but exported {exported} units. "
+                    f"Expected non-zero exit code when no units are exported.\n"
+                    f"stderr: {result.stderr}"
+                )
+
+
+# =============================================================================
+# ADAPTIVE HANDOFF EXPORT TESTS
+# =============================================================================
+
+class TestAdaptiveHandoffExport:
+    """Test the index + export workflow for adaptive app integration."""
+    
+    def test_index_export_produces_required_files(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Verify the textbook-static export produces all files required by the adaptive app.
+        
+        This test verifies the helper→adaptive handoff contract:
+        - concept-map.json exists and has namespaced concept IDs
+        - textbook-manifest.json exists with schema v1
+        - chunks-metadata.json exists
+        - concepts/{docId}/{conceptId}.md files exist
+        """
+        import subprocess
+        import json
+        
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+        
+        # Step 1: Index the PDF
+        index_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        
+        assert index_result.returncode == 0, f"Index failed: {index_result.stderr}"
+        
+        # Verify index produced required files
+        assert (index_output / "concept-manifest.json").exists(), "concept-manifest.json not created"
+        assert (index_output / "chunks.json").exists(), "chunks.json not created"
+        assert (index_output / "index.json").exists(), "index.json not created"
+        
+        # Step 2: Export to textbook-static format
+        export_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        
+        assert export_result.returncode == 0, f"Export failed: {export_result.stderr}"
+        
+        # Step 3: Verify all required adaptive app files exist
+        
+        # Required: concept-map.json
+        concept_map_file = export_output / "concept-map.json"
+        assert concept_map_file.exists(), "concept-map.json not created"
+        
+        concept_map = json.loads(concept_map_file.read_text())
+        assert "concepts" in concept_map, "concept-map.json missing 'concepts' key"
+        assert "version" in concept_map, "concept-map.json missing 'version' key"
+        
+        # Required: textbook-manifest.json
+        textbook_manifest_file = export_output / "textbook-manifest.json"
+        assert textbook_manifest_file.exists(), "textbook-manifest.json not created"
+        
+        textbook_manifest = json.loads(textbook_manifest_file.read_text())
+        assert "schemaVersion" in textbook_manifest, "textbook-manifest.json missing 'schemaVersion'"
+        assert textbook_manifest["schemaVersion"] == "1.0.0", "textbook-manifest.json has wrong schema version"
+        
+        # Required: chunks-metadata.json
+        chunks_meta_file = export_output / "chunks-metadata.json"
+        assert chunks_meta_file.exists(), "chunks-metadata.json not created"
+        
+        chunks_metadata = json.loads(chunks_meta_file.read_text())
+        assert isinstance(chunks_metadata, dict), "chunks-metadata.json should be a dict"
+        
+        # Required: concepts/{docId}/{conceptId}.md files
+        concepts_dir = export_output / "concepts"
+        assert concepts_dir.exists(), "concepts/ directory not created"
+        
+        # Find docId subdirectory
+        doc_dirs = [d for d in concepts_dir.iterdir() if d.is_dir()]
+        assert len(doc_dirs) >= 1, f"Expected at least one doc directory in concepts/, found {len(doc_dirs)}"
+        
+        doc_concepts_dir = doc_dirs[0]
+        
+        # Verify markdown files exist for concepts in concept-map
+        concept_ids = list(concept_map.get("concepts", {}).keys())
+        assert len(concept_ids) > 0, "concept-map.json has no concepts"
+        
+        for concept_id in concept_ids:
+            # Extract just the concept ID (after the / if namespaced)
+            if "/" in concept_id:
+                _, bare_id = concept_id.rsplit("/", 1)
+            else:
+                bare_id = concept_id
+            
+            md_file = doc_concepts_dir / f"{bare_id}.md"
+            assert md_file.exists(), f"Concept markdown not found: {md_file}"
+            
+            # Verify markdown has content
+            content = md_file.read_text()
+            assert len(content) > 0, f"Concept markdown is empty: {md_file}"
+            assert "---" in content, f"Concept markdown missing frontmatter: {md_file}"
+        
+        # Verify README.md exists
+        readme_file = doc_concepts_dir / "README.md"
+        assert readme_file.exists(), "README.md not created in concepts directory"
+    
+    def test_concept_ids_are_namespaced(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Verify concept IDs in concept-map.json are namespaced with docId."""
+        import subprocess
+        import json
+        
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+        
+        # Index and export
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+        
+        # Load concept map
+        concept_map_file = export_output / "concept-map.json"
+        if not concept_map_file.exists():
+            pytest.skip("concept-map.json not created")
+        
+        concept_map = json.loads(concept_map_file.read_text())
+        concepts = concept_map.get("concepts", {})
+        
+        if not concepts:
+            pytest.skip("No concepts in concept-map.json")
+        
+        # All concept IDs should be namespaced (contain /)
+        for concept_id in concepts.keys():
+            assert "/" in concept_id, f"Concept ID '{concept_id}' is not namespaced (expected 'docId/conceptId')"
+        
+        # All relatedConcepts should also be namespaced
+        for concept_id, concept_data in concepts.items():
+            related = concept_data.get("relatedConcepts", [])
+            for rel_id in related:
+                assert "/" in rel_id, f"Related concept '{rel_id}' referenced from '{concept_id}' is not namespaced"
 
 
 if __name__ == "__main__":

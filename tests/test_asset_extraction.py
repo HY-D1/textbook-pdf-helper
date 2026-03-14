@@ -1220,9 +1220,9 @@ class TestAssetExtractionIntegration:
         assert len(saved_paths) == 2
         assert all(p.exists() for p in saved_paths)
         
-        # Verify correct paths
-        assert "assets/images/test-book" in str(saved_paths[0])
-        assert "assets/tables/test-book" in str(saved_paths[1])
+        # Verify correct paths (use as_posix() for OS-agnostic comparison)
+        assert "assets/images/test-book" in saved_paths[0].as_posix()
+        assert "assets/tables/test-book" in saved_paths[1].as_posix()
         
         # Verify content
         assert saved_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nfake-png-data"
