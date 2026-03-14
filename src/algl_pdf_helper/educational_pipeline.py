@@ -78,7 +78,7 @@ from .prompts import (
 # - Strict JSON output validation
 # - SQL validation
 # - Quality gates (90%+ pass rate target)
-# - 8GB M1 Mac optimization (qwen2.5:3b default)
+# - RTX 4080 optimization (qwen3.5:9b-q8_0 default)
 from .pedagogical_models import (
     PedagogicalConcept,
     GenerationResult,

@@ -7,7 +7,7 @@ meets educational standards before being used by students.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from .pedagogical_models import (
