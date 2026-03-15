@@ -80,6 +80,7 @@ from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLeve
 from .fallback_router import FallbackRouter, RoutingArtifact, SliceRoutingDecision, RoutingClassification
 from .extract import check_extraction_quality
 from .quality_metrics import TextCoverageAnalyzer
+from .glm_ocr_client import GLMOCRFallback, create_glm_ocr_result_storage
 
 
 # =============================================================================
@@ -722,6 +723,10 @@ class InstructionalPipeline:
             "pages_from_cache": 0,
             "pages_extracted": 0,
         }
+        
+        # GLM-OCR fallback handler (new)
+        self._ocr_fallback: GLMOCRFallback | None = None
+        self._ocr_result: dict[str, Any] | None = None
     
     def run(self) -> PipelineResult:
         """
@@ -898,6 +903,9 @@ class InstructionalPipeline:
             
             # Write routing artifact (new)
             self._write_routing_artifact()
+            
+            # Write OCR fallback artifact if present (new)
+            self._write_ocr_artifact()
             
             # Clear checkpoint on successful completion
             if result.success and self.config.resume_from_checkpoint:
@@ -1296,7 +1304,91 @@ class InstructionalPipeline:
         if decision.explanation:
             self._logger.info(f"Routing explanation: {decision.explanation}")
         
+        # Run GLM-OCR fallback if needed (new)
+        self._maybe_run_ocr_fallback(decision)
+        
         return self._routing_decision
+    
+    def _maybe_run_ocr_fallback(self, decision: SliceRoutingDecision) -> None:
+        """
+        Run GLM-OCR fallback if the routing decision requires it.
+        
+        Args:
+            decision: The routing decision from classify_slice
+        """
+        # Check if fallback is needed
+        classification = decision.classification.value
+        if classification not in ("needs_ocr_fallback", "needs_layout_fallback"):
+            return
+        
+        self._logger.info(f"GLM-OCR fallback required for slice {decision.slice_id}")
+        
+        # Initialize fallback handler if needed
+        if self._ocr_fallback is None:
+            self._ocr_fallback = GLMOCRFallback()
+        
+        # Determine page numbers from slice_id or config
+        page_numbers = self._get_page_numbers_for_slice(decision.slice_id)
+        if not page_numbers:
+            self._logger.warning("Could not determine page numbers for OCR fallback")
+            return
+        
+        # Run OCR
+        try:
+            ocr_result = self._ocr_fallback.process_slice(
+                pdf_path=self.config.pdf_path,
+                page_numbers=page_numbers,
+                routing_classification=classification,
+                slice_id=decision.slice_id,
+            )
+            
+            if ocr_result:
+                # Store both deterministic and OCR results
+                self._ocr_result = create_glm_ocr_result_storage(
+                    ocr_result=ocr_result,
+                    deterministic_extraction=self._raw_text,
+                )
+                
+                if ocr_result.success:
+                    self._logger.info(
+                        f"GLM-OCR succeeded: {len(ocr_result.ocr_text)} chars "
+                        f"from pages {ocr_result.pages_processed}"
+                    )
+                else:
+                    self._logger.warning(f"GLM-OCR failed: {ocr_result.error}")
+            
+        except Exception as e:
+            self._logger.error(f"GLM-OCR fallback failed: {e}")
+    
+    def _get_page_numbers_for_slice(self, slice_id: str) -> list[int]:
+        """
+        Extract page numbers from slice_id or config.
+        
+        Args:
+            slice_id: The slice identifier (e.g., "pages_1_10")
+            
+        Returns:
+            List of page numbers
+        """
+        # Try to parse from slice_id
+        if slice_id.startswith("pages_"):
+            try:
+                parts = slice_id.replace("pages_", "").split("_")
+                if len(parts) == 2:
+                    start, end = int(parts[0]), int(parts[1])
+                    return list(range(start, end + 1))
+            except (ValueError, IndexError):
+                pass
+        
+        # Fall back to config
+        if self.config.page_range:
+            if isinstance(self.config.page_range, tuple):
+                return list(range(self.config.page_range[0], self.config.page_range[1] + 1))
+            elif isinstance(self.config.page_range, list):
+                return self.config.page_range
+        
+        # Unknown - return empty list
+        return []
     
     def _write_routing_artifact(self) -> Path | None:
         """
@@ -1338,6 +1430,29 @@ class InstructionalPipeline:
             
         except Exception as e:
             self._logger.warning(f"Failed to write routing artifact: {e}")
+            return None
+    
+    def _write_ocr_artifact(self) -> Path | None:
+        """
+        Write GLM-OCR fallback result to output directory.
+        
+        Returns:
+            Path to written artifact or None if no OCR result
+        """
+        if not self._ocr_result:
+            return None
+        
+        try:
+            output_path = self.config.output_dir / "ocr_fallback_result.json"
+            
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(self._ocr_result, f, indent=2, ensure_ascii=False)
+            
+            self._logger.info(f"Saved OCR fallback artifact: {output_path}")
+            return output_path
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to write OCR artifact: {e}")
             return None
     
     def _segment_content(self, raw_text: str | None = None) -> list[ContentBlock]:
