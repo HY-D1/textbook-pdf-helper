@@ -104,6 +104,10 @@ smart_process.sh
 # Except root README.md
 !README.md
 
+# Week 1 v1.5 pipeline contract docs (source-of-truth)
+!docs/pipeline_contract_week1_v15.md
+!docs/fallback_decision_rules_week1.md
+
 # Root-level markdown files (move to docs/ for archival)
 AGENTS.md
 FILE_STRUCTURE_ANALYSIS_REPORT.md
