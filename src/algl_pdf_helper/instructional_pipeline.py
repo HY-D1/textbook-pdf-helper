@@ -77,6 +77,7 @@ from .export_filters import (
     CORE_SQL_CONCEPTS as EXPORT_CORE_SQL_CONCEPTS,
 )
 from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLevel
+from .fallback_router import FallbackRouter, RoutingArtifact, SliceRoutingDecision, RoutingClassification
 
 
 # =============================================================================
@@ -345,6 +346,9 @@ class PipelineResult:
     exercises: list[Any] = field(default_factory=list)
     examples: list[Any] = field(default_factory=list)
     navigation: dict[str, Any] = field(default_factory=dict)
+    
+    # Routing decision (new)
+    routing_decision: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -685,6 +689,10 @@ class InstructionalPipeline:
         self._examples: list[Any] = []
         self._navigation_index: NavigationIndex = NavigationIndex()
         
+        # Fallback router (new)
+        self._fallback_router: FallbackRouter | None = None
+        self._routing_decision: dict[str, Any] = {}
+        
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
         
@@ -884,6 +892,10 @@ class InstructionalPipeline:
             result.repaired_units = getattr(self, '_repaired_unit_ids', [])
             result.repair_status = getattr(self, '_repair_status', {})
             result.cache_stats = self._cache_stats
+            result.routing_decision = self._routing_decision
+            
+            # Write routing artifact (new)
+            self._write_routing_artifact()
             
             # Clear checkpoint on successful completion
             if result.success and self.config.resume_from_checkpoint:
@@ -1084,6 +1096,9 @@ class InstructionalPipeline:
         
         self._logger.info(f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks")
         
+        # Run fallback router to classify extraction quality (new)
+        self._run_fallback_router()
+        
         # Save to cache if enabled
         if self.config.cache_extraction and self._checkpoint_state.get("pdf_hash"):
             # Convert blocks to pages format for caching
@@ -1133,6 +1148,115 @@ class InstructionalPipeline:
             pages.append((page_num, text))
         
         return pages
+    
+    def _run_fallback_router(self) -> dict[str, Any]:
+        """
+        Run fallback router to classify extraction quality.
+        
+        Analyzes extraction metrics and determines if fallback is needed.
+        Must be called after extraction is complete.
+        
+        Returns:
+            Routing decision dictionary
+        """
+        self._logger.info("Running fallback router classification")
+        
+        # Initialize router if needed
+        if self._fallback_router is None:
+            self._fallback_router = FallbackRouter()
+        
+        # Build preflight-like report from extraction metadata
+        preflight_report = {
+            "text_coverage_score": self._extraction_metadata.get("coverage_score", 0.0),
+            "has_embedded_text": self._extraction_metadata.get("has_text", True),
+            "ocr_needed": self._extraction_metadata.get("needs_ocr", False),
+            "estimated_table_count": self._extraction_metadata.get("table_count", 0),
+            "average_page_text_density": self._extraction_metadata.get("avg_text_density", 0),
+            "warning_flags": self._extraction_metadata.get("warning_flags", []),
+        }
+        
+        # Build extraction quality report
+        extraction_quality = {
+            "total_chars": len(self._raw_text),
+            "is_quality_good": self._extraction_metadata.get("is_quality_good", True),
+            "needs_ocr": self._extraction_metadata.get("needs_ocr", False),
+            "coverage_score": self._extraction_metadata.get("coverage_score", 0.0),
+        }
+        
+        # Determine slice ID from page range if available
+        slice_id = "full_document"
+        if self.config.page_range:
+            if isinstance(self.config.page_range, tuple):
+                slice_id = f"pages_{self.config.page_range[0]}_{self.config.page_range[1]}"
+            else:
+                slice_id = f"pages_custom"
+        elif self.config.chapter_range:
+            if isinstance(self.config.chapter_range, tuple):
+                slice_id = f"chapters_{self.config.chapter_range[0]}_{self.config.chapter_range[1]}"
+            else:
+                slice_id = f"chapters_custom"
+        
+        # Get routing decision
+        decision = self._fallback_router.classify_slice(
+            preflight_report=preflight_report,
+            extraction_quality=extraction_quality,
+            slice_id=slice_id,
+        )
+        
+        # Store decision
+        self._routing_decision = decision.to_dict()
+        
+        # Log result
+        self._logger.info(
+            f"Routing decision: {decision.classification.value} "
+            f"(confidence: {decision.confidence})"
+        )
+        if decision.explanation:
+            self._logger.info(f"Routing explanation: {decision.explanation}")
+        
+        return self._routing_decision
+    
+    def _write_routing_artifact(self) -> Path | None:
+        """
+        Write routing decision to output directory.
+        
+        Returns:
+            Path to written artifact or None if no decision
+        """
+        if not self._routing_decision:
+            return None
+        
+        try:
+            artifact = RoutingArtifact(self.config.output_dir)
+            from .fallback_router import SliceRoutingDecision, RoutingClassification
+            
+            # Reconstruct decision for saving
+            decision = SliceRoutingDecision(
+                classification=RoutingClassification(
+                    self._routing_decision.get("classification", "deterministic_ok")
+                ),
+                confidence=self._routing_decision.get("confidence", 0.0),
+                slice_id=self._routing_decision.get("slice_id", "unknown"),
+                explanation=self._routing_decision.get("explanation", ""),
+                signals=self._routing_decision.get("signals", {}),
+                thresholds=self._routing_decision.get("thresholds", {}),
+                page_decisions=self._routing_decision.get("page_decisions", []),
+            )
+            
+            path = artifact.save(
+                decision,
+                pipeline_stats={
+                    "total_blocks": self._extraction_metadata.get("total_blocks", 0),
+                    "text_length": len(self._raw_text),
+                }
+            )
+            
+            self._logger.info(f"Saved routing artifact: {path}")
+            return path
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to write routing artifact: {e}")
+            return None
     
     def _segment_content(self, raw_text: str | None = None) -> list[ContentBlock]:
         """
