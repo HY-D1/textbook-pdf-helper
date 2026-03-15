@@ -672,57 +672,57 @@
     "estimated_minutes": 30
   },
   "normalization": {
-    "definition": "Normalization is the process of organizing data to minimize redundancy and dependency. It involves dividing large tables into smaller ones and defining relationships between them. The normal forms (1NF, 2NF, 3NF, BCNF) provide progressively stricter rules for eliminating data anomalies.",
-    "why_it_matters": "Proper normalization prevents data inconsistencies (update anomalies), reduces storage waste, and ensures data integrity. However, over-normalization can hurt read performance. Understanding normalization helps you design databases that balance integrity with performance, and recognize when denormalization might be appropriate.",
+    "definition": "Database normalization is the process of organizing data to minimize redundancy and dependency. It involves dividing large tables into smaller, related tables and defining relationships between them. Normal forms (1NF, 2NF, 3NF, BCNF) provide progressive rules for achieving this structure.",
+    "why_it_matters": "Unnormalized data leads to update anomalies, storage waste, and inconsistent information. Normalization ensures each piece of data is stored once, changes are made in one place, and relationships are properly maintained. While some denormalization is done for performance, understanding normalization is essential for good database design.",
     "examples": [
       {
-        "title": "Unnormalized data (problems)",
-        "sql": "-- Orders table with redundant customer data\nCREATE TABLE bad_orders (\n    order_id INT PRIMARY KEY,\n    order_date DATE,\n    customer_name VARCHAR(100),\n    customer_email VARCHAR(100),\n    customer_address VARCHAR(200),\n    product_names VARCHAR(500),  -- 'Laptop, Mouse, Keyboard'\n    total DECIMAL(10,2)\n);",
-        "explanation": "Problems: Customer info repeats for each order. Product names concatenated in one field. Can't query individual products. Address change requires updating many rows.",
-        "scenario": "Anti-pattern: what NOT to do. Shows common beginner mistakes."
+        "title": "First Normal Form (1NF) - Atomic values",
+        "sql": "-- Unnormalized (violates 1NF):\n-- orders: id, customer_name, items (comma-separated)\n\n-- Normalized to 1NF:\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_name VARCHAR(100)\n);\n\nCREATE TABLE order_items (\n    item_id INT PRIMARY KEY,\n    order_id INT,\n    product_name VARCHAR(100),\n    quantity INT,\n    FOREIGN KEY (order_id) REFERENCES orders(order_id)\n);",
+        "explanation": "1NF requires atomic values (no repeating groups or arrays). Split comma-separated values into a separate table with a foreign key relationship.",
+        "scenario": "E-commerce orders where each order can have multiple line items."
       },
       {
-        "title": "Third Normal Form (3NF) design",
-        "sql": "-- Separate entities, no transitive dependencies\nCREATE TABLE customers (\n    customer_id INT PRIMARY KEY,\n    name VARCHAR(100),\n    email VARCHAR(100) UNIQUE,\n    address_id INT,\n    FOREIGN KEY (address_id) REFERENCES addresses(address_id)\n);\n\nCREATE TABLE addresses (\n    address_id INT PRIMARY KEY,\n    street VARCHAR(200),\n    city VARCHAR(100),\n    postal_code VARCHAR(20)\n);\n\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,\n    order_date DATE,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);\n\nCREATE TABLE order_items (\n    order_id INT,\n    product_id INT,\n    quantity INT,\n    price DECIMAL(10,2),\n    PRIMARY KEY (order_id, product_id)\n);",
-        "explanation": "Each entity has its own table. No repeating groups (1NF). No partial dependencies (2NF). No transitive dependencies (3NF). Can update address in one place.",
-        "scenario": "Proper e-commerce schema that scales and maintains data integrity."
+        "title": "Second Normal Form (2NF) - Remove partial dependencies",
+        "sql": "-- Before 2NF (partial dependency):\n-- enrollment: student_id, course_id, student_name, course_name, grade\n\n-- After 2NF:\nCREATE TABLE students (\n    student_id INT PRIMARY KEY,\n    student_name VARCHAR(100)\n);\n\nCREATE TABLE courses (\n    course_id INT PRIMARY KEY,\n    course_name VARCHAR(100)\n);\n\nCREATE TABLE enrollments (\n    student_id INT,\n    course_id INT,\n    grade CHAR(2),\n    PRIMARY KEY (student_id, course_id),\n    FOREIGN KEY (student_id) REFERENCES students(student_id),\n    FOREIGN KEY (course_id) REFERENCES courses(course_id)\n);",
+        "explanation": "2NF requires no partial dependencies (non-key attributes must depend on the entire key). Student name depends only on student_id, not the full composite key.",
+        "scenario": "School enrollment system where student and course info was duplicated in every enrollment record."
       },
       {
-        "title": "Intentional denormalization for performance",
-        "sql": "-- Add calculated/denormalized column for frequent query\nALTER TABLE orders ADD COLUMN total_amount DECIMAL(10,2);\n\n-- Maintain via trigger\nCREATE TRIGGER update_order_total\nAFTER INSERT ON order_items\nFOR EACH ROW\nBEGIN\n    UPDATE orders\n    SET total_amount = (\n        SELECT SUM(quantity * price)\n        FROM order_items\n        WHERE order_id = NEW.order_id\n    )\n    WHERE order_id = NEW.order_id;\nEND;",
-        "explanation": "Sometimes you intentionally denormalize (add redundancy) for performance, but you maintain it automatically via triggers to prevent anomalies.",
-        "scenario": "High-read scenarios where calculating totals on every query is too slow."
+        "title": "Third Normal Form (3NF) - Remove transitive dependencies",
+        "sql": "-- Before 3NF (transitive dependency):\n-- employees: emp_id, emp_name, dept_id, dept_name, dept_location\n\n-- After 3NF:\nCREATE TABLE departments (\n    dept_id INT PRIMARY KEY,\n    dept_name VARCHAR(50),\n    dept_location VARCHAR(50)\n);\n\nCREATE TABLE employees (\n    emp_id INT PRIMARY KEY,\n    emp_name VARCHAR(100),\n    dept_id INT,\n    FOREIGN KEY (dept_id) REFERENCES departments(dept_id)\n);",
+        "explanation": "3NF requires no transitive dependencies (non-key attributes depend only on the key). dept_name depends on dept_id, not directly on emp_id.",
+        "scenario": "Employee database where department information was repeated for every employee in the same department."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Storing comma-separated values",
-        "error_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    products VARCHAR(500)  -- '1,5,7,9'\n);",
-        "error_message": "No error, but can't properly query, index, or maintain this data",
-        "why_it_happens": "Beginners try to fit multiple values in one field to avoid 'complicated' joins.",
-        "fix_sql": "CREATE TABLE order_products (\n    order_id INT,\n    product_id INT,\n    PRIMARY KEY (order_id, product_id)\n);",
-        "key_takeaway": "Never store multiple values in one column. Use junction tables for many-to-many relationships."
+        "title": "Over-normalization harming performance",
+        "error_sql": "-- Joining 6 tables for a simple dashboard query\nSELECT o.id, c.name, p.title, s.status, ...\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nJOIN products p ON o.product_id = p.id\nJOIN statuses s ON o.status_id = s.id\nJOIN categories cat ON p.category_id = cat.id\nJOIN regions r ON c.region_id = r.id;",
+        "error_message": "Query is very slow with many joins on large tables",
+        "why_it_happens": "Excessive normalization forces many table joins. Sometimes strategic denormalization improves read performance.",
+        "fix_sql": "-- Create a materialized view or summary table\nCREATE TABLE order_summary AS\nSELECT o.id, c.name, p.title, o.status, ...\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nJOIN products p ON o.product_id = p.id;",
+        "key_takeaway": "Normalize to 3NF, then selectively denormalize for performance when necessary."
       },
       {
-        "title": "Over-normalization hurting performance",
-        "error_sql": "-- 10-table join for a simple report\nSELECT o.*, c.name, a.street, a.city, p.postal_code_name, ...\nFROM orders o\nJOIN customers c ON ...\nJOIN addresses a ON ...\nJOIN postal_codes p ON ...\nJOIN cities ci ON ...\n-- etc",
-        "error_message": "Slow query due to excessive joins",
-        "why_it_happens": "Normalizing every possible attribute leads to too many joins for common queries.",
-        "fix_sql": "-- Consider keeping commonly-accessed data together\nCREATE TABLE order_summary AS\nSELECT o.*, c.name, c.email, a.city, a.state\nFROM orders o\nJOIN customers c ON ...\nJOIN addresses a ON ...;",
-        "key_takeaway": "Normalize to 3NF, then denormalize selectively for performance based on actual query patterns."
+        "title": "Missing foreign key constraints",
+        "error_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,  -- No FK constraint!\n    order_date DATE\n);",
+        "error_message": "Orphaned records: orders with customer_ids that don't exist",
+        "why_it_happens": "Without foreign key constraints, the database allows invalid references leading to data integrity issues.",
+        "fix_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,\n    order_date DATE,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
+        "key_takeaway": "Always add foreign key constraints to enforce referential integrity."
       }
     ],
     "reflection_prompts": [
-      "What problems can occur when updating data in unnormalized tables?",
-      "How do you decide between normalization and performance?",
-      "When is it acceptable to violate normal forms?",
-      "What's the difference between 2NF and 3NF? Can you give an example of 2NF but not 3NF?"
+      "What problems does normalization solve?",
+      "When might you intentionally violate normal forms?",
+      "How do you handle many-to-many relationships in normalized databases?",
+      "What's the difference between 3NF and BCNF?"
     ],
     "practice_suggestions": [
-      "Normalize a spreadsheet of student course enrollments into proper tables",
-      "Design a database for a library (books, patrons, loans, fines)",
-      "Create a schema for a blog with users, posts, comments, tags, and categories",
-      "Analyze an existing database schema and identify normalization violations"
+      "Normalize a denormalized customer order spreadsheet into 3NF",
+      "Design a blog system database with posts, authors, categories, and comments",
+      "Create an e-commerce schema handling products with multiple categories",
+      "Refactor a student enrollment system with courses, students, and grades"
     ],
     "difficulty": "intermediate",
     "estimated_minutes": 30
@@ -1512,116 +1512,116 @@
     "estimated_minutes": 20
   },
   "subquery-in-select": {
-    "definition": "A scalar subquery in the SELECT clause returns a single value for each row of the outer query. It allows you to add calculated columns based on data from related tables without using a JOIN.",
-    "why_it_mattters": "Subqueries in SELECT let you add supplementary information to each row - like including a count of related records or looking up a value from another table. They're useful when you need just one additional value per row and want to avoid complicating your main query with JOINs.",
+    "definition": "A scalar subquery in the SELECT clause returns a single value for each row in the outer query. It's evaluated once per outer row, allowing you to include calculated values from related tables without joining. The subquery must return exactly one column and at most one row.",
+    "why_it_matters": "Scalar subqueries in SELECT are perfect for calculated columns that would require complex self-joins or post-processing. They let you add columns like 'previous order date' or 'department average salary' directly in your SELECT list. While correlated subqueries can be slow, they're often the clearest way to express row-by-row calculations.",
     "examples": [
       {
-        "title": "Scalar subquery for counts",
-        "sql": "SELECT\n    c.customer_id,\n    c.customer_name,\n    (SELECT COUNT(*)\n     FROM orders o\n     WHERE o.customer_id = c.customer_id) AS order_count\nFROM customers c;",
-        "explanation": "For each customer, the subquery counts their orders. Returns one number per customer row.",
-        "scenario": "Customer list with order count for each customer."
+        "title": "Show each employee with their department average",
+        "sql": "SELECT \n    name,\n    department,\n    salary,\n    (SELECT AVG(salary) \n     FROM employees e2 \n     WHERE e2.department = e1.department) AS dept_avg,\n    salary - (SELECT AVG(salary) \n              FROM employees e2 \n              WHERE e2.department = e1.department) AS diff_from_avg\nFROM employees e1;",
+        "explanation": "Scalar subquery calculates department average for each row. Outer query can use the subquery result in calculations.",
+        "scenario": "Compensation report showing each employee relative to department average."
       },
       {
-        "title": "Scalar subquery for lookups",
-        "sql": "SELECT\n    e.first_name,\n    e.last_name,\n    (SELECT d.department_name\n     FROM departments d\n     WHERE d.department_id = e.department_id) AS department\nFROM employees e;",
-        "explanation": "Looks up department name for each employee. Alternative to a JOIN when you only need one column.",
-        "scenario": "Simple employee report with department names."
+        "title": "Customer with their most recent order date",
+        "sql": "SELECT \n    c.customer_name,\n    c.email,\n    (SELECT MAX(order_date) \n     FROM orders o \n     WHERE o.customer_id = c.customer_id) AS last_order_date,\n    (SELECT COUNT(*) \n     FROM orders o \n     WHERE o.customer_id = c.customer_id) AS total_orders\nFROM customers c;",
+        "explanation": "Multiple scalar subqueries in SELECT. MAX gets the latest date, COUNT gets order frequency.",
+        "scenario": "Customer dashboard showing last activity and engagement metrics."
       },
       {
-        "title": "Multiple scalar subqueries",
-        "sql": "SELECT\n    p.product_name,\n    p.price,\n    (SELECT SUM(oi.quantity)\n     FROM order_items oi\n     WHERE oi.product_id = p.product_id) AS units_sold,\n    (SELECT AVG(r.rating)\n     FROM reviews r\n     WHERE r.product_id = p.product_id) AS avg_rating\nFROM products p;",
-        "explanation": "Multiple subqueries can add several calculated columns. Each runs independently for each row.",
-        "scenario": "Product catalog with sales totals and average ratings."
+        "title": "Products with category average price",
+        "sql": "SELECT \n    p.product_name,\n    p.category,\n    p.price,\n    (SELECT AVG(price) \n     FROM products p2 \n     WHERE p2.category = p.category) AS category_avg,\n    ROUND(p.price / (SELECT AVG(price) \n                      FROM products p2 \n                      WHERE p2.category = p.category) * 100, 2) AS pct_of_avg\nFROM products p\nORDER BY pct_of_avg DESC;",
+        "explanation": "Scalar subquery enables per-row calculations relative to group averages. Can be used in arithmetic expressions.",
+        "scenario": "Pricing analysis: identifying products priced above or below category average."
       }
     ],
     "common_mistakes": [
       {
         "title": "Subquery returns multiple rows",
-        "error_sql": "SELECT c.customer_name,\n    (SELECT order_date FROM orders WHERE customer_id = c.customer_id) AS last_order\nFROM customers c;",
-        "error_message": "Subquery returns more than 1 row",
-        "why_it_happens": "A customer can have multiple orders, but SELECT clause expects exactly one value per row.",
-        "fix_sql": "SELECT c.customer_name,\n    (SELECT MAX(order_date)\n     FROM orders\n     WHERE customer_id = c.customer_id) AS last_order\nFROM customers c;",
-        "key_takeaway": "Scalar subqueries must return exactly one value. Use MAX/MIN/COUNT or LIMIT 1."
+        "error_sql": "SELECT name,\n    (SELECT salary FROM employees WHERE department = e.department) AS avg_sal\nFROM employees e;",
+        "error_message": "Subquery returns more than 1 row - ERROR",
+        "why_it_happens": "Scalar subqueries in SELECT must return exactly one row. Multiple matching rows cause an error.",
+        "fix_sql": "SELECT name,\n    (SELECT AVG(salary) FROM employees WHERE department = e.department) AS avg_sal\nFROM employees e;",
+        "key_takeaway": "Use aggregate functions (MAX, AVG, etc.) in scalar subqueries to ensure single-row results."
       },
       {
-        "title": "Performance issues with many scalar subqueries",
-        "error_sql": "SELECT *,\n    (SELECT ...) AS col1,\n    (SELECT ...) AS col2,\n    (SELECT ...) AS col3\nFROM large_table;",
-        "error_message": "Query runs very slowly",
-        "why_it_happens": "Each subquery executes for every row. Three subqueries = 3× the work of one.",
-        "fix_sql": "-- Use JOINs or a single subquery returning multiple columns\nSELECT t.*, s.col1, s.col2, s.col3\nFROM large_table t\nLEFT JOIN summary_table s ON t.id = s.id;",
-        "key_takeaway": "For multiple values, prefer JOINs over multiple scalar subqueries."
+        "title": "Performance issues with correlated scalar subqueries",
+        "error_sql": "SELECT * FROM large_table l1\nWHERE col > (SELECT AVG(col) FROM large_table l2 WHERE l2.group_id = l1.group_id);",
+        "error_message": "Query times out on large tables",
+        "why_it_happens": "Correlated scalar subqueries execute once per row (O(n²) complexity).",
+        "fix_sql": "-- Use JOIN with pre-aggregated subquery instead\nSELECT l.*\nFROM large_table l\nJOIN (\n    SELECT group_id, AVG(col) AS avg_col\n    FROM large_table\n    GROUP BY group_id\n) avgs ON l.group_id = avgs.group_id\nWHERE l.col > avgs.avg_col;",
+        "key_takeaway": "For large tables, use JOINs with derived tables instead of correlated scalar subqueries."
       }
     ],
     "reflection_prompts": [
-      "When should you use a scalar subquery instead of a JOIN?",
+      "When is a scalar subquery better than a JOIN?",
       "What happens if a scalar subquery returns no rows?",
       "How do scalar subqueries affect query performance?",
-      "Can you use aggregate functions in SELECT subqueries?"
+      "Can you use scalar subqueries in WHERE clauses?"
     ],
     "practice_suggestions": [
-      "Add a 'total orders' count to each customer row",
-      "Include department name in an employee query using subquery",
-      "Calculate 'days since last order' for each customer",
-      "Add average product rating to each product listing"
+      "Show employees with the difference between their salary and company average",
+      "List products with their price rank within their category",
+      "Display customers with days since their last order",
+      "Create a report showing each order as a percentage of the customer's total"
     ],
     "difficulty": "intermediate",
-    "estimated_minutes": 15
+    "estimated_minutes": 25
   },
   "subquery-in-where": {
-    "definition": "Subqueries in the WHERE clause filter rows based on values from another query. Using operators like IN, EXISTS, ANY, ALL, or comparison operators, they allow dynamic filtering based on data that isn't known until query execution.",
-    "why_it_matters": "WHERE subqueries enable powerful filtering criteria that reference other tables or calculated values. Find customers who match certain order patterns, products in specific categories, or records that exist (or don't exist) in related tables. They're essential for complex business logic.",
+    "definition": "Subqueries in the WHERE clause filter rows based on values from another query. IN checks if a value matches any in a set returned by a subquery. EXISTS tests if a subquery returns any rows. Comparison operators (=, >, <) can compare to single-value subquery results.",
+    "why_it_matters": "WHERE subqueries enable complex filtering that spans multiple tables or requires aggregation. They answer questions like 'find customers who spent more than average' or 'products in the Electronics category.' They're fundamental for multi-table logic without explicit JOINs.",
     "examples": [
       {
-        "title": "IN subquery for set membership",
-        "sql": "SELECT first_name, last_name\nFROM employees\nWHERE department_id IN (\n    SELECT department_id\n    FROM departments\n    WHERE location_id = 1700\n);",
-        "explanation": "Returns employees in any department at location 1700. IN checks if value matches any in the subquery result.",
-        "scenario": "Find all employees at the headquarters location."
+        "title": "Find products in specific categories using IN",
+        "sql": "SELECT product_name, price\nFROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE category_name IN ('Electronics', 'Computers')\n);",
+        "explanation": "IN with subquery finds all products whose category matches the subquery results. Alternative to joining categories table.",
+        "scenario": "Product catalog filter for specific category groups."
       },
       {
-        "title": "Comparison with subquery",
-        "sql": "SELECT product_name, price\nFROM products\nWHERE price > (SELECT AVG(price) FROM products);",
-        "explanation": "Finds products priced above average. Subquery executes first, then each row is compared to that value.",
-        "scenario": "Identify premium-priced products for a luxury catalog."
+        "title": "Find employees earning above average",
+        "sql": "SELECT name, department, salary\nFROM employees\nWHERE salary > (\n    SELECT AVG(salary)\n    FROM employees\n);",
+        "explanation": "Single-value comparison with scalar subquery. Subquery calculates average once, outer query compares each row.",
+        "scenario": "Identifying high earners for compensation review."
       },
       {
-        "title": "EXISTS for correlated filtering",
-        "sql": "SELECT customer_id, customer_name\nFROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n    AND o.order_date > '2024-01-01'\n);",
-        "explanation": "EXISTS returns true if the subquery finds any matching rows. Efficient for checking related records exist.",
-        "scenario": "Find customers who have placed recent orders (active customers)."
+        "title": "Find customers with large orders using EXISTS",
+        "sql": "SELECT customer_name\nFROM customers c\nWHERE EXISTS (\n    SELECT 1\n    FROM orders o\n    WHERE o.customer_id = c.customer_id\n      AND o.total > 1000\n);",
+        "explanation": "EXISTS in WHERE finds customers meeting the subquery condition. More efficient than IN for this use case.",
+        "scenario": "VIP customer identification for premium support."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Using = instead of IN with multiple values",
-        "error_sql": "SELECT * FROM employees\nWHERE department_id = (SELECT department_id FROM departments WHERE location_id = 1700);",
-        "error_message": "Subquery returns more than 1 row",
-        "why_it_happens": "Multiple departments can be at the same location. = only works with single values.",
-        "fix_sql": "SELECT * FROM employees\nWHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700);",
-        "key_takeaway": "Use IN when the subquery might return multiple values."
+        "title": "Using = with multi-row subquery",
+        "error_sql": "SELECT * FROM employees\nWHERE department = (\n    SELECT department FROM employees\n    WHERE location = 'New York'\n);",
+        "error_message": "Subquery returns more than 1 row - ERROR",
+        "why_it_happens": "= expects exactly one value. IN should be used when subquery can return multiple rows.",
+        "fix_sql": "SELECT * FROM employees\nWHERE department IN (\n    SELECT department FROM employees\n    WHERE location = 'New York'\n);",
+        "key_takeaway": "Use IN for multi-row subqueries, = only for single-value results."
       },
       {
-        "title": "NOT IN with NULL values",
-        "error_sql": "SELECT * FROM employees\nWHERE manager_id NOT IN (SELECT employee_id FROM employees WHERE department_id IS NULL);",
-        "error_message": "Returns no rows or unexpected results",
-        "why_it_happens": "NOT IN with NULL in the subquery result makes the entire condition NULL (unknown).",
-        "fix_sql": "SELECT * FROM employees\nWHERE manager_id NOT IN (SELECT employee_id FROM employees WHERE department_id IS NULL AND employee_id IS NOT NULL)\nOR manager_id IS NULL;",
-        "key_takeaway": "NOT IN can behave unexpectedly with NULLs. Consider NOT EXISTS instead."
+        "title": "NULL values causing unexpected results with IN",
+        "error_sql": "SELECT * FROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE status = 'discontinued'\n);",
+        "error_message": "Missing expected rows when subquery returns NULL",
+        "why_it_happens": "IN with NULL returns UNKNOWN (not FALSE), excluding rows unexpectedly.",
+        "fix_sql": "SELECT * FROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE status = 'discontinued'\n      AND category_id IS NOT NULL\n);",
+        "key_takeaway": "Handle NULL values in subqueries explicitly with IS NOT NULL."
       }
     ],
     "reflection_prompts": [
-      "What's the difference between IN and EXISTS?",
-      "When should you use ANY or ALL instead of IN?",
-      "How do correlated subqueries in WHERE differ from non-correlated ones?",
-      "What's the risk of using NOT IN with nullable columns?"
+      "When should you use IN versus EXISTS in WHERE?",
+      "How do single-value comparisons differ from multi-row IN?",
+      "What happens when a subquery returns NULL?",
+      "Can subqueries reference columns from the outer query?"
     ],
     "practice_suggestions": [
-      "Find employees in departments with more than 10 people",
-      "List products that have never been ordered",
-      "Select customers who have spent more than $1000 total",
-      "Find orders placed by customers in a specific city"
+      "Find products priced above the average in their category",
+      "List customers who have ordered every product in a category",
+      "Identify employees in departments with above-average headcount",
+      "Find orders placed on the same day as the highest-value order"
     ],
     "difficulty": "intermediate",
-    "estimated_minutes": 18
+    "estimated_minutes": 20
   },
   "exists-subqueries": {
     "definition": "The EXISTS operator tests whether a subquery returns any rows. It returns TRUE if the subquery finds at least one matching row, FALSE otherwise. EXISTS is optimized to stop scanning as soon as a match is found, making it efficient for existence checks.",
@@ -2184,1233 +2184,169 @@
     "estimated_minutes": 12
   },
   "string-functions": {
-    "definition": "String functions manipulate and transform text data. Common functions include CONCAT (combine), SUBSTRING/LEFT/RIGHT (extract), UPPER/LOWER (case conversion), TRIM (remove spaces), LENGTH/LEN (get size), REPLACE (substitute), and INSTR/POSITION (find text).",
-    "why_it_matters": "Raw data rarely comes in the format you need. Names need proper casing, IDs need formatting, addresses need cleaning, codes need extracting. String functions transform messy input into clean, consistent, usable data for reports and applications.",
+    "definition": "String functions manipulate text data in SQL. They concatenate strings (CONCAT), extract substrings (SUBSTRING), change case (UPPER, LOWER), remove whitespace (TRIM), find patterns (LIKE, REGEXP), and replace text (REPLACE). These functions enable data cleaning, formatting, and pattern matching.",
+    "why_it_matters": "Real-world data is messy. Names have inconsistent capitalization, phone numbers have varying formats, addresses have extra spaces. String functions clean and standardize data. They're also essential for search features, generating display formats, and extracting components from composite fields.",
     "examples": [
       {
-        "title": "Concatenate and format strings",
-        "sql": "SELECT\n    CONCAT(first_name, ' ', last_name) AS full_name,\n    CONCAT(LEFT(first_name, 1), '.', last_name, '@company.com') AS email\nFROM employees;",
-        "explanation": "CONCAT joins strings. LEFT extracts characters. Combine to create formatted output like full names and generated email addresses.",
-        "scenario": "Creating display names and generating email addresses from name components."
+        "title": "Concatenating and formatting strings",
+        "sql": "SELECT \n    CONCAT(first_name, ' ', last_name) AS full_name,\n    CONCAT(LEFT(first_name, 1), '. ', last_name) AS initials_name,\n    CONCAT('$', FORMAT(salary, 2)) AS formatted_salary\nFROM employees;",
+        "explanation": "CONCAT joins strings. LEFT extracts characters. FORMAT adds thousand separators. Essential for creating display-friendly output.",
+        "scenario": "HR report with properly formatted names and currency."
       },
       {
-        "title": "Extract and clean data",
-        "sql": "SELECT\n    TRIM(BOTH ' ' FROM customer_name) AS clean_name,\n    SUBSTRING(phone FROM 1 FOR 3) AS area_code,\n    REPLACE(phone, '-', '') AS digits_only\nFROM customers;",
-        "explanation": "TRIM removes whitespace, SUBSTRING extracts portions, REPLACE substitutes characters. Essential for data cleaning.",
-        "scenario": "Standardizing customer data: removing extra spaces, extracting area codes, normalizing phone formats."
+        "title": "Case conversion and pattern matching",
+        "sql": "SELECT * FROM customers\nWHERE LOWER(email) LIKE '%@gmail.com'\n   OR UPPER(country) = 'USA';",
+        "explanation": "LOWER and UPPER ensure case-insensitive comparisons. LIKE with % wildcard matches patterns.",
+        "scenario": "Finding customers by email domain or country regardless of input case."
       },
       {
-        "title": "Case conversion and length",
-        "sql": "SELECT\n    UPPER(product_code) AS code_upper,\n    LOWER(product_name) AS name_lower,\n    LENGTH(description) AS desc_length\nFROM products;",
-        "explanation": "UPPER/LOWER standardize case for comparison. LENGTH checks string size. Useful for validation and formatting.",
-        "scenario": "Case-insensitive product code matching and description length validation."
+        "title": "Extracting and cleaning data",
+        "sql": "SELECT \n    TRIM(BOTH ' ' FROM phone) AS clean_phone,\n    SUBSTRING(phone, 1, 3) AS area_code,\n    REPLACE(phone, '-', '') AS digits_only\nFROM customers\nWHERE phone IS NOT NULL;",
+        "explanation": "TRIM removes whitespace. SUBSTRING extracts portions. REPLACE substitutes characters. Essential for data cleaning.",
+        "scenario": "Standardizing phone number formats for a marketing campaign."
       }
     ],
     "common_mistakes": [
       {
-        "title": "NULL values in CONCAT",
-        "error_sql": "SELECT CONCAT(first_name, ' ', middle_name, ' ', last_name)\nFROM employees;",
-        "error_message": "Returns NULL if any argument is NULL",
-        "why_it_happens": "CONCAT returns NULL if any input is NULL in some databases.",
-        "fix_sql": "-- Use CONCAT_WS or COALESCE\nSELECT CONCAT_WS(' ', first_name, middle_name, last_name)\nFROM employees;\n\n-- Or COALESCE to handle NULLs\nSELECT CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name);",
-        "key_takeaway": "Handle NULL values in string concatenation with CONCAT_WS or COALESCE."
+        "title": "Case-sensitive string comparison",
+        "error_sql": "SELECT * FROM users WHERE name = 'john smith';",
+        "error_message": "Returns 0 rows if the name is stored as 'John Smith'",
+        "why_it_happens": "Most string comparisons are case-sensitive by default or depend on collation settings.",
+        "fix_sql": "SELECT * FROM users\nWHERE LOWER(name) = LOWER('john smith');\n-- Or: WHERE name = 'john smith' COLLATE utf8_general_ci;",
+        "key_takeaway": "Use LOWER() or UPPER() for case-insensitive comparisons, or choose appropriate collation."
       },
       {
-        "title": "1-based vs 0-based indexing",
-        "error_sql": "SELECT SUBSTRING('Hello', 0, 2);",
-        "error_message": "May return unexpected result depending on database",
-        "why_it_happens": "SQL uses 1-based indexing (first character is position 1), unlike most programming languages.",
-        "fix_sql": "-- In SQL, first character is at position 1\nSELECT SUBSTRING('Hello', 1, 2);  -- Returns 'He'\nSELECT SUBSTRING('Hello', 2, 2);  -- Returns 'el'",
-        "key_takeaway": "SQL string positions start at 1, not 0."
+        "title": "Leading/trailing spaces causing mismatches",
+        "error_sql": "SELECT * FROM customers WHERE city = 'New York';",
+        "error_message": "Missing rows where city is 'New York ' (with trailing space)",
+        "why_it_happens": "Data entry often includes accidental spaces that aren't visible but affect comparisons.",
+        "fix_sql": "SELECT * FROM customers\nWHERE TRIM(city) = 'New York';\n-- Or clean data during storage with a trigger",
+        "key_takeaway": "Use TRIM() to remove whitespace, or enforce clean data with constraints/triggers."
       }
     ],
     "reflection_prompts": [
-      "How do different databases handle string indexing (1-based vs 0-based)?",
-      "What's the difference between CONCAT and CONCAT_WS?",
-      "How can you reverse a string in SQL?",
-      "What happens when you use string functions on NULL values?"
+      "When should you use CONCAT versus CONCAT_WS?",
+      "How do you handle NULL values in string concatenation?",
+      "What's the difference between LIKE and REGEXP pattern matching?",
+      "How do string functions affect query performance on large tables?"
     ],
     "practice_suggestions": [
-      "Create formatted full names from first, middle, and last name columns",
-      "Extract the domain from an email address",
-      "Standardize phone numbers to a consistent format",
-      "Generate usernames from first and last names"
+      "Create formatted mailing addresses from separate fields",
+      "Build a search that finds matches regardless of spacing or capitalization",
+      "Extract domain names from email addresses",
+      "Generate usernames by combining name components with rules"
     ],
     "difficulty": "beginner",
     "estimated_minutes": 15
   },
   "date-functions": {
-    "definition": "Date and time functions manipulate temporal data. They extract components (YEAR, MONTH, DAY), calculate differences (DATEDIFF), add intervals (DATE_ADD), format dates (DATE_FORMAT), and get current timestamps (NOW, CURDATE).",
-    "why_it_matters": "Business revolves around time - reporting periods, aging calculations, scheduling, deadlines. Date functions let you extract insights from timestamps: monthly sales trends, days since last order, overdue invoices, employee tenure. They're essential for time-based analysis.",
+    "definition": "Date and time functions manipulate temporal data in SQL. They extract components (YEAR, MONTH, DAY), calculate differences (DATEDIFF, TIMESTAMPDIFF), add intervals (DATE_ADD, DATE_SUB), and format dates (DATE_FORMAT). These functions enable reporting by time periods, calculating ages, and scheduling.",
+    "why_it_matters": "Business reporting is heavily time-based. You need to calculate monthly sales, customer tenure, aging reports, and deadlines. Date functions turn raw timestamps into actionable business metrics. Without them, you'd export data to Excel or write complex application code for simple date calculations.",
     "examples": [
       {
-        "title": "Extract date components",
-        "sql": "SELECT\n    order_id,\n    YEAR(order_date) AS order_year,\n    MONTH(order_date) AS order_month,\n    DAY(order_date) AS order_day,\n    DAYNAME(order_date) AS day_of_week\nFROM orders;",
-        "explanation": "Extract parts of a date for grouping and analysis. YEAR, MONTH, DAY, DAYNAME pull out specific components.",
-        "scenario": "Breaking down order dates for time-series analysis and reporting."
+        "title": "Extracting date components",
+        "sql": "SELECT \n    order_id,\n    order_date,\n    YEAR(order_date) AS year,\n    MONTH(order_date) AS month,\n    DAY(order_date) AS day,\n    MONTHNAME(order_date) AS month_name\nFROM orders\nWHERE YEAR(order_date) = 2024;",
+        "explanation": "YEAR, MONTH, DAY extract numeric components. MONTHNAME returns the full month name. Essential for grouping and filtering by time periods.",
+        "scenario": "Sales report breaking down orders by year and month."
       },
       {
-        "title": "Calculate date differences",
-        "sql": "SELECT\n    order_id,\n    order_date,\n    shipped_date,\n    DATEDIFF(shipped_date, order_date) AS days_to_ship,\n    DATEDIFF(CURDATE(), order_date) AS days_since_order\nFROM orders;",
-        "explanation": "DATEDIFF calculates days between dates. Useful for measuring processing time and aging.",
-        "scenario": "Analyzing shipping speed and identifying old unshipped orders."
+        "title": "Calculating date differences",
+        "sql": "SELECT \n    customer_name,\n    signup_date,\n    DATEDIFF(CURDATE(), signup_date) AS days_since_signup,\n    TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) AS age\nFROM customers;",
+        "explanation": "DATEDIFF returns days between dates. TIMESTAMPDIFF calculates in specified units (YEAR, MONTH, etc.). CURDATE() returns current date.",
+        "scenario": "Customer analytics: tenure and demographic analysis."
       },
       {
-        "title": "Add and subtract dates",
-        "sql": "SELECT\n    order_date,\n    DATE_ADD(order_date, INTERVAL 30 DAY) AS due_date,\n    DATE_SUB(CURDATE(), INTERVAL 1 YEAR) AS one_year_ago\nFROM orders;",
-        "explanation": "DATE_ADD/DATE_SUB move forward or backward in time. Essential for calculating due dates and date ranges.",
-        "scenario": "Calculating payment due dates and finding orders from last year."
+        "title": "Adding and subtracting intervals",
+        "sql": "SELECT \n    order_id,\n    order_date,\n    DATE_ADD(order_date, INTERVAL 30 DAY) AS due_date,\n    DATE_SUB(order_date, INTERVAL 1 WEEK) AS reminder_date\nFROM orders\nWHERE order_date >= '2024-01-01';",
+        "explanation": "DATE_ADD and DATE_SUB manipulate dates by adding/subtracting intervals like DAY, WEEK, MONTH, YEAR.",
+        "scenario": "Payment scheduling: calculating due dates and reminder dates."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Comparing dates with strings",
-        "error_sql": "SELECT * FROM orders WHERE order_date > '2024-1-1';",
-        "error_message": "May work but unreliable across databases",
-        "why_it_happens": "String comparison of dates depends on format. '2024-02-01' < '2024-1-1' as strings.",
-        "fix_sql": "-- Use proper date literals or functions\nSELECT * FROM orders WHERE order_date > '2024-01-01';\n\n-- Or use DATE function\nSELECT * FROM orders WHERE order_date >= DATE('2024-01-01');",
-        "key_takeaway": "Use ISO format (YYYY-MM-DD) for date literals."
+        "title": "Using functions on indexed columns",
+        "error_sql": "SELECT * FROM orders\nWHERE YEAR(order_date) = 2024;",
+        "error_message": "Query is slow - full table scan even with index on order_date",
+        "why_it_happens": "Function calls prevent index usage. The database must evaluate YEAR() for every row.",
+        "fix_sql": "SELECT * FROM orders\nWHERE order_date >= '2024-01-01'\n  AND order_date < '2025-01-01';",
+        "key_takeaway": "Avoid functions on indexed columns in WHERE. Use range comparisons instead."
       },
       {
-        "title": "Ignoring time components",
-        "error_sql": "SELECT * FROM orders\nWHERE order_date = '2024-01-15';",
-        "error_message": "No results if order_date includes time (2024-01-15 14:30:00)",
-        "why_it_happens": "DATETIME includes time; '2024-01-15' equals '2024-01-15 00:00:00'.",
-        "fix_sql": "-- Use DATE() to strip time, or range query\nSELECT * FROM orders\nWHERE DATE(order_date) = '2024-01-15';\n\n-- Better for indexing:\nWHERE order_date >= '2024-01-15'\n  AND order_date < '2024-01-16';",
-        "key_takeaway": "Handle time components explicitly when filtering dates."
+        "title": "Incorrect age calculation",
+        "error_sql": "SELECT DATEDIFF(CURDATE(), birth_date) / 365 AS age\nFROM customers;",
+        "error_message": "Age is off by 1 for some dates due to leap years",
+        "why_it_happens": "Years have 365.25 days on average. Simple division doesn't account for leap years or birth month.",
+        "fix_sql": "SELECT TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) AS age\nFROM customers;",
+        "key_takeaway": "Use TIMESTAMPDIFF for accurate year/month calculations, not day arithmetic."
       }
     ],
     "reflection_prompts": [
-      "What's the difference between DATE, DATETIME, and TIMESTAMP?",
-      "How do you find records from the last 30 days?",
-      "What's the most efficient way to filter by date range?",
-      "How do time zones affect date calculations?"
+      "Why shouldn't you use functions on indexed date columns in WHERE clauses?",
+      "How would you find all records from the last 30 days?",
+      "What's the difference between CURDATE(), NOW(), and CURRENT_TIMESTAMP?",
+      "How do you handle timezone conversions in SQL?"
     ],
     "practice_suggestions": [
-      "Calculate employee tenure in years and months",
-      "Find all orders placed in the current month",
-      "Identify customers who haven't ordered in 90 days",
-      "Create a report grouped by week of the year"
+      "Write a query to find all orders from the previous month",
+      "Calculate customer retention rates by signup month",
+      "Create a report showing average order value by day of week",
+      "Build a query to identify overdue invoices with aging buckets"
     ],
     "difficulty": "beginner",
     "estimated_minutes": 15
   },
   "data-types": {
-    "definition": "Data types define the kind of data a column can store: numbers (INT, DECIMAL, FLOAT), strings (VARCHAR, CHAR, TEXT), dates (DATE, DATETIME, TIMESTAMP), booleans (BOOLEAN), and binary data (BLOB). Choosing the right type ensures data integrity and optimal storage.",
-    "why_it_matters": "Data types enforce data quality and optimize performance. Use DECIMAL for money (exact precision), not FLOAT (rounding errors). Use appropriate string lengths to save space. Use DATE types for temporal data to enable date arithmetic. Wrong types cause bugs, wasted space, and slow queries.",
+    "definition": "SQL data types define the kind of data that can be stored in each column, such as INT for integers, VARCHAR for variable-length strings, DECIMAL for exact numeric values, DATE for calendar dates, and BOOLEAN for true/false values. Choosing the right data type ensures data integrity, optimizes storage, and enables appropriate operations.",
+    "why_it_matters": "Proper data type selection is foundational to database design. Using VARCHAR for dates prevents date arithmetic. Using FLOAT for money causes rounding errors. Using INT when you need BIGINT leads to overflow. Data types enforce business rules at the database level and significantly impact query performance through indexing and storage efficiency.",
     "examples": [
       {
-        "title": "Numeric data types",
-        "sql": "CREATE TABLE financial_data (\n    transaction_id INT PRIMARY KEY,\n    quantity INT,                    -- Whole numbers\n    unit_price DECIMAL(10,2),        -- Money: 10 digits, 2 after decimal\n    tax_rate DECIMAL(5,4),           -- Percentages: 0.0825\n    large_value BIGINT,              -- Very large integers\n    approximate FLOAT                -- Scientific, not for money\n);",
-        "explanation": "INT for whole numbers, DECIMAL for exact precision (money), FLOAT for scientific approximations. DECIMAL(precision, scale).",
-        "scenario": "Financial table with appropriate numeric types for different use cases."
+        "title": "Creating a table with appropriate data types",
+        "sql": "CREATE TABLE employees (\n    employee_id INT PRIMARY KEY AUTO_INCREMENT,\n    first_name VARCHAR(50) NOT NULL,\n    last_name VARCHAR(50) NOT NULL,\n    email VARCHAR(255) UNIQUE,\n    hire_date DATE NOT NULL,\n    salary DECIMAL(10,2),\n    is_active BOOLEAN DEFAULT TRUE,\n    notes TEXT\n);",
+        "explanation": "INT for IDs (whole numbers), VARCHAR for strings with max length, DATE for calendar dates (no time), DECIMAL(10,2) for exact money values, BOOLEAN for flags, TEXT for long content.",
+        "scenario": "Employee database with various data types for different information."
       },
       {
-        "title": "String data types",
-        "sql": "CREATE TABLE customer_data (\n    customer_id INT PRIMARY KEY,\n    first_name VARCHAR(50),          -- Variable length, up to 50\n    country_code CHAR(2),            -- Fixed length: 'US', 'CA'\n    notes TEXT,                      -- Very long text, no length limit\n    email VARCHAR(255) NOT NULL\n);",
-        "explanation": "VARCHAR for variable-length text, CHAR for fixed-length codes, TEXT for long content. VARCHAR uses only needed space.",
-        "scenario": "Customer table with efficient string storage for different field types."
+        "title": "Date arithmetic with DATE and DATETIME",
+        "sql": "SELECT \n    first_name,\n    hire_date,\n    DATEDIFF(CURDATE(), hire_date) AS days_employed,\n    DATE_ADD(hire_date, INTERVAL 1 YEAR) AS first_review\nFROM employees\nWHERE hire_date >= '2023-01-01';",
+        "explanation": "DATE types enable arithmetic like DATEDIFF for calculating periods and DATE_ADD for adding intervals. These operations wouldn't work with VARCHAR dates.",
+        "scenario": "HR report calculating tenure and upcoming anniversary dates."
       },
       {
-        "title": "Date and time types",
-        "sql": "CREATE TABLE events (\n    event_id INT PRIMARY KEY,\n    event_date DATE,                 -- Date only: 2024-01-15\n    start_time TIME,                 -- Time only: 14:30:00\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    schedule DATETIME                -- Date and time: 2024-01-15 14:30:00\n);",
-        "explanation": "DATE for dates, TIME for times, DATETIME/TIMESTAMP for both. TIMESTAMP often auto-updates on modification.",
-        "scenario": "Event tracking with different precision needs for different fields."
+        "title": "Exact decimal arithmetic with DECIMAL",
+        "sql": "SELECT \n    product_name,\n    price,\n    quantity,\n    price * quantity AS exact_total,\n    CAST(price * quantity AS DECIMAL(10,2)) AS rounded_total\nFROM order_items;",
+        "explanation": "DECIMAL stores numbers exactly (no floating-point errors). Critical for financial calculations where precision matters.",
+        "scenario": "Invoice calculation requiring exact currency precision."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Using FLOAT for money",
-        "error_sql": "CREATE TABLE orders (total FLOAT);\nINSERT INTO orders VALUES (0.1 + 0.2);",
-        "error_message": "Stores 0.30000000000000004 instead of 0.3",
-        "why_it_happens": "FLOAT uses binary floating-point which can't represent all decimals exactly.",
-        "fix_sql": "CREATE TABLE orders (total DECIMAL(10,2));\nINSERT INTO orders VALUES (0.30);",
-        "key_takeaway": "Always use DECIMAL for monetary values."
+        "title": "Using FLOAT or DOUBLE for money",
+        "error_sql": "CREATE TABLE products (\n    name VARCHAR(100),\n    price FLOAT  -- DON'T DO THIS\n);",
+        "error_message": "Rounding errors in calculations: 0.1 + 0.2 != 0.3",
+        "why_it_happens": "FLOAT uses binary floating-point representation which cannot exactly represent many decimal values like 0.1.",
+        "fix_sql": "CREATE TABLE products (\n    name VARCHAR(100),\n    price DECIMAL(10,2)  -- Exact precision\n);",
+        "key_takeaway": "Always use DECIMAL for money. Never use FLOAT or DOUBLE for financial data."
       },
       {
-        "title": "VARCHAR too short",
-        "error_sql": "CREATE TABLE users (name VARCHAR(20));\nINSERT INTO users VALUES ('Christopher Alexander');",
-        "error_message": "Data too long for column",
-        "why_it_happens": "Name is 21 characters, column only allows 20.",
-        "fix_sql": "CREATE TABLE users (name VARCHAR(100));",
-        "key_takeaway": "Be generous with VARCHAR lengths - storage is cheap, errors are expensive."
+        "title": "Storing dates as VARCHAR",
+        "error_sql": "CREATE TABLE events (\n    name VARCHAR(100),\n    event_date VARCHAR(10)  -- '2024-03-15'\n);",
+        "error_message": "Sorting and comparisons fail: '2024-01-02' comes after '2024-01-15'",
+        "why_it_happens": "String comparison is character-by-character. '2' > '1', so '2024-01-20' > '2024-01-3' as strings.",
+        "fix_sql": "CREATE TABLE events (\n    name VARCHAR(100),\n    event_date DATE\n);",
+        "key_takeaway": "Use DATE, TIME, or DATETIME for temporal data to enable proper operations."
       }
     ],
     "reflection_prompts": [
-      "What's the difference between CHAR and VARCHAR?",
-      "Why is DECIMAL better than FLOAT for financial data?",
-      "When should you use TEXT instead of VARCHAR?",
-      "How do you choose between DATE, DATETIME, and TIMESTAMP?"
+      "Why is DECIMAL better than FLOAT for financial calculations?",
+      "What happens if you store a 100-character string in a VARCHAR(50) column?",
+      "When would you choose TEXT over VARCHAR?",
+      "How do data types affect index performance?"
     ],
     "practice_suggestions": [
-      "Design a table with appropriate types for an e-commerce order",
-      "Choose the right type for a phone number field",
-      "Create a table for tracking inventory with proper numeric types",
-      "Compare storage requirements of different string types"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "case-expressions": {
-    "definition": "The CASE expression adds conditional logic to SQL queries. It evaluates conditions and returns different values based on which condition is true. Similar to IF/ELSE or SWITCH statements in programming languages, CASE enables dynamic value transformation.",
-    "why_it_matters": "Real-world reporting needs categories, tiers, and conditional labels that don't exist in raw data. CASE lets you create these on the fly - customer segments, priority levels, status descriptions, grade classifications. It transforms raw values into meaningful business categories.",
-    "examples": [
-      {
-        "title": "Simple CASE with categories",
-        "sql": "SELECT\n    product_name,\n    price,\n    CASE\n        WHEN price < 50 THEN 'Budget'\n        WHEN price < 200 THEN 'Mid-range'\n        WHEN price < 1000 THEN 'Premium'\n        ELSE 'Luxury'\n    END AS price_tier\nFROM products;",
-        "explanation": "Evaluates conditions in order. Returns the result for the first true condition. ELSE catches anything unmatched.",
-        "scenario": "Categorizing products into price tiers for marketing campaigns."
-      },
-      {
-        "title": "CASE in aggregation",
-        "sql": "SELECT\n    department_id,\n    COUNT(*) AS total_employees,\n    SUM(CASE WHEN salary > 80000 THEN 1 ELSE 0 END) AS high_earners,\n    SUM(CASE WHEN hire_date >= '2024-01-01' THEN 1 ELSE 0 END) AS new_hires\nFROM employees\nGROUP BY department_id;",
-        "explanation": "CASE inside aggregates creates conditional counts. Count only rows meeting specific criteria within each group.",
-        "scenario": "Department summary showing total staff, high earners, and recent hires."
-      },
-      {
-        "title": "CASE for sorting custom order",
-        "sql": "SELECT * FROM orders\nORDER BY\n    CASE status\n        WHEN 'urgent' THEN 1\n        WHEN 'high' THEN 2\n        WHEN 'normal' THEN 3\n        WHEN 'low' THEN 4\n    END;",
-        "explanation": "CASE in ORDER BY creates custom sort orders. Alphabetically 'urgent' comes after 'normal' - CASE fixes this.",
-        "scenario": "Priority queue showing urgent orders first regardless of alphabetical order."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Missing ELSE clause",
-        "error_sql": "SELECT CASE WHEN score > 90 THEN 'A' WHEN score > 80 THEN 'B' END FROM grades;",
-        "error_message": "Returns NULL for scores <= 80",
-        "why_it_happens": "Without ELSE, unmatched conditions return NULL which may cause unexpected results.",
-        "fix_sql": "SELECT CASE\n    WHEN score > 90 THEN 'A'\n    WHEN score > 80 THEN 'B'\n    ELSE 'C or below'\nEND FROM grades;",
-        "key_takeaway": "Always include ELSE for completeness, even if you think all cases are covered."
-      },
-      {
-        "title": "Wrong order of conditions",
-        "error_sql": "SELECT CASE\n    WHEN score > 60 THEN 'D'\n    WHEN score > 90 THEN 'A'\n    WHEN score > 80 THEN 'B'\nEND FROM grades;",
-        "error_message": "No error, but scores > 90 never get 'A'",
-        "why_it_happens": "95 > 60 is true first, so it returns 'D'. Conditions evaluate top-to-bottom.",
-        "fix_sql": "SELECT CASE\n    WHEN score > 90 THEN 'A'\n    WHEN score > 80 THEN 'B'\n    WHEN score > 60 THEN 'D'\nEND FROM grades;",
-        "key_takeaway": "Order CASE conditions from most specific to least specific."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between simple and searched CASE expressions?",
-      "Can you use CASE in a WHERE clause?",
-      "How does CASE handle NULL values?",
-      "When would you use CASE instead of separate queries?"
-    ],
-    "practice_suggestions": [
-      "Categorize customers by total spending (Bronze, Silver, Gold)",
-      "Create a report with conditional formatting flags",
-      "Implement a custom sort order for status values",
-      "Calculate conditional totals using CASE in aggregates"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 18
-  },
-  "coalesce-nullif": {
-    "definition": "COALESCE returns the first non-NULL value from a list of arguments. NULLIF returns NULL if two expressions are equal, otherwise returns the first expression. Together they handle NULL values and prevent division by zero.",
-    "why_it_matters": "NULL values cause problems in calculations and display. COALESCE lets you provide defaults - show 'N/A' instead of NULL, use 0 instead of NULL for math. NULLIF prevents errors like division by zero by converting problematic values to NULL before operations.",
-    "examples": [
-      {
-        "title": "COALESCE for default values",
-        "sql": "SELECT\n    product_name,\n    COALESCE(description, 'No description available') AS description,\n    COALESCE(discount_price, price, 0) AS final_price\nFROM products;",
-        "explanation": "Returns first non-NULL value. If description is NULL, shows the text. If discount_price is NULL, falls back to price, then to 0.",
-        "scenario": "Product listing with friendly defaults for missing data."
-      },
-      {
-        "title": "COALESCE for calculations",
-        "sql": "SELECT\n    employee_id,\n    base_salary,\n    commission,\n    base_salary + COALESCE(commission, 0) AS total_compensation\nFROM employees;",
-        "explanation": "NULL + anything = NULL. COALESCE converts NULL commission to 0 so addition works correctly.",
-        "scenario": "Calculating total compensation where commission may be NULL."
-      },
-      {
-        "title": "NULLIF to prevent division by zero",
-        "sql": "SELECT\n    department_id,\n    total_sales,\n    num_employees,\n    total_sales / NULLIF(num_employees, 0) AS sales_per_employee\nFROM departments;",
-        "explanation": "NULLIF returns NULL if num_employees is 0. Division by NULL returns NULL instead of causing an error.",
-        "scenario": "Calculating averages safely when denominator might be zero."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using IFNULL/ISNULL inconsistently",
-        "error_sql": "SELECT IFNULL(column, 0) FROM table;  -- MySQL\nSELECT ISNULL(column, 0) FROM table;  -- SQL Server",
-        "error_message": "Function doesn't exist in current database",
-        "why_it_happens": "Different databases have different NULL-handling functions.",
-        "fix_sql": "-- COALESCE is ANSI standard and works everywhere\nSELECT COALESCE(column, 0) FROM table;",
-        "key_takeaway": "Use COALESCE for portability across database systems."
-      },
-      {
-        "title": "Wrong order in COALESCE",
-        "error_sql": "SELECT COALESCE('N/A', phone_number) FROM contacts;",
-        "error_message": "Always returns 'N/A' - never checks phone_number",
-        "why_it_happens": "'N/A' is not NULL, so COALESCE returns it immediately without checking phone_number.",
-        "fix_sql": "SELECT COALESCE(phone_number, 'N/A') FROM contacts;",
-        "key_takeaway": "Put the potentially NULL value first, default value last."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between COALESCE and IFNULL?",
-      "How many arguments can COALESCE take?",
-      "When would you use NULLIF instead of a CASE statement?",
-      "What happens when all COALESCE arguments are NULL?"
-    ],
-    "practice_suggestions": [
-      "Display 'Not Assigned' for NULL manager names",
-      "Calculate order totals handling NULL discount values",
-      "Prevent division by zero in percentage calculations",
-      "Create a fallback chain: preferred_email, work_email, 'No email'"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 12
-  },
-  "null-handling": {
-    "definition": "NULL represents missing or unknown data in SQL. It's not the same as zero or empty string - it means 'no value exists.' Special operators IS NULL and IS NOT NULL test for NULL, and functions like COALESCE, IFNULL, and NULLIF help work with NULL values.",
-    "why_it_matters": "NULL values are inevitable in real databases, but they cause unexpected behavior. Comparisons with NULL return UNKNOWN (not TRUE or FALSE). Arithmetic with NULL returns NULL. Understanding NULL handling prevents bugs and ensures your queries work correctly with incomplete data.",
-    "examples": [
-      {
-        "title": "Checking for NULL values",
-        "sql": "SELECT * FROM employees\nWHERE manager_id IS NULL;\n\nSELECT * FROM orders\nWHERE shipped_date IS NOT NULL;",
-        "explanation": "Use IS NULL and IS NOT NULL to test for NULL. Regular comparisons (= NULL, != NULL) don't work as expected.",
-        "scenario": "Finding employees without managers (top-level executives) and orders that have been shipped."
-      },
-      {
-        "title": "NULL in comparisons",
-        "sql": "SELECT * FROM products\nWHERE price = NULL;  -- Returns nothing!\n\nSELECT * FROM products\nWHERE price IS NULL;  -- Correct way",
-        "explanation": "Any comparison with NULL returns UNKNOWN, which is treated as FALSE in WHERE clauses. Always use IS NULL.",
-        "scenario": "Understanding why NULL comparisons fail and how to fix them."
-      },
-      {
-        "title": "Handling NULL in aggregates",
-        "sql": "SELECT\n    COUNT(*) AS total_rows,\n    COUNT(manager_id) AS rows_with_manager,\n    COUNT(*) - COUNT(manager_id) AS rows_without_manager\nFROM employees;",
-        "explanation": "COUNT(column) ignores NULLs. COUNT(*) counts all rows. Comparing them shows how many NULLs exist.",
-        "scenario": "Analyzing data completeness - how many employees lack manager assignments."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using = NULL instead of IS NULL",
-        "error_sql": "SELECT * FROM employees WHERE manager_id = NULL;",
-        "error_message": "No error, but returns no rows",
-        "why_it_happens": "NULL = NULL evaluates to UNKNOWN, not TRUE. WHERE only keeps TRUE rows.",
-        "fix_sql": "SELECT * FROM employees WHERE manager_id IS NULL;",
-        "key_takeaway": "Always use IS NULL and IS NOT NULL - never = NULL or != NULL."
-      },
-      {
-        "title": "Unexpected results with NULL in calculations",
-        "error_sql": "SELECT salary + bonus AS total\nFROM employees\nWHERE employee_id = 5;",
-        "error_message": "Returns NULL if either salary or bonus is NULL",
-        "why_it_happens": "Any operation with NULL returns NULL.",
-        "fix_sql": "SELECT COALESCE(salary, 0) + COALESCE(bonus, 0) AS total\nFROM employees\nWHERE employee_id = 5;",
-        "key_takeaway": "Use COALESCE to treat NULL as 0 in calculations."
-      }
-    ],
-    "reflection_prompts": [
-      "Why does NULL = NULL return UNKNOWN instead of TRUE?",
-      "How do aggregate functions handle NULL values?",
-      "What's the difference between NULL and empty string?",
-      "How would you sort NULL values first or last?"
-    ],
-    "practice_suggestions": [
-      "Find all records with missing phone numbers",
-      "Calculate averages excluding NULL values",
-      "Replace NULL descriptions with 'No description'",
-      "Identify which columns have the most NULL values"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 12
-  },
-  "subqueries-intro": {
-    "definition": "A subquery (or inner query) is a SELECT statement nested inside another SQL statement. It can return a single value, a single row, a column of values, or a complete table, which the outer query then uses for filtering, comparison, or joining.",
-    "why_it_matters": "Subqueries enable complex, multi-step logic within a single SQL statement. They let you use query results as input for other queries - like finding customers who spent more than average, or products in categories that have low inventory. They're essential for sophisticated data analysis.",
-    "examples": [
-      {
-        "title": "Subquery returning a single value",
-        "sql": "SELECT first_name, last_name, salary\nFROM employees\nWHERE salary > (SELECT AVG(salary) FROM employees);",
-        "explanation": "The subquery calculates the average salary first. The outer query finds employees earning more than that average.",
-        "scenario": "Identify above-average earners for compensation review."
-      },
-      {
-        "title": "Subquery returning multiple values",
-        "sql": "SELECT product_name, price\nFROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE category_name LIKE '%Electronics%'\n);",
-        "explanation": "Inner query finds category IDs. Outer query uses IN to find products in any of those categories.",
-        "scenario": "Find all products in electronics-related categories."
-      },
-      {
-        "title": "Subquery as a derived table",
-        "sql": "SELECT dept_avg.department_id, dept_avg.avg_salary\nFROM (\n    SELECT department_id, AVG(salary) AS avg_salary\n    FROM employees\n    GROUP BY department_id\n) AS dept_avg\nWHERE dept_avg.avg_salary > 50000;",
-        "explanation": "Subquery in FROM clause creates a temporary table. Outer query can filter and sort this result.",
-        "scenario": "Find departments with above-average compensation for benchmarking."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Subquery returns multiple rows for comparison",
-        "error_sql": "SELECT * FROM employees\nWHERE salary = (SELECT salary FROM employees WHERE department_id = 5);",
-        "error_message": "Subquery returns more than 1 row",
-        "why_it_happens": "The = operator expects a single value, but department 5 has multiple employees with different salaries.",
-        "fix_sql": "SELECT * FROM employees\nWHERE salary IN (SELECT salary FROM employees WHERE department_id = 5);",
-        "key_takeaway": "Use IN for multiple values, = for single values."
-      },
-      {
-        "title": "Correlated subquery performance",
-        "error_sql": "SELECT * FROM employees e1\nWHERE salary > (SELECT AVG(salary) FROM employees e2 WHERE e2.dept_id = e1.dept_id);",
-        "error_message": "Query runs very slowly on large tables",
-        "why_it_happens": "Correlated subqueries run once for each outer row (O(n²) complexity).",
-        "fix_sql": "WITH dept_avg AS (\n    SELECT dept_id, AVG(salary) AS avg_sal\n    FROM employees GROUP BY dept_id\n)\nSELECT e.* FROM employees e\nJOIN dept_avg d ON e.dept_id = d.dept_id\nWHERE e.salary > d.avg_sal;",
-        "key_takeaway": "Consider JOINs or CTEs instead of correlated subqueries for large datasets."
-      }
-    ],
-    "reflection_prompts": [
-      "What types of values can a subquery return?",
-      "When is a subquery better than a JOIN?",
-      "What's the difference between a correlated and non-correlated subquery?",
-      "How do subqueries affect query performance?"
-    ],
-    "practice_suggestions": [
-      "Find products more expensive than the average product price",
-      "List customers who have placed orders",
-      "Find employees in the same department as 'John Smith'",
-      "Get orders with totals higher than the overall average order"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 20
-  },
-  "subquery-in-select": {
-    "definition": "A scalar subquery in the SELECT clause returns a single value for each row of the outer query. It allows you to add calculated columns based on data from related tables without using a JOIN.",
-    "why_it_matters": "Subqueries in SELECT let you add supplementary information to each row - like including a count of related records or looking up a value from another table. They're useful when you need just one additional value per row and want to avoid complicating your main query with JOINs.",
-    "examples": [
-      {
-        "title": "Scalar subquery for counts",
-        "sql": "SELECT\n    c.customer_id,\n    c.customer_name,\n    (SELECT COUNT(*)\n     FROM orders o\n     WHERE o.customer_id = c.customer_id) AS order_count\nFROM customers c;",
-        "explanation": "For each customer, the subquery counts their orders. Returns one number per customer row.",
-        "scenario": "Customer list with order count for each customer."
-      },
-      {
-        "title": "Scalar subquery for lookups",
-        "sql": "SELECT\n    e.first_name,\n    e.last_name,\n    (SELECT d.department_name\n     FROM departments d\n     WHERE d.department_id = e.department_id) AS department\nFROM employees e;",
-        "explanation": "Looks up department name for each employee. Alternative to a JOIN when you only need one column.",
-        "scenario": "Simple employee report with department names."
-      },
-      {
-        "title": "Multiple scalar subqueries",
-        "sql": "SELECT\n    p.product_name,\n    p.price,\n    (SELECT SUM(oi.quantity)\n     FROM order_items oi\n     WHERE oi.product_id = p.product_id) AS units_sold,\n    (SELECT AVG(r.rating)\n     FROM reviews r\n     WHERE r.product_id = p.product_id) AS avg_rating\nFROM products p;",
-        "explanation": "Multiple subqueries can add several calculated columns. Each runs independently for each row.",
-        "scenario": "Product catalog with sales totals and average ratings."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Subquery returns multiple rows",
-        "error_sql": "SELECT c.customer_name,\n    (SELECT order_date FROM orders WHERE customer_id = c.customer_id) AS last_order\nFROM customers c;",
-        "error_message": "Subquery returns more than 1 row",
-        "why_it_happens": "A customer can have multiple orders, but SELECT clause expects exactly one value per row.",
-        "fix_sql": "SELECT c.customer_name,\n    (SELECT MAX(order_date)\n     FROM orders\n     WHERE customer_id = c.customer_id) AS last_order\nFROM customers c;",
-        "key_takeaway": "Scalar subqueries must return exactly one value. Use MAX/MIN/COUNT or LIMIT 1."
-      },
-      {
-        "title": "Performance issues with many scalar subqueries",
-        "error_sql": "SELECT *,\n    (SELECT ...) AS col1,\n    (SELECT ...) AS col2,\n    (SELECT ...) AS col3\nFROM large_table;",
-        "error_message": "Query runs very slowly",
-        "why_it_happens": "Each subquery executes for every row. Three subqueries = 3× the work of one.",
-        "fix_sql": "-- Use JOINs or a single subquery returning multiple columns\nSELECT t.*, s.col1, s.col2, s.col3\nFROM large_table t\nLEFT JOIN summary_table s ON t.id = s.id;",
-        "key_takeaway": "For multiple values, prefer JOINs over multiple scalar subqueries."
-      }
-    ],
-    "reflection_prompts": [
-      "When should you use a scalar subquery instead of a JOIN?",
-      "What happens if a scalar subquery returns no rows?",
-      "How do scalar subqueries affect query performance?",
-      "Can you use aggregate functions in SELECT subqueries?"
-    ],
-    "practice_suggestions": [
-      "Add a 'total orders' count to each customer row",
-      "Include department name in an employee query using subquery",
-      "Calculate 'days since last order' for each customer",
-      "Add average product rating to each product listing"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 15
-  },
-  "subquery-in-where": {
-    "definition": "Subqueries in the WHERE clause filter rows based on values from another query. Using operators like IN, EXISTS, ANY, ALL, or comparison operators, they allow dynamic filtering based on data that isn't known until query execution.",
-    "why_it_matters": "WHERE subqueries enable powerful filtering criteria that reference other tables or calculated values. Find customers who match certain order patterns, products in specific categories, or records that exist (or don't exist) in related tables. They're essential for complex business logic.",
-    "examples": [
-      {
-        "title": "IN subquery for set membership",
-        "sql": "SELECT first_name, last_name\nFROM employees\nWHERE department_id IN (\n    SELECT department_id\n    FROM departments\n    WHERE location_id = 1700\n);",
-        "explanation": "Returns employees in any department at location 1700. IN checks if value matches any in the subquery result.",
-        "scenario": "Find all employees at the headquarters location."
-      },
-      {
-        "title": "Comparison with subquery",
-        "sql": "SELECT product_name, price\nFROM products\nWHERE price > (SELECT AVG(price) FROM products);",
-        "explanation": "Finds products priced above average. Subquery executes first, then each row is compared to that value.",
-        "scenario": "Identify premium-priced products for a luxury catalog."
-      },
-      {
-        "title": "EXISTS for correlated filtering",
-        "sql": "SELECT customer_id, customer_name\nFROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n    AND o.order_date > '2024-01-01'\n);",
-        "explanation": "EXISTS returns true if the subquery finds any matching rows. Efficient for checking related records exist.",
-        "scenario": "Find customers who have placed recent orders (active customers)."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using = instead of IN with multiple values",
-        "error_sql": "SELECT * FROM employees\nWHERE department_id = (SELECT department_id FROM departments WHERE location_id = 1700);",
-        "error_message": "Subquery returns more than 1 row",
-        "why_it_happens": "Multiple departments can be at the same location. = only works with single values.",
-        "fix_sql": "SELECT * FROM employees\nWHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700);",
-        "key_takeaway": "Use IN when the subquery might return multiple values."
-      },
-      {
-        "title": "NOT IN with NULL values",
-        "error_sql": "SELECT * FROM employees\nWHERE manager_id NOT IN (SELECT employee_id FROM employees WHERE department_id IS NULL);",
-        "error_message": "Returns no rows or unexpected results",
-        "why_it_happens": "NOT IN with NULL in the subquery result makes the entire condition NULL (unknown).",
-        "fix_sql": "SELECT * FROM employees\nWHERE manager_id NOT IN (SELECT employee_id FROM employees WHERE department_id IS NULL AND employee_id IS NOT NULL)\nOR manager_id IS NULL;",
-        "key_takeaway": "NOT IN can behave unexpectedly with NULLs. Consider NOT EXISTS instead."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between IN and EXISTS?",
-      "When should you use ANY or ALL instead of IN?",
-      "How do correlated subqueries in WHERE differ from non-correlated ones?",
-      "What's the risk of using NOT IN with nullable columns?"
-    ],
-    "practice_suggestions": [
-      "Find employees in departments with more than 10 people",
-      "List products that have never been ordered",
-      "Select customers who have spent more than $1000 total",
-      "Find orders placed by customers in a specific city"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 18
-  },
-  "exists-subqueries": {
-    "definition": "The EXISTS operator tests whether a subquery returns any rows. It returns TRUE if the subquery finds at least one matching row, FALSE otherwise. EXISTS is optimized to stop scanning as soon as a match is found, making it efficient for existence checks.",
-    "why_it_matters": "EXISTS is the most efficient way to check for related records. Unlike IN which builds a result set, EXISTS stops at the first match. It's also safer than NOT IN when dealing with NULL values. EXISTS is essential for finding records with or without related data.",
-    "examples": [
-      {
-        "title": "Find records with related data using EXISTS",
-        "sql": "SELECT department_id, department_name\nFROM departments d\nWHERE EXISTS (\n    SELECT 1 FROM employees e\n    WHERE e.department_id = d.department_id\n);",
-        "explanation": "Returns departments that have at least one employee. EXISTS stops checking after finding the first employee in each department.",
-        "scenario": "Find active departments that currently have staff assigned."
-      },
-      {
-        "title": "Find records without related data using NOT EXISTS",
-        "sql": "SELECT product_id, product_name\nFROM products p\nWHERE NOT EXISTS (\n    SELECT 1 FROM order_items oi\n    WHERE oi.product_id = p.product_id\n);",
-        "explanation": "NOT EXISTS returns products that have never been ordered. The subquery finds orders for each product; if none exist, the product is included.",
-        "scenario": "Identify slow-moving or dead stock that has never sold."
-      },
-      {
-        "title": "EXISTS with correlated conditions",
-        "sql": "SELECT c.customer_id, c.customer_name\nFROM customers c\nWHERE EXISTS (\n    SELECT 1 FROM orders o\n    WHERE o.customer_id = c.customer_id\n    AND o.total > 1000\n    AND o.order_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)\n);",
-        "explanation": "Finds customers with high-value recent orders. Multiple conditions in the EXISTS subquery for precise filtering.",
-        "scenario": "VIP customer identification for premium support."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using SELECT * in EXISTS subquery",
-        "error_sql": "SELECT * FROM departments\nWHERE EXISTS (SELECT * FROM employees WHERE...);",
-        "error_message": "Works but inefficient",
-        "why_it_happens": "SELECT * retrieves all columns, but EXISTS only cares if any row exists.",
-        "fix_sql": "SELECT * FROM departments\nWHERE EXISTS (SELECT 1 FROM employees WHERE...);",
-        "key_takeaway": "Use SELECT 1 (or SELECT *) in EXISTS - modern optimizers handle both well, but SELECT 1 is clearer intent."
-      },
-      {
-        "title": "Using IN instead of EXISTS for large datasets",
-        "error_sql": "SELECT * FROM customers\nWHERE customer_id IN (SELECT DISTINCT customer_id FROM orders);",
-        "error_message": "Slower performance on large tables",
-        "why_it_happens": "IN builds a complete list of values first. EXISTS stops at first match per row.",
-        "fix_sql": "SELECT * FROM customers c\nWHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id);",
-        "key_takeaway": "Prefer EXISTS over IN for existence checks, especially on large tables."
-      }
-    ],
-    "reflection_prompts": [
-      "Why is EXISTS often faster than IN for large datasets?",
-      "What's the difference between NOT EXISTS and NOT IN with NULLs?",
-      "Does the SELECT list in an EXISTS subquery matter?",
-      "When would you use EXISTS versus a JOIN?"
-    ],
-    "practice_suggestions": [
-      "Find customers who have never placed an order",
-      "List departments with no employees",
-      "Identify products that are in stock but have no sales",
-      "Find employees who have never been assigned to a project"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 18
-  },
-  "union": {
-    "definition": "UNION combines the results of two or more SELECT statements into a single result set. It vertically stacks the results, removing duplicate rows by default. UNION ALL preserves duplicates and is faster when you know rows are unique or want to keep duplicates.",
-    "why_it_matters": "UNION lets you combine data from different sources into unified reports. Merge quarterly data into yearly totals, combine active and archived records, or stack different categories into a single list. It's essential when you need data that spans multiple tables with similar structures.",
-    "examples": [
-      {
-        "title": "Basic UNION removing duplicates",
-        "sql": "SELECT product_name, price, 'Current' AS source\nFROM products\nWHERE status = 'active'\n\nUNION\n\nSELECT product_name, price, 'Discontinued' AS source\nFROM discontinued_products;",
-        "explanation": "Combines active and discontinued products into one list. If a product exists in both tables, it appears only once.",
-        "scenario": "Complete product catalog including both current and discontinued items."
-      },
-      {
-        "title": "UNION ALL to preserve duplicates",
-        "sql": "SELECT customer_id, amount, 'Order' AS type FROM orders\nUNION ALL\nSELECT customer_id, amount, 'Refund' AS type FROM refunds\nORDER BY customer_id, type;",
-        "explanation": "UNION ALL is faster because it doesn't check for duplicates. Use when duplicates aren't possible or you want to keep them.",
-        "scenario": "Complete transaction history showing both orders and refunds for each customer."
-      },
-      {
-        "title": "UNION with different column sources",
-        "sql": "SELECT\n    first_name AS name,\n    email,\n    'Employee' AS role\nFROM employees\n\nUNION\n\nSELECT\n    customer_name AS name,\n    email,\n    'Customer' AS role\nFROM customers;",
-        "explanation": "Column names in the first SELECT define the result. Corresponding columns must have compatible data types.",
-        "scenario": "Combined contact list for company newsletter to both employees and customers."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Different number of columns in SELECTs",
-        "error_sql": "SELECT first_name, last_name FROM employees\nUNION\nSELECT customer_name FROM customers;",
-        "error_message": "The used SELECT statements have a different number of columns",
-        "why_it_happens": "UNION requires each SELECT to return the same number of columns.",
-        "fix_sql": "SELECT first_name, last_name FROM employees\nUNION\nSELECT customer_name, NULL FROM customers;",
-        "key_takeaway": "All SELECT statements in a UNION must have the same number of columns."
-      },
-      {
-        "title": "Incompatible data types between columns",
-        "error_sql": "SELECT employee_id, hire_date FROM employees\nUNION\nSELECT customer_id, total FROM orders;",
-        "error_message": "Illegal mix of collations or type mismatch",
-        "why_it_happens": "Column 2 is DATE in first query but DECIMAL in second. Types must be compatible.",
-        "fix_sql": "SELECT employee_id, CAST(hire_date AS CHAR) FROM employees\nUNION\nSELECT customer_id, CAST(total AS CHAR) FROM orders;",
-        "key_takeaway": "Corresponding columns must have compatible (convertible) data types."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the performance difference between UNION and UNION ALL?",
-      "When would you use UNION instead of OR in a WHERE clause?",
-      "Can you use UNION with ORDER BY? Where does it go?",
-      "How does UNION handle column names from different tables?"
-    ],
-    "practice_suggestions": [
-      "Combine current and archived orders into one report",
-      "Create a master contact list from multiple tables",
-      "Stack quarterly sales data into yearly totals",
-      "Build a search that looks in both products and categories"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 15
-  },
-  "insert-statement": {
-    "definition": "The INSERT statement adds new rows to a table. You can insert values for all columns, specific columns, or insert the results of a SELECT query (INSERT...SELECT). It's how data enters your database from applications, imports, and migrations.",
-    "why_it_matters": "INSERT is fundamental to data creation. Every user registration, order placement, product addition, and record creation uses INSERT. Understanding INSERT is essential for building applications that persist data, migrating data between systems, and bulk loading datasets.",
-    "examples": [
-      {
-        "title": "Insert with explicit columns",
-        "sql": "INSERT INTO employees (first_name, last_name, email, hire_date, department_id)\nVALUES ('John', 'Smith', 'john.smith@company.com', '2024-01-15', 5);",
-        "explanation": "Explicitly list columns then provide matching values. Clear, maintainable, and works even if table structure changes.",
-        "scenario": "Adding a new employee record with all required information."
-      },
-      {
-        "title": "Insert multiple rows",
-        "sql": "INSERT INTO departments (department_name, location_id)\nVALUES ('Sales', 1700),\n       ('Marketing', 1700),\n       ('Engineering', 1800);",
-        "explanation": "Single INSERT can add multiple rows. More efficient than separate statements for bulk loading.",
-        "scenario": "Setting up initial department structure for a new office."
-      },
-      {
-        "title": "INSERT with SELECT",
-        "sql": "INSERT INTO employee_archive (employee_id, first_name, last_name, termination_date)\nSELECT employee_id, first_name, last_name, CURDATE()\nFROM employees\nWHERE status = 'terminated';",
-        "explanation": "Insert query results into another table. Useful for archiving, copying data, or transforming datasets.",
-        "scenario": "Archiving terminated employees before removing them from active table."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Wrong number of values for columns",
-        "error_sql": "INSERT INTO employees (first_name, last_name) VALUES ('John');",
-        "error_message": "Column count doesn't match value count",
-        "why_it_happens": "Listed 2 columns but provided only 1 value.",
-        "fix_sql": "INSERT INTO employees (first_name, last_name) VALUES ('John', 'Smith');",
-        "key_takeaway": "Number of columns must match number of values in each row."
-      },
-      {
-        "title": "Violating constraints",
-        "error_sql": "INSERT INTO employees (email) VALUES ('existing@company.com');",
-        "error_message": "Duplicate entry 'existing@company.com' for key 'email'",
-        "why_it_happens": "The email already exists and the column has a UNIQUE constraint.",
-        "fix_sql": "-- Check if exists first, or use INSERT IGNORE/ON DUPLICATE KEY UPDATE\nINSERT IGNORE INTO employees (email) VALUES ('existing@company.com');",
-        "key_takeaway": "Respect constraints (UNIQUE, NOT NULL, FOREIGN KEY) when inserting."
-      }
-    ],
-    "reflection_prompts": [
-      "Why is it better to specify column names in INSERT?",
-      "What happens if you don't provide a value for a column with DEFAULT?",
-      "How does INSERT...SELECT differ from a regular INSERT?",
-      "What are the risks of bulk INSERT operations?"
-    ],
-    "practice_suggestions": [
-      "Insert a new customer record",
-      "Bulk insert multiple products at once",
-      "Copy data from one table to another using INSERT...SELECT",
-      "Insert a row with only required columns, letting defaults handle the rest"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 12
-  },
-  "update-statement": {
-    "definition": "The UPDATE statement modifies existing rows in a table. It can change values in specific columns for all rows, or use a WHERE clause to target specific records. UPDATE is how data evolves as business conditions change.",
-    "why_it_matters": "Data is never static - prices change, addresses update, statuses evolve. UPDATE enables you to keep data current without deleting and recreating records. It's essential for maintaining accurate, relevant information in your database over time.",
-    "examples": [
-      {
-        "title": "Update specific row",
-        "sql": "UPDATE employees\nSET salary = 75000,\n    department_id = 5\nWHERE employee_id = 101;",
-        "explanation": "SET specifies new values, WHERE identifies which row(s) to update. Without WHERE, all rows would be updated.",
-        "scenario": "Promoting an employee with a raise and department transfer."
-      },
-      {
-        "title": "Update with calculated value",
-        "sql": "UPDATE products\nSET price = price * 1.10\nWHERE category_id = 2;",
-        "explanation": "SET can use expressions and reference current column values. This increases prices by 10%.",
-        "scenario": "Applying a 10% price increase to all products in a category."
-      },
-      {
-        "title": "Update with subquery",
-        "sql": "UPDATE employees e\nSET salary = salary * 1.05\nWHERE department_id = (\n    SELECT department_id\n    FROM departments\n    WHERE department_name = 'Sales'\n);",
-        "explanation": "Subquery in WHERE looks up the department ID dynamically. Updates all employees in the Sales department.",
-        "scenario": "Giving a 5% raise to all Sales department employees."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Missing WHERE clause",
-        "error_sql": "UPDATE employees SET salary = 50000;",
-        "error_message": "No error, but EVERY employee's salary is now 50000",
-        "why_it_happens": "Without WHERE, UPDATE affects all rows in the table.",
-        "fix_sql": "UPDATE employees SET salary = 50000 WHERE employee_id = 101;",
-        "key_takeaway": "Always write the WHERE clause first, then add SET."
-      },
-      {
-        "title": "UPDATE affecting wrong rows",
-        "error_sql": "UPDATE orders SET status = 'shipped' WHERE customer_id = 5;",
-        "error_message": "All orders for customer 5 are marked shipped, not just the recent one",
-        "why_it_happens": "WHERE clause wasn't specific enough.",
-        "fix_sql": "UPDATE orders\nSET status = 'shipped'\nWHERE customer_id = 5 AND order_id = 1234;",
-        "key_takeaway": "Make WHERE as specific as possible - include all identifying criteria."
-      }
-    ],
-    "reflection_prompts": [
-      "What happens if you UPDATE without a WHERE clause?",
-      "Can you UPDATE multiple tables at once?",
-      "How do you UPDATE using values from another table?",
-      "What's the safest way to test an UPDATE before running it?"
-    ],
-    "practice_suggestions": [
-      "Update a customer's email address",
-      "Increase all product prices in a category by 15%",
-      "Mark orders as shipped for a specific date range",
-      "Transfer employees from one department to another"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 12
-  },
-  "delete-statement": {
-    "definition": "The DELETE statement removes rows from a table. Like UPDATE, it typically uses a WHERE clause to specify which rows to remove. DELETE is permanent and cannot be undone without a backup or transaction rollback.",
-    "why_it_matters": "DELETE is necessary for data lifecycle management - removing test data, cleaning up old records, handling GDPR deletion requests, and purging obsolete information. However, it's dangerous because deleted data is gone forever, making careful WHERE clauses essential.",
-    "examples": [
-      {
-        "title": "Delete specific row",
-        "sql": "DELETE FROM employees\nWHERE employee_id = 999\nAND status = 'test';",
-        "explanation": "Removes only the row matching the WHERE condition. Multiple conditions ensure you delete exactly the right record.",
-        "scenario": "Removing a test employee record that was accidentally created."
-      },
-      {
-        "title": "Delete with subquery",
-        "sql": "DELETE FROM orders\nWHERE customer_id IN (\n    SELECT customer_id\n    FROM customers\n    WHERE status = 'inactive'\n    AND last_login < '2020-01-01'\n);",
-        "explanation": "Delete rows based on conditions in related tables. First find inactive customers, then delete their orders.",
-        "scenario": "Data cleanup: removing orders from long-inactive customer accounts."
-      },
-      {
-        "title": "Delete with LIMIT",
-        "sql": "DELETE FROM log_entries\nWHERE created_at < DATE_SUB(CURDATE(), INTERVAL 1 YEAR)\nLIMIT 1000;",
-        "explanation": "LIMIT restricts how many rows are deleted. Useful for batch deletion to avoid locking tables for too long.",
-        "scenario": "Archiving old log entries in batches to minimize system impact."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Missing WHERE clause deletes everything",
-        "error_sql": "DELETE FROM employees;",
-        "error_message": "All rows deleted from table - data lost!",
-        "why_it_happens": "Without WHERE, DELETE removes every row in the table.",
-        "fix_sql": "-- First verify what will be deleted:\nSELECT * FROM employees WHERE status = 'terminated';\n-- Then delete:\nDELETE FROM employees WHERE status = 'terminated';",
-        "key_takeaway": "Always run SELECT with your WHERE clause first to verify what will be deleted."
-      },
-      {
-        "title": "Violating foreign key constraints",
-        "error_sql": "DELETE FROM customers WHERE customer_id = 5;",
-        "error_message": "Cannot delete or update a parent row: a foreign key constraint fails",
-        "why_it_happens": "Other tables (orders, etc.) reference this customer. Delete those first or use ON DELETE CASCADE.",
-        "fix_sql": "-- Delete child records first, or in a transaction\nDELETE FROM orders WHERE customer_id = 5;\nDELETE FROM customers WHERE customer_id = 5;",
-        "key_takeaway": "Respect foreign key constraints - delete child records before parents."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between DELETE and TRUNCATE?",
-      "How can you safely test what a DELETE will remove?",
-      "What happens to auto-increment values after DELETE?",
-      "When should you use soft deletes instead of DELETE?"
-    ],
-    "practice_suggestions": [
-      "Delete a specific test record",
-      "Remove all orders older than 5 years",
-      "Clean up orphaned records from a related table",
-      "Implement a soft delete using UPDATE instead of DELETE"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 12
-  },
-  "alter-table": {
-    "definition": "ALTER TABLE modifies the structure of an existing table. You can add, drop, or rename columns, change data types, add constraints, and modify indexes. It allows schema evolution without recreating tables and losing data.",
-    "why_it_matters": "Requirements change - you need new fields, different data types, or additional constraints. ALTER TABLE lets you adapt your schema while preserving existing data. It's essential for maintenance, feature additions, and database migrations in production systems.",
-    "examples": [
-      {
-        "title": "Add a new column",
-        "sql": "ALTER TABLE employees\nADD COLUMN phone VARCHAR(20) AFTER email;",
-        "explanation": "Adds a phone column after the email column. New columns are NULL by default for existing rows.",
-        "scenario": "Adding phone number field to existing employee records."
-      },
-      {
-        "title": "Modify column data type",
-        "sql": "ALTER TABLE products\nMODIFY COLUMN price DECIMAL(12,2);",
-        "explanation": "Changes the price column to allow larger values. Be careful - data truncation can occur if values don't fit.",
-        "scenario": "Supporting higher-priced products that exceed current DECIMAL(10,2) limits."
-      },
-      {
-        "title": "Add and drop constraints",
-        "sql": "-- Add a foreign key\nALTER TABLE orders\nADD CONSTRAINT fk_customer\nFOREIGN KEY (customer_id) REFERENCES customers(customer_id);\n\n-- Drop a column\nALTER TABLE employees\nDROP COLUMN temporary_field;",
-        "explanation": "Add referential integrity with foreign keys. Remove obsolete columns to clean up schema.",
-        "scenario": "Adding proper relationships and cleaning up after a migration."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Adding NOT NULL without default",
-        "error_sql": "ALTER TABLE employees ADD COLUMN hire_date DATE NOT NULL;",
-        "error_message": "Invalid use of NULL value - existing rows would have NULL",
-        "why_it_happens": "Existing rows need a value for the new column, but no default is provided.",
-        "fix_sql": "-- Add with default first, then make NOT NULL\nALTER TABLE employees\nADD COLUMN hire_date DATE NOT NULL DEFAULT '2024-01-01';",
-        "key_takeaway": "Either provide a DEFAULT value or allow NULL for new columns on tables with data."
-      },
-      {
-        "title": "Modifying column with incompatible data",
-        "error_sql": "ALTER TABLE products MODIFY COLUMN price INT;",
-        "error_message": "Data truncation - decimal values can't be stored as INT",
-        "why_it_happens": "Existing prices like 19.99 can't fit in an INT column.",
-        "fix_sql": "-- Keep decimal precision for prices\nALTER TABLE products MODIFY COLUMN price DECIMAL(10,2);",
-        "key_takeaway": "Ensure existing data fits in the new data type before altering."
-      }
-    ],
-    "reflection_prompts": [
-      "What happens to existing data when you add a new column?",
-      "Why is changing a column data type potentially dangerous?",
-      "How do you rename a column in SQL?",
-      "What's the difference between DROP COLUMN and setting it to NULL?"
-    ],
-    "practice_suggestions": [
-      "Add a 'created_at' timestamp to an existing table",
-      "Increase the size of a VARCHAR column to accommodate longer text",
-      "Add a UNIQUE constraint to prevent duplicate emails",
-      "Rename a poorly named column to something more descriptive"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 15
-  },
-  "drop-table": {
-    "definition": "DROP TABLE permanently removes a table and all its data, indexes, triggers, constraints, and permissions from the database. This operation cannot be undone and should be used with extreme caution.",
-    "why_it_matters": "DROP TABLE is used for cleaning up obsolete tables, resetting test environments, and removing temporary structures. It's a destructive operation that requires careful consideration of dependencies and backups before execution.",
-    "examples": [
-      {
-        "title": "Drop a table",
-        "sql": "DROP TABLE temp_import_data;",
-        "explanation": "Permanently removes the temp_import_data table and all its contents. No recovery without backup.",
-        "scenario": "Cleaning up a temporary table used for a one-time data import."
-      },
-      {
-        "title": "Drop if exists",
-        "sql": "DROP TABLE IF EXISTS old_backup_2023;",
-        "explanation": "Only drops the table if it exists. Prevents errors when the table may or may not be present.",
-        "scenario": "Safe cleanup script that won't fail if the table was already removed."
-      },
-      {
-        "title": "Drop with cascade",
-        "sql": "DROP TABLE IF EXISTS test_customers CASCADE;",
-        "explanation": "CASCADE automatically drops objects that depend on the table, like foreign key constraints in other tables.",
-        "scenario": "Removing a test table that has foreign key references from other test tables."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Dropping table with dependencies",
-        "error_sql": "DROP TABLE customers;",
-        "error_message": "Cannot drop table 'customers' referenced by foreign key constraint",
-        "why_it_happens": "Other tables have foreign keys pointing to this table.",
-        "fix_sql": "-- Drop dependent objects first, or use CASCADE\nDROP TABLE orders;  -- References customers\nDROP TABLE customers;",
-        "key_takeaway": "Check for foreign key dependencies before dropping tables."
-      },
-      {
-        "title": "Accidentally dropping wrong table",
-        "error_sql": "DROP TABLE employees;",
-        "error_message": "Production data lost!",
-        "why_it_happens": "Typo or confusion between environments (test vs production).",
-        "fix_sql": "-- Always backup first and double-check\n-- Some databases support:\nDROP TABLE employees RESTRICT;  -- Fails if dependencies exist",
-        "key_takeaway": "Always verify table name and backup data before DROP TABLE."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between DROP TABLE and DELETE?",
-      "How can you recover from an accidental DROP TABLE?",
-      "What happens to indexes and constraints when you drop a table?",
-      "When should you use TRUNCATE instead of DROP TABLE?"
-    ],
-    "practice_suggestions": [
-      "Safely drop a temporary table that is no longer needed",
-      "Create a backup strategy before dropping tables",
-      "Use IF EXISTS to make drop scripts idempotent",
-      "Document dependencies before dropping a table"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 10
-  },
-  "constraints": {
-    "definition": "Constraints are rules enforced on table columns to ensure data integrity. They include PRIMARY KEY (unique identifier), FOREIGN KEY (referential integrity), UNIQUE (no duplicates), NOT NULL (required values), CHECK (value validation), and DEFAULT (auto-assigned values).",
-    "why_it_matters": "Constraints are your data quality insurance policy. They prevent bad data at the source - no duplicate emails, no orders for non-existent customers, no negative prices. Without constraints, data integrity relies entirely on application code, which can have bugs or be bypassed.",
-    "examples": [
-      {
-        "title": "Table with multiple constraints",
-        "sql": "CREATE TABLE products (\n    product_id INT PRIMARY KEY AUTO_INCREMENT,\n    sku VARCHAR(50) NOT NULL UNIQUE,\n    name VARCHAR(200) NOT NULL,\n    price DECIMAL(10,2) CHECK (price >= 0),\n    stock INT DEFAULT 0,\n    status ENUM('active', 'discontinued') DEFAULT 'active',\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
-        "explanation": "Combines multiple constraints: PRIMARY KEY, NOT NULL, UNIQUE, CHECK, DEFAULT. Each serves a different data integrity purpose.",
-        "scenario": "Product table with comprehensive data quality enforcement."
-      },
-      {
-        "title": "Foreign key constraint",
-        "sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY AUTO_INCREMENT,\n    customer_id INT NOT NULL,\n    order_date DATE NOT NULL,\n    total DECIMAL(10,2),\n    FOREIGN KEY (customer_id)\n        REFERENCES customers(customer_id)\n        ON DELETE RESTRICT\n        ON UPDATE CASCADE\n);",
-        "explanation": "FK ensures customer_id exists in customers table. ON DELETE RESTRICT prevents deleting customers with orders.",
-        "scenario": "Order table that maintains referential integrity with customers."
-      },
-      {
-        "title": "Adding constraint to existing table",
-        "sql": "-- Add CHECK constraint\nALTER TABLE employees\nADD CONSTRAINT chk_salary_positive\nCHECK (salary > 0);\n\n-- Add UNIQUE constraint\nALTER TABLE customers\nADD CONSTRAINT uk_email UNIQUE (email);",
-        "explanation": "Constraints can be added after table creation. Named constraints are easier to reference and drop later.",
-        "scenario": "Enhancing data quality on an existing production table."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Forgetting NOT NULL on required fields",
-        "error_sql": "CREATE TABLE users (id INT PRIMARY KEY, email VARCHAR(255), name VARCHAR(100));",
-        "error_message": "No error, but NULL emails and names are allowed",
-        "why_it_happens": "Without NOT NULL, columns accept NULL values by default.",
-        "fix_sql": "CREATE TABLE users (\n    id INT PRIMARY KEY,\n    email VARCHAR(255) NOT NULL,\n    name VARCHAR(100) NOT NULL\n);",
-        "key_takeaway": "Mark all required fields as NOT NULL."
-      },
-      {
-        "title": "Missing foreign key constraint",
-        "error_sql": "CREATE TABLE orders (order_id INT, customer_id INT);",
-        "error_message": "No error, but orphaned orders can be created",
-        "why_it_happens": "Without FK constraint, you can insert orders with invalid customer_id values.",
-        "fix_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT NOT NULL,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
-        "key_takeaway": "Use foreign keys to maintain referential integrity between tables."
-      }
-    ],
-    "reflection_prompts": [
-      "Why are database constraints better than application validation?",
-      "What happens when you try to violate a constraint?",
-      "When would you use DEFERRABLE constraints?",
-      "How do constraints affect INSERT/UPDATE performance?"
-    ],
-    "practice_suggestions": [
-      "Design a table with appropriate NOT NULL constraints",
-      "Add a CHECK constraint to validate email format",
-      "Create a foreign key relationship between two tables",
-      "Implement a UNIQUE constraint on a combination of columns"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "indexes": {
-    "definition": "Indexes are data structures that speed up data retrieval operations on tables at the cost of additional storage and slower writes. They work like a book's index - instead of scanning every page (full table scan), the database looks up the location directly.",
-    "why_it_matters": "Indexes transform slow queries on large tables from minutes to milliseconds. Without indexes, every query scans all rows. With proper indexes, lookups, joins, and sorting become dramatically faster. They're essential for performance on tables with more than a few thousand rows.",
-    "examples": [
-      {
-        "title": "Create a single-column index",
-        "sql": "CREATE INDEX idx_employee_email\nON employees(email);",
-        "explanation": "Creates an index on the email column. Speeds up lookups by email and joins using the email column.",
-        "scenario": "Faster login lookups when users sign in with their email."
-      },
-      {
-        "title": "Create a composite index",
-        "sql": "CREATE INDEX idx_order_customer_date\nON orders(customer_id, order_date);",
-        "explanation": "Multi-column index. Most useful when filtering by customer_id alone or customer_id + order_date together.",
-        "scenario": "Optimizing queries that find orders by customer, sorted by date."
-      },
-      {
-        "title": "Unique index for constraint",
-        "sql": "CREATE UNIQUE INDEX idx_employee_ssn\nON employees(ssn);\n\n-- Full-text index for search\nCREATE FULLTEXT INDEX idx_product_description\nON products(description);",
-        "explanation": "UNIQUE index enforces no duplicates while providing fast lookups. FULLTEXT enables text search.",
-        "scenario": "Ensuring SSN uniqueness and enabling product description search."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Indexing every column",
-        "error_sql": "CREATE INDEX idx1 ON users(name);\nCREATE INDEX idx2 ON users(email);\nCREATE INDEX idx3 ON users(phone);\n-- 20 more indexes...",
-        "error_message": "No error, but severe performance degradation on writes",
-        "why_it_happens": "Every INSERT/UPDATE/DELETE must update all indexes. Too many indexes slow down writes.",
-        "fix_sql": "-- Only index columns used in WHERE, JOIN, ORDER BY\nCREATE INDEX idx_users_email ON users(email);\nCREATE INDEX idx_users_name ON users(name);",
-        "key_takeaway": "Index strategically, not excessively. Each index has maintenance overhead."
-      },
-      {
-        "title": "Indexing low-cardinality columns",
-        "error_sql": "CREATE INDEX idx_status ON orders(status);",
-        "error_message": "Index created but rarely used",
-        "why_it_happens": "If status only has 3 values (pending, shipped, delivered), the index doesn't help much.",
-        "fix_sql": "-- Better: composite index with high-cardinality column first\nCREATE INDEX idx_status_date ON orders(status, order_date);",
-        "key_takeaway": "Indexes work best on columns with many unique values."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the trade-off between query speed and write speed with indexes?",
-      "How does the order of columns in a composite index matter?",
-      "When would a full table scan be faster than using an index?",
-      "How do indexes affect storage requirements?"
-    ],
-    "practice_suggestions": [
-      "Create an index to speed up customer email lookups",
-      "Design a composite index for a common multi-column filter",
-      "Identify redundant indexes that can be removed",
-      "Use EXPLAIN to verify indexes are being used"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 20
-  },
-  "pattern-matching": {
-    "definition": "Pattern matching with LIKE and wildcards (% for any sequence, _ for single character) searches for strings matching a specified pattern. Regular expressions provide more powerful pattern matching for complex text searches.",
-    "why_it_matters": "Not all searches are exact matches. Users search for names starting with 'Smi', emails containing '@gmail', or products with 'Pro' in the name. Pattern matching enables flexible text searches that handle partial information and inexact queries.",
-    "examples": [
-      {
-        "title": "LIKE with wildcards",
-        "sql": "SELECT first_name, last_name\nFROM employees\nWHERE last_name LIKE 'Sm%';",
-        "explanation": "% matches any sequence of characters. 'Sm%' finds Smith, Smyth, Smart, etc. Case insensitive in most databases.",
-        "scenario": "Searching for employees whose last name starts with 'Sm'."
-      },
-      {
-        "title": "LIKE with underscore wildcard",
-        "sql": "SELECT product_code\nFROM products\nWHERE product_code LIKE 'PRD-___-2024';",
-        "explanation": "_ matches exactly one character. 'PRD-___-2024' matches PRD-001-2024, PRD-ABC-2024, etc.",
-        "scenario": "Finding products with a specific code format (3 characters in middle segment)."
-      },
-      {
-        "title": "NOT LIKE for exclusion",
-        "sql": "SELECT email\nFROM employees\nWHERE email NOT LIKE '%@company.com';",
-        "explanation": "NOT LIKE finds strings that don't match the pattern. Useful for finding exceptions or outliers.",
-        "scenario": "Finding employees using personal email addresses instead of company email."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Leading wildcard prevents index use",
-        "error_sql": "SELECT * FROM products WHERE name LIKE '%phone%';",
-        "error_message": "Works but slow on large tables",
-        "why_it_happens": "Leading wildcards require scanning all values; indexes can't help.",
-        "fix_sql": "-- Use full-text search for this case\nSELECT * FROM products\nWHERE MATCH(name) AGAINST('phone');\n\n-- Or restructure to avoid leading wildcard\nSELECT * FROM products WHERE name LIKE 'iPhone%';",
-        "key_takeaway": "Avoid leading wildcards (%) on large tables; consider full-text search."
-      },
-      {
-        "title": "Case sensitivity issues",
-        "error_sql": "SELECT * FROM customers WHERE last_name LIKE 'smith';",
-        "error_message": "No results if data is 'Smith' with capital S",
-        "why_it_happens": "Some databases are case-sensitive by default.",
-        "fix_sql": "-- Use UPPER/LOWER for case-insensitive search\nSELECT * FROM customers\nWHERE UPPER(last_name) LIKE 'SMITH';\n\n-- Or use ILIKE in PostgreSQL\nSELECT * FROM customers WHERE last_name ILIKE 'smith';",
-        "key_takeaway": "Handle case sensitivity explicitly in pattern matching."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the performance impact of LIKE with a leading wildcard?",
-      "When should you use REGEXP instead of LIKE?",
-      "How do you escape special characters in LIKE patterns?",
-      "What's the difference between % and _ in pattern matching?"
-    ],
-    "practice_suggestions": [
-      "Find all customers with email addresses from a specific domain",
-      "Search for products with names containing 'Pro' or 'Plus'",
-      "Find phone numbers in a specific area code format",
-      "Identify order IDs following a specific pattern"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 12
-  },
-  "string-functions": {
-    "definition": "String functions manipulate and transform text data. Common functions include CONCAT (combine), SUBSTRING/LEFT/RIGHT (extract), UPPER/LOWER (case conversion), TRIM (remove spaces), LENGTH/LEN (get size), REPLACE (substitute), and INSTR/POSITION (find text).",
-    "why_it_matters": "Raw data rarely comes in the format you need. Names need proper casing, IDs need formatting, addresses need cleaning, codes need extracting. String functions transform messy input into clean, consistent, usable data for reports and applications.",
-    "examples": [
-      {
-        "title": "Concatenate and format strings",
-        "sql": "SELECT\n    CONCAT(first_name, ' ', last_name) AS full_name,\n    CONCAT(LEFT(first_name, 1), '.', last_name, '@company.com') AS email\nFROM employees;",
-        "explanation": "CONCAT joins strings. LEFT extracts characters. Combine to create formatted output like full names and generated email addresses.",
-        "scenario": "Creating display names and generating email addresses from name components."
-      },
-      {
-        "title": "Extract and clean data",
-        "sql": "SELECT\n    TRIM(BOTH ' ' FROM customer_name) AS clean_name,\n    SUBSTRING(phone FROM 1 FOR 3) AS area_code,\n    REPLACE(phone, '-', '') AS digits_only\nFROM customers;",
-        "explanation": "TRIM removes whitespace, SUBSTRING extracts portions, REPLACE substitutes characters. Essential for data cleaning.",
-        "scenario": "Standardizing customer data: removing extra spaces, extracting area codes, normalizing phone formats."
-      },
-      {
-        "title": "Case conversion and length",
-        "sql": "SELECT\n    UPPER(product_code) AS code_upper,\n    LOWER(product_name) AS name_lower,\n    LENGTH(description) AS desc_length\nFROM products;",
-        "explanation": "UPPER/LOWER standardize case for comparison. LENGTH checks string size. Useful for validation and formatting.",
-        "scenario": "Case-insensitive product code matching and description length validation."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "NULL values in CONCAT",
-        "error_sql": "SELECT CONCAT(first_name, ' ', middle_name, ' ', last_name)\nFROM employees;",
-        "error_message": "Returns NULL if any argument is NULL",
-        "why_it_happens": "CONCAT returns NULL if any input is NULL in some databases.",
-        "fix_sql": "-- Use CONCAT_WS or COALESCE\nSELECT CONCAT_WS(' ', first_name, middle_name, last_name)\nFROM employees;\n\n-- Or COALESCE to handle NULLs\nSELECT CONCAT(first_name, ' ', COALESCE(middle_name, ''), ' ', last_name);",
-        "key_takeaway": "Handle NULL values in string concatenation with CONCAT_WS or COALESCE."
-      },
-      {
-        "title": "1-based vs 0-based indexing",
-        "error_sql": "SELECT SUBSTRING('Hello', 0, 2);",
-        "error_message": "May return unexpected result depending on database",
-        "why_it_happens": "SQL uses 1-based indexing (first character is position 1), unlike most programming languages.",
-        "fix_sql": "-- In SQL, first character is at position 1\nSELECT SUBSTRING('Hello', 1, 2);  -- Returns 'He'\nSELECT SUBSTRING('Hello', 2, 2);  -- Returns 'el'",
-        "key_takeaway": "SQL string positions start at 1, not 0."
-      }
-    ],
-    "reflection_prompts": [
-      "How do different databases handle string indexing (1-based vs 0-based)?",
-      "What's the difference between CONCAT and CONCAT_WS?",
-      "How can you reverse a string in SQL?",
-      "What happens when you use string functions on NULL values?"
-    ],
-    "practice_suggestions": [
-      "Create formatted full names from first, middle, and last name columns",
-      "Extract the domain from an email address",
-      "Standardize phone numbers to a consistent format",
-      "Generate usernames from first and last names"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "date-functions": {
-    "definition": "Date and time functions manipulate temporal data. They extract components (YEAR, MONTH, DAY), calculate differences (DATEDIFF), add intervals (DATE_ADD), format dates (DATE_FORMAT), and get current timestamps (NOW, CURDATE).",
-    "why_it_matters": "Business revolves around time - reporting periods, aging calculations, scheduling, deadlines. Date functions let you extract insights from timestamps: monthly sales trends, days since last order, overdue invoices, employee tenure. They're essential for time-based analysis.",
-    "examples": [
-      {
-        "title": "Extract date components",
-        "sql": "SELECT\n    order_id,\n    YEAR(order_date) AS order_year,\n    MONTH(order_date) AS order_month,\n    DAY(order_date) AS order_day,\n    DAYNAME(order_date) AS day_of_week\nFROM orders;",
-        "explanation": "Extract parts of a date for grouping and analysis. YEAR, MONTH, DAY, DAYNAME pull out specific components.",
-        "scenario": "Breaking down order dates for time-series analysis and reporting."
-      },
-      {
-        "title": "Calculate date differences",
-        "sql": "SELECT\n    order_id,\n    order_date,\n    shipped_date,\n    DATEDIFF(shipped_date, order_date) AS days_to_ship,\n    DATEDIFF(CURDATE(), order_date) AS days_since_order\nFROM orders;",
-        "explanation": "DATEDIFF calculates days between dates. Useful for measuring processing time and aging.",
-        "scenario": "Analyzing shipping speed and identifying old unshipped orders."
-      },
-      {
-        "title": "Add and subtract dates",
-        "sql": "SELECT\n    order_date,\n    DATE_ADD(order_date, INTERVAL 30 DAY) AS due_date,\n    DATE_SUB(CURDATE(), INTERVAL 1 YEAR) AS one_year_ago\nFROM orders;",
-        "explanation": "DATE_ADD/DATE_SUB move forward or backward in time. Essential for calculating due dates and date ranges.",
-        "scenario": "Calculating payment due dates and finding orders from last year."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Comparing dates with strings",
-        "error_sql": "SELECT * FROM orders WHERE order_date > '2024-1-1';",
-        "error_message": "May work but unreliable across databases",
-        "why_it_happens": "String comparison of dates depends on format. '2024-02-01' < '2024-1-1' as strings.",
-        "fix_sql": "-- Use proper date literals or functions\nSELECT * FROM orders WHERE order_date > '2024-01-01';\n\n-- Or use DATE function\nSELECT * FROM orders WHERE order_date >= DATE('2024-01-01');",
-        "key_takeaway": "Use ISO format (YYYY-MM-DD) for date literals."
-      },
-      {
-        "title": "Ignoring time components",
-        "error_sql": "SELECT * FROM orders\nWHERE order_date = '2024-01-15';",
-        "error_message": "No results if order_date includes time (2024-01-15 14:30:00)",
-        "why_it_happens": "DATETIME includes time; '2024-01-15' equals '2024-01-15 00:00:00'.",
-        "fix_sql": "-- Use DATE() to strip time, or range query\nSELECT * FROM orders\nWHERE DATE(order_date) = '2024-01-15';\n\n-- Better for indexing:\nWHERE order_date >= '2024-01-15'\n  AND order_date < '2024-01-16';",
-        "key_takeaway": "Handle time components explicitly when filtering dates."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between DATE, DATETIME, and TIMESTAMP?",
-      "How do you find records from the last 30 days?",
-      "What's the most efficient way to filter by date range?",
-      "How do time zones affect date calculations?"
-    ],
-    "practice_suggestions": [
-      "Calculate employee tenure in years and months",
-      "Find all orders placed in the current month",
-      "Identify customers who haven't ordered in 90 days",
-      "Create a report grouped by week of the year"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "data-types": {
-    "definition": "Data types define the kind of data a column can store: numbers (INT, DECIMAL, FLOAT), strings (VARCHAR, CHAR, TEXT), dates (DATE, DATETIME, TIMESTAMP), booleans (BOOLEAN), and binary data (BLOB). Choosing the right type ensures data integrity and optimal storage.",
-    "why_it_matters": "Data types enforce data quality and optimize performance. Use DECIMAL for money (exact precision), not FLOAT (rounding errors). Use appropriate string lengths to save space. Use DATE types for temporal data to enable date arithmetic. Wrong types cause bugs, wasted space, and slow queries.",
-    "examples": [
-      {
-        "title": "Numeric data types",
-        "sql": "CREATE TABLE financial_data (\n    transaction_id INT PRIMARY KEY,\n    quantity INT,                    -- Whole numbers\n    unit_price DECIMAL(10,2),        -- Money: 10 digits, 2 after decimal\n    tax_rate DECIMAL(5,4),           -- Percentages: 0.0825\n    large_value BIGINT,              -- Very large integers\n    approximate FLOAT                -- Scientific, not for money\n);",
-        "explanation": "INT for whole numbers, DECIMAL for exact precision (money), FLOAT for scientific approximations. DECIMAL(precision, scale).",
-        "scenario": "Financial table with appropriate numeric types for different use cases."
-      },
-      {
-        "title": "String data types",
-        "sql": "CREATE TABLE customer_data (\n    customer_id INT PRIMARY KEY,\n    first_name VARCHAR(50),          -- Variable length, up to 50\n    country_code CHAR(2),            -- Fixed length: 'US', 'CA'\n    notes TEXT,                      -- Very long text, no length limit\n    email VARCHAR(255) NOT NULL\n);",
-        "explanation": "VARCHAR for variable-length text, CHAR for fixed-length codes, TEXT for long content. VARCHAR uses only needed space.",
-        "scenario": "Customer table with efficient string storage for different field types."
-      },
-      {
-        "title": "Date and time types",
-        "sql": "CREATE TABLE events (\n    event_id INT PRIMARY KEY,\n    event_date DATE,                 -- Date only: 2024-01-15\n    start_time TIME,                 -- Time only: 14:30:00\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    schedule DATETIME                -- Date and time: 2024-01-15 14:30:00\n);",
-        "explanation": "DATE for dates, TIME for times, DATETIME/TIMESTAMP for both. TIMESTAMP often auto-updates on modification.",
-        "scenario": "Event tracking with different precision needs for different fields."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using FLOAT for money",
-        "error_sql": "CREATE TABLE orders (total FLOAT);\nINSERT INTO orders VALUES (0.1 + 0.2);",
-        "error_message": "Stores 0.30000000000000004 instead of 0.3",
-        "why_it_happens": "FLOAT uses binary floating-point which can't represent all decimals exactly.",
-        "fix_sql": "CREATE TABLE orders (total DECIMAL(10,2));\nINSERT INTO orders VALUES (0.30);",
-        "key_takeaway": "Always use DECIMAL for monetary values."
-      },
-      {
-        "title": "VARCHAR too short",
-        "error_sql": "CREATE TABLE users (name VARCHAR(20));\nINSERT INTO users VALUES ('Christopher Alexander');",
-        "error_message": "Data too long for column",
-        "why_it_happens": "Name is 21 characters, column only allows 20.",
-        "fix_sql": "CREATE TABLE users (name VARCHAR(100));",
-        "key_takeaway": "Be generous with VARCHAR lengths - storage is cheap, errors are expensive."
-      }
-    ],
-    "reflection_prompts": [
-      "What's the difference between CHAR and VARCHAR?",
-      "Why is DECIMAL better than FLOAT for financial data?",
-      "When should you use TEXT instead of VARCHAR?",
-      "How do you choose between DATE, DATETIME, and TIMESTAMP?"
-    ],
-    "practice_suggestions": [
-      "Design a table with appropriate types for an e-commerce order",
-      "Choose the right type for a phone number field",
-      "Create a table for tracking inventory with proper numeric types",
-      "Compare storage requirements of different string types"
+      "Design a table for an e-commerce product catalog with proper types",
+      "Create a table for logging events with timestamps and JSON metadata",
+      "Build a table for scientific measurements requiring high precision",
+      "Design a user profile table with appropriate constraints on each column"
     ],
     "difficulty": "beginner",
     "estimated_minutes": 15
@@ -3639,230 +2575,6 @@
     "difficulty": "beginner",
     "estimated_minutes": 15
   },
-  "data-types": {
-    "definition": "SQL data types define the kind of data that can be stored in each column, such as INT for integers, VARCHAR for variable-length strings, DECIMAL for exact numeric values, DATE for calendar dates, and BOOLEAN for true/false values. Choosing the right data type ensures data integrity, optimizes storage, and enables appropriate operations.",
-    "why_it_matters": "Proper data type selection is foundational to database design. Using VARCHAR for dates prevents date arithmetic. Using FLOAT for money causes rounding errors. Using INT when you need BIGINT leads to overflow. Data types enforce business rules at the database level and significantly impact query performance through indexing and storage efficiency.",
-    "examples": [
-      {
-        "title": "Creating a table with appropriate data types",
-        "sql": "CREATE TABLE employees (\n    employee_id INT PRIMARY KEY AUTO_INCREMENT,\n    first_name VARCHAR(50) NOT NULL,\n    last_name VARCHAR(50) NOT NULL,\n    email VARCHAR(255) UNIQUE,\n    hire_date DATE NOT NULL,\n    salary DECIMAL(10,2),\n    is_active BOOLEAN DEFAULT TRUE,\n    notes TEXT\n);",
-        "explanation": "INT for IDs (whole numbers), VARCHAR for strings with max length, DATE for calendar dates (no time), DECIMAL(10,2) for exact money values, BOOLEAN for flags, TEXT for long content.",
-        "scenario": "Employee database with various data types for different information."
-      },
-      {
-        "title": "Date arithmetic with DATE and DATETIME",
-        "sql": "SELECT \n    first_name,\n    hire_date,\n    DATEDIFF(CURDATE(), hire_date) AS days_employed,\n    DATE_ADD(hire_date, INTERVAL 1 YEAR) AS first_review\nFROM employees\nWHERE hire_date >= '2023-01-01';",
-        "explanation": "DATE types enable arithmetic like DATEDIFF for calculating periods and DATE_ADD for adding intervals. These operations wouldn't work with VARCHAR dates.",
-        "scenario": "HR report calculating tenure and upcoming anniversary dates."
-      },
-      {
-        "title": "Exact decimal arithmetic with DECIMAL",
-        "sql": "SELECT \n    product_name,\n    price,\n    quantity,\n    price * quantity AS exact_total,\n    CAST(price * quantity AS DECIMAL(10,2)) AS rounded_total\nFROM order_items;",
-        "explanation": "DECIMAL stores numbers exactly (no floating-point errors). Critical for financial calculations where precision matters.",
-        "scenario": "Invoice calculation requiring exact currency precision."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using FLOAT or DOUBLE for money",
-        "error_sql": "CREATE TABLE products (\n    name VARCHAR(100),\n    price FLOAT  -- DON'T DO THIS\n);",
-        "error_message": "Rounding errors in calculations: 0.1 + 0.2 != 0.3",
-        "why_it_happens": "FLOAT uses binary floating-point representation which cannot exactly represent many decimal values like 0.1.",
-        "fix_sql": "CREATE TABLE products (\n    name VARCHAR(100),\n    price DECIMAL(10,2)  -- Exact precision\n);",
-        "key_takeaway": "Always use DECIMAL for money. Never use FLOAT or DOUBLE for financial data."
-      },
-      {
-        "title": "Storing dates as VARCHAR",
-        "error_sql": "CREATE TABLE events (\n    name VARCHAR(100),\n    event_date VARCHAR(10)  -- '2024-03-15'\n);",
-        "error_message": "Sorting and comparisons fail: '2024-01-02' comes after '2024-01-15'",
-        "why_it_happens": "String comparison is character-by-character. '2' > '1', so '2024-01-20' > '2024-01-3' as strings.",
-        "fix_sql": "CREATE TABLE events (\n    name VARCHAR(100),\n    event_date DATE\n);",
-        "key_takeaway": "Use DATE, TIME, or DATETIME for temporal data to enable proper operations."
-      }
-    ],
-    "reflection_prompts": [
-      "Why is DECIMAL better than FLOAT for financial calculations?",
-      "What happens if you store a 100-character string in a VARCHAR(50) column?",
-      "When would you choose TEXT over VARCHAR?",
-      "How do data types affect index performance?"
-    ],
-    "practice_suggestions": [
-      "Design a table for an e-commerce product catalog with proper types",
-      "Create a table for logging events with timestamps and JSON metadata",
-      "Build a table for scientific measurements requiring high precision",
-      "Design a user profile table with appropriate constraints on each column"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "date-functions": {
-    "definition": "Date and time functions manipulate temporal data in SQL. They extract components (YEAR, MONTH, DAY), calculate differences (DATEDIFF, TIMESTAMPDIFF), add intervals (DATE_ADD, DATE_SUB), and format dates (DATE_FORMAT). These functions enable reporting by time periods, calculating ages, and scheduling.",
-    "why_it_matters": "Business reporting is heavily time-based. You need to calculate monthly sales, customer tenure, aging reports, and deadlines. Date functions turn raw timestamps into actionable business metrics. Without them, you'd export data to Excel or write complex application code for simple date calculations.",
-    "examples": [
-      {
-        "title": "Extracting date components",
-        "sql": "SELECT \n    order_id,\n    order_date,\n    YEAR(order_date) AS year,\n    MONTH(order_date) AS month,\n    DAY(order_date) AS day,\n    MONTHNAME(order_date) AS month_name\nFROM orders\nWHERE YEAR(order_date) = 2024;",
-        "explanation": "YEAR, MONTH, DAY extract numeric components. MONTHNAME returns the full month name. Essential for grouping and filtering by time periods.",
-        "scenario": "Sales report breaking down orders by year and month."
-      },
-      {
-        "title": "Calculating date differences",
-        "sql": "SELECT \n    customer_name,\n    signup_date,\n    DATEDIFF(CURDATE(), signup_date) AS days_since_signup,\n    TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) AS age\nFROM customers;",
-        "explanation": "DATEDIFF returns days between dates. TIMESTAMPDIFF calculates in specified units (YEAR, MONTH, etc.). CURDATE() returns current date.",
-        "scenario": "Customer analytics: tenure and demographic analysis."
-      },
-      {
-        "title": "Adding and subtracting intervals",
-        "sql": "SELECT \n    order_id,\n    order_date,\n    DATE_ADD(order_date, INTERVAL 30 DAY) AS due_date,\n    DATE_SUB(order_date, INTERVAL 1 WEEK) AS reminder_date\nFROM orders\nWHERE order_date >= '2024-01-01';",
-        "explanation": "DATE_ADD and DATE_SUB manipulate dates by adding/subtracting intervals like DAY, WEEK, MONTH, YEAR.",
-        "scenario": "Payment scheduling: calculating due dates and reminder dates."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Using functions on indexed columns",
-        "error_sql": "SELECT * FROM orders\nWHERE YEAR(order_date) = 2024;",
-        "error_message": "Query is slow - full table scan even with index on order_date",
-        "why_it_happens": "Function calls prevent index usage. The database must evaluate YEAR() for every row.",
-        "fix_sql": "SELECT * FROM orders\nWHERE order_date >= '2024-01-01'\n  AND order_date < '2025-01-01';",
-        "key_takeaway": "Avoid functions on indexed columns in WHERE. Use range comparisons instead."
-      },
-      {
-        "title": "Incorrect age calculation",
-        "error_sql": "SELECT DATEDIFF(CURDATE(), birth_date) / 365 AS age\nFROM customers;",
-        "error_message": "Age is off by 1 for some dates due to leap years",
-        "why_it_happens": "Years have 365.25 days on average. Simple division doesn't account for leap years or birth month.",
-        "fix_sql": "SELECT TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) AS age\nFROM customers;",
-        "key_takeaway": "Use TIMESTAMPDIFF for accurate year/month calculations, not day arithmetic."
-      }
-    ],
-    "reflection_prompts": [
-      "Why shouldn't you use functions on indexed date columns in WHERE clauses?",
-      "How would you find all records from the last 30 days?",
-      "What's the difference between CURDATE(), NOW(), and CURRENT_TIMESTAMP?",
-      "How do you handle timezone conversions in SQL?"
-    ],
-    "practice_suggestions": [
-      "Write a query to find all orders from the previous month",
-      "Calculate customer retention rates by signup month",
-      "Create a report showing average order value by day of week",
-      "Build a query to identify overdue invoices with aging buckets"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "string-functions": {
-    "definition": "String functions manipulate text data in SQL. They concatenate strings (CONCAT), extract substrings (SUBSTRING), change case (UPPER, LOWER), remove whitespace (TRIM), find patterns (LIKE, REGEXP), and replace text (REPLACE). These functions enable data cleaning, formatting, and pattern matching.",
-    "why_it_matters": "Real-world data is messy. Names have inconsistent capitalization, phone numbers have varying formats, addresses have extra spaces. String functions clean and standardize data. They're also essential for search features, generating display formats, and extracting components from composite fields.",
-    "examples": [
-      {
-        "title": "Concatenating and formatting strings",
-        "sql": "SELECT \n    CONCAT(first_name, ' ', last_name) AS full_name,\n    CONCAT(LEFT(first_name, 1), '. ', last_name) AS initials_name,\n    CONCAT('$', FORMAT(salary, 2)) AS formatted_salary\nFROM employees;",
-        "explanation": "CONCAT joins strings. LEFT extracts characters. FORMAT adds thousand separators. Essential for creating display-friendly output.",
-        "scenario": "HR report with properly formatted names and currency."
-      },
-      {
-        "title": "Case conversion and pattern matching",
-        "sql": "SELECT * FROM customers\nWHERE LOWER(email) LIKE '%@gmail.com'\n   OR UPPER(country) = 'USA';",
-        "explanation": "LOWER and UPPER ensure case-insensitive comparisons. LIKE with % wildcard matches patterns.",
-        "scenario": "Finding customers by email domain or country regardless of input case."
-      },
-      {
-        "title": "Extracting and cleaning data",
-        "sql": "SELECT \n    TRIM(BOTH ' ' FROM phone) AS clean_phone,\n    SUBSTRING(phone, 1, 3) AS area_code,\n    REPLACE(phone, '-', '') AS digits_only\nFROM customers\nWHERE phone IS NOT NULL;",
-        "explanation": "TRIM removes whitespace. SUBSTRING extracts portions. REPLACE substitutes characters. Essential for data cleaning.",
-        "scenario": "Standardizing phone number formats for a marketing campaign."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Case-sensitive string comparison",
-        "error_sql": "SELECT * FROM users WHERE name = 'john smith';",
-        "error_message": "Returns 0 rows if the name is stored as 'John Smith'",
-        "why_it_happens": "Most string comparisons are case-sensitive by default or depend on collation settings.",
-        "fix_sql": "SELECT * FROM users\nWHERE LOWER(name) = LOWER('john smith');\n-- Or: WHERE name = 'john smith' COLLATE utf8_general_ci;",
-        "key_takeaway": "Use LOWER() or UPPER() for case-insensitive comparisons, or choose appropriate collation."
-      },
-      {
-        "title": "Leading/trailing spaces causing mismatches",
-        "error_sql": "SELECT * FROM customers WHERE city = 'New York';",
-        "error_message": "Missing rows where city is 'New York ' (with trailing space)",
-        "why_it_happens": "Data entry often includes accidental spaces that aren't visible but affect comparisons.",
-        "fix_sql": "SELECT * FROM customers\nWHERE TRIM(city) = 'New York';\n-- Or clean data during storage with a trigger",
-        "key_takeaway": "Use TRIM() to remove whitespace, or enforce clean data with constraints/triggers."
-      }
-    ],
-    "reflection_prompts": [
-      "When should you use CONCAT versus CONCAT_WS?",
-      "How do you handle NULL values in string concatenation?",
-      "What's the difference between LIKE and REGEXP pattern matching?",
-      "How do string functions affect query performance on large tables?"
-    ],
-    "practice_suggestions": [
-      "Create formatted mailing addresses from separate fields",
-      "Build a search that finds matches regardless of spacing or capitalization",
-      "Extract domain names from email addresses",
-      "Generate usernames by combining name components with rules"
-    ],
-    "difficulty": "beginner",
-    "estimated_minutes": 15
-  },
-  "normalization": {
-    "definition": "Database normalization is the process of organizing data to minimize redundancy and dependency. It involves dividing large tables into smaller, related tables and defining relationships between them. Normal forms (1NF, 2NF, 3NF, BCNF) provide progressive rules for achieving this structure.",
-    "why_it_matters": "Unnormalized data leads to update anomalies, storage waste, and inconsistent information. Normalization ensures each piece of data is stored once, changes are made in one place, and relationships are properly maintained. While some denormalization is done for performance, understanding normalization is essential for good database design.",
-    "examples": [
-      {
-        "title": "First Normal Form (1NF) - Atomic values",
-        "sql": "-- Unnormalized (violates 1NF):\n-- orders: id, customer_name, items (comma-separated)\n\n-- Normalized to 1NF:\nCREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_name VARCHAR(100)\n);\n\nCREATE TABLE order_items (\n    item_id INT PRIMARY KEY,\n    order_id INT,\n    product_name VARCHAR(100),\n    quantity INT,\n    FOREIGN KEY (order_id) REFERENCES orders(order_id)\n);",
-        "explanation": "1NF requires atomic values (no repeating groups or arrays). Split comma-separated values into a separate table with a foreign key relationship.",
-        "scenario": "E-commerce orders where each order can have multiple line items."
-      },
-      {
-        "title": "Second Normal Form (2NF) - Remove partial dependencies",
-        "sql": "-- Before 2NF (partial dependency):\n-- enrollment: student_id, course_id, student_name, course_name, grade\n\n-- After 2NF:\nCREATE TABLE students (\n    student_id INT PRIMARY KEY,\n    student_name VARCHAR(100)\n);\n\nCREATE TABLE courses (\n    course_id INT PRIMARY KEY,\n    course_name VARCHAR(100)\n);\n\nCREATE TABLE enrollments (\n    student_id INT,\n    course_id INT,\n    grade CHAR(2),\n    PRIMARY KEY (student_id, course_id),\n    FOREIGN KEY (student_id) REFERENCES students(student_id),\n    FOREIGN KEY (course_id) REFERENCES courses(course_id)\n);",
-        "explanation": "2NF requires no partial dependencies (non-key attributes must depend on the entire key). Student name depends only on student_id, not the full composite key.",
-        "scenario": "School enrollment system where student and course info was duplicated in every enrollment record."
-      },
-      {
-        "title": "Third Normal Form (3NF) - Remove transitive dependencies",
-        "sql": "-- Before 3NF (transitive dependency):\n-- employees: emp_id, emp_name, dept_id, dept_name, dept_location\n\n-- After 3NF:\nCREATE TABLE departments (\n    dept_id INT PRIMARY KEY,\n    dept_name VARCHAR(50),\n    dept_location VARCHAR(50)\n);\n\nCREATE TABLE employees (\n    emp_id INT PRIMARY KEY,\n    emp_name VARCHAR(100),\n    dept_id INT,\n    FOREIGN KEY (dept_id) REFERENCES departments(dept_id)\n);",
-        "explanation": "3NF requires no transitive dependencies (non-key attributes depend only on the key). dept_name depends on dept_id, not directly on emp_id.",
-        "scenario": "Employee database where department information was repeated for every employee in the same department."
-      }
-    ],
-    "common_mistakes": [
-      {
-        "title": "Over-normalization harming performance",
-        "error_sql": "-- Joining 6 tables for a simple dashboard query\nSELECT o.id, c.name, p.title, s.status, ...\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nJOIN products p ON o.product_id = p.id\nJOIN statuses s ON o.status_id = s.id\nJOIN categories cat ON p.category_id = cat.id\nJOIN regions r ON c.region_id = r.id;",
-        "error_message": "Query is very slow with many joins on large tables",
-        "why_it_happens": "Excessive normalization forces many table joins. Sometimes strategic denormalization improves read performance.",
-        "fix_sql": "-- Create a materialized view or summary table\nCREATE TABLE order_summary AS\nSELECT o.id, c.name, p.title, o.status, ...\nFROM orders o\nJOIN customers c ON o.customer_id = c.id\nJOIN products p ON o.product_id = p.id;",
-        "key_takeaway": "Normalize to 3NF, then selectively denormalize for performance when necessary."
-      },
-      {
-        "title": "Missing foreign key constraints",
-        "error_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,  -- No FK constraint!\n    order_date DATE\n);",
-        "error_message": "Orphaned records: orders with customer_ids that don't exist",
-        "why_it_happens": "Without foreign key constraints, the database allows invalid references leading to data integrity issues.",
-        "fix_sql": "CREATE TABLE orders (\n    order_id INT PRIMARY KEY,\n    customer_id INT,\n    order_date DATE,\n    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)\n);",
-        "key_takeaway": "Always add foreign key constraints to enforce referential integrity."
-      }
-    ],
-    "reflection_prompts": [
-      "What problems does normalization solve?",
-      "When might you intentionally violate normal forms?",
-      "How do you handle many-to-many relationships in normalized databases?",
-      "What's the difference between 3NF and BCNF?"
-    ],
-    "practice_suggestions": [
-      "Normalize a denormalized customer order spreadsheet into 3NF",
-      "Design a blog system database with posts, authors, categories, and comments",
-      "Create an e-commerce schema handling products with multiple categories",
-      "Refactor a student enrollment system with courses, students, and grades"
-    ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 30
-  },
   "exists-operator": {
     "definition": "The EXISTS operator tests whether a subquery returns any rows. It returns TRUE if the subquery produces at least one row, FALSE otherwise. Unlike IN, EXISTS stops at the first match, making it often more efficient. It's commonly used for semi-joins - finding rows in one table that have related rows in another.",
     "why_it_matters": "EXISTS is the most efficient way to check for related records. EXISTS is faster than IN for large tables because it stops at the first match. It's essential for queries like 'find customers who have placed orders' or 'find products that have never been sold.' Understanding EXISTS versus IN versus JOIN is crucial for writing efficient SQL.",
@@ -3919,116 +2631,116 @@
     "difficulty": "intermediate",
     "estimated_minutes": 20
   },
-  "subquery-in-select": {
-    "definition": "A scalar subquery in the SELECT clause returns a single value for each row in the outer query. It's evaluated once per outer row, allowing you to include calculated values from related tables without joining. The subquery must return exactly one column and at most one row.",
-    "why_it_matters": "Scalar subqueries in SELECT are perfect for calculated columns that would require complex self-joins or post-processing. They let you add columns like 'previous order date' or 'department average salary' directly in your SELECT list. While correlated subqueries can be slow, they're often the clearest way to express row-by-row calculations.",
+  "join": {
+    "definition": "A JOIN combines rows from two or more tables based on a related column between them. Joins are the foundation of relational database queries, allowing you to retrieve connected data across multiple tables in a single query.",
+    "why_it_matters": "Real-world data is spread across multiple related tables. Without joins, you'd need multiple queries and manual data combining in your application. Joins let you retrieve complete, related datasets efficiently - like customers with their orders, employees with their departments, or products with their categories.",
     "examples": [
       {
-        "title": "Show each employee with their department average",
-        "sql": "SELECT \n    name,\n    department,\n    salary,\n    (SELECT AVG(salary) \n     FROM employees e2 \n     WHERE e2.department = e1.department) AS dept_avg,\n    salary - (SELECT AVG(salary) \n              FROM employees e2 \n              WHERE e2.department = e1.department) AS diff_from_avg\nFROM employees e1;",
-        "explanation": "Scalar subquery calculates department average for each row. Outer query can use the subquery result in calculations.",
-        "scenario": "Compensation report showing each employee relative to department average."
+        "title": "Basic INNER JOIN: Customers with their orders",
+        "sql": "SELECT c.customer_name, o.order_id, o.total\nFROM customers c\nINNER JOIN orders o ON c.customer_id = o.customer_id;",
+        "explanation": "INNER JOIN returns only rows where there's a match in both tables. Customers without orders or orders without customers are excluded.",
+        "scenario": "Sales report showing customers and their actual orders."
       },
       {
-        "title": "Customer with their most recent order date",
-        "sql": "SELECT \n    c.customer_name,\n    c.email,\n    (SELECT MAX(order_date) \n     FROM orders o \n     WHERE o.customer_id = c.customer_id) AS last_order_date,\n    (SELECT COUNT(*) \n     FROM orders o \n     WHERE o.customer_id = c.customer_id) AS total_orders\nFROM customers c;",
-        "explanation": "Multiple scalar subqueries in SELECT. MAX gets the latest date, COUNT gets order frequency.",
-        "scenario": "Customer dashboard showing last activity and engagement metrics."
+        "title": "Join with table aliases for readability",
+        "sql": "SELECT e.first_name, e.last_name, d.department_name\nFROM employees e\nJOIN departments d ON e.dept_id = d.dept_id;",
+        "explanation": "Aliases (e, d) shorten table names in the query. JOIN without INNER is the same as INNER JOIN in MySQL.",
+        "scenario": "Employee directory with department names."
       },
       {
-        "title": "Products with category average price",
-        "sql": "SELECT \n    p.product_name,\n    p.category,\n    p.price,\n    (SELECT AVG(price) \n     FROM products p2 \n     WHERE p2.category = p.category) AS category_avg,\n    ROUND(p.price / (SELECT AVG(price) \n                      FROM products p2 \n                      WHERE p2.category = p.category) * 100, 2) AS pct_of_avg\nFROM products p\nORDER BY pct_of_avg DESC;",
-        "explanation": "Scalar subquery enables per-row calculations relative to group averages. Can be used in arithmetic expressions.",
-        "scenario": "Pricing analysis: identifying products priced above or below category average."
+        "title": "Joining three tables",
+        "sql": "SELECT c.name, o.order_date, p.product_name\nFROM customers c\nJOIN orders o ON c.id = o.customer_id\nJOIN order_items oi ON o.id = oi.order_id\nJOIN products p ON oi.product_id = p.id;",
+        "explanation": "Chain multiple JOINs to connect data across many tables. Each join links to the result of the previous join.",
+        "scenario": "Complete order details: who ordered, when, and what products."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Subquery returns multiple rows",
-        "error_sql": "SELECT name,\n    (SELECT salary FROM employees WHERE department = e.department) AS avg_sal\nFROM employees e;",
-        "error_message": "Subquery returns more than 1 row - ERROR",
-        "why_it_happens": "Scalar subqueries in SELECT must return exactly one row. Multiple matching rows cause an error.",
-        "fix_sql": "SELECT name,\n    (SELECT AVG(salary) FROM employees WHERE department = e.department) AS avg_sal\nFROM employees e;",
-        "key_takeaway": "Use aggregate functions (MAX, AVG, etc.) in scalar subqueries to ensure single-row results."
+        "title": "Forgetting the ON clause creates a cross join",
+        "error_sql": "SELECT * FROM customers c JOIN orders o;",
+        "error_message": "Returns every customer paired with every order (Cartesian product)",
+        "why_it_happens": "Without ON to specify the relationship, SQL performs a CROSS JOIN - all rows from table A combined with all rows from table B.",
+        "fix_sql": "SELECT * FROM customers c JOIN orders o ON c.id = o.customer_id;",
+        "key_takeaway": "Always specify the join condition with ON."
       },
       {
-        "title": "Performance issues with correlated scalar subqueries",
-        "error_sql": "SELECT * FROM large_table l1\nWHERE col > (SELECT AVG(col) FROM large_table l2 WHERE l2.group_id = l1.group_id);",
-        "error_message": "Query times out on large tables",
-        "why_it_happens": "Correlated scalar subqueries execute once per row (O(n²) complexity).",
-        "fix_sql": "-- Use JOIN with pre-aggregated subquery instead\nSELECT l.*\nFROM large_table l\nJOIN (\n    SELECT group_id, AVG(col) AS avg_col\n    FROM large_table\n    GROUP BY group_id\n) avgs ON l.group_id = avgs.group_id\nWHERE l.col > avgs.avg_col;",
-        "key_takeaway": "For large tables, use JOINs with derived tables instead of correlated scalar subqueries."
+        "title": "Wrong column in join condition",
+        "error_sql": "SELECT * FROM employees e JOIN departments d ON e.id = d.id;",
+        "error_message": "No error, but returns nonsense results or empty set",
+        "why_it_happens": "Joining on wrong columns (e.g., employee ID to department ID instead of dept_id) creates meaningless relationships.",
+        "fix_sql": "SELECT * FROM employees e JOIN departments d ON e.dept_id = d.id;",
+        "key_takeaway": "Join on columns that actually have matching values - usually foreign key to primary key."
       }
     ],
     "reflection_prompts": [
-      "When is a scalar subquery better than a JOIN?",
-      "What happens if a scalar subquery returns no rows?",
-      "How do scalar subqueries affect query performance?",
-      "Can you use scalar subqueries in WHERE clauses?"
+      "Why is it better to split data across tables and JOIN rather than store everything in one giant table?",
+      "What would happen if you joined customers to orders on the wrong column?",
+      "When would you use multiple JOINs in a single query?",
+      "How do you decide which table to list first in a JOIN?"
     ],
     "practice_suggestions": [
-      "Show employees with the difference between their salary and company average",
-      "List products with their price rank within their category",
-      "Display customers with days since their last order",
-      "Create a report showing each order as a percentage of the customer's total"
+      "Write a query joining students to their enrolled courses",
+      "List all products with their category names using a JOIN",
+      "Create a report showing employees, their departments, and their managers (two joins)",
+      "Find orders with customer details and shipping address (three joins)"
     ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 25
+    "difficulty": "beginner",
+    "estimated_minutes": 15
   },
-  "subquery-in-where": {
-    "definition": "Subqueries in the WHERE clause filter rows based on values from another query. IN checks if a value matches any in a set returned by a subquery. EXISTS tests if a subquery returns any rows. Comparison operators (=, >, <) can compare to single-value subquery results.",
-    "why_it_matters": "WHERE subqueries enable complex filtering that spans multiple tables or requires aggregation. They answer questions like 'find customers who spent more than average' or 'products in the Electronics category.' They're fundamental for multi-table logic without explicit JOINs.",
+  "comparison-operators": {
+    "definition": "Comparison operators (=, !=, <>, <, >, <=, >=) compare values in SQL conditions. They return TRUE, FALSE, or NULL and are used in WHERE, HAVING, and ON clauses to filter data based on value relationships.",
+    "why_it_matters": "Comparison operators are the building blocks of data filtering. Every query that retrieves specific records needs comparisons - finding high-value orders, recent registrations, specific products, or customers in a region. Mastering these operators is essential for precise data retrieval.",
     "examples": [
       {
-        "title": "Find products in specific categories using IN",
-        "sql": "SELECT product_name, price\nFROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE category_name IN ('Electronics', 'Computers')\n);",
-        "explanation": "IN with subquery finds all products whose category matches the subquery results. Alternative to joining categories table.",
-        "scenario": "Product catalog filter for specific category groups."
+        "title": "Equality comparison with =",
+        "sql": "SELECT * FROM employees\nWHERE department = 'Sales';",
+        "explanation": "The = operator tests for exact equality. Use it for IDs, codes, categories, or exact string matches.",
+        "scenario": "Finding all employees in the Sales department."
       },
       {
-        "title": "Find employees earning above average",
-        "sql": "SELECT name, department, salary\nFROM employees\nWHERE salary > (\n    SELECT AVG(salary)\n    FROM employees\n);",
-        "explanation": "Single-value comparison with scalar subquery. Subquery calculates average once, outer query compares each row.",
-        "scenario": "Identifying high earners for compensation review."
+        "title": "Range comparisons with < and >",
+        "sql": "SELECT product_name, price\nFROM products\nWHERE price > 100\n  AND price <= 500;",
+        "explanation": "> (greater than) and < (less than) exclude the boundary value. >= and <= include it.",
+        "scenario": "Finding mid-range products priced between $100 and $500."
       },
       {
-        "title": "Find customers with large orders using EXISTS",
-        "sql": "SELECT customer_name\nFROM customers c\nWHERE EXISTS (\n    SELECT 1\n    FROM orders o\n    WHERE o.customer_id = c.customer_id\n      AND o.total > 1000\n);",
-        "explanation": "EXISTS in WHERE finds customers meeting the subquery condition. More efficient than IN for this use case.",
-        "scenario": "VIP customer identification for premium support."
+        "title": "Not equal comparisons",
+        "sql": "SELECT * FROM orders\nWHERE status != 'cancelled';",
+        "explanation": "!= and <> both mean 'not equal'. Use whichever your team prefers; both work in MySQL.",
+        "scenario": "Finding all orders that weren't cancelled."
       }
     ],
     "common_mistakes": [
       {
-        "title": "Using = with multi-row subquery",
-        "error_sql": "SELECT * FROM employees\nWHERE department = (\n    SELECT department FROM employees\n    WHERE location = 'New York'\n);",
-        "error_message": "Subquery returns more than 1 row - ERROR",
-        "why_it_happens": "= expects exactly one value. IN should be used when subquery can return multiple rows.",
-        "fix_sql": "SELECT * FROM employees\nWHERE department IN (\n    SELECT department FROM employees\n    WHERE location = 'New York'\n);",
-        "key_takeaway": "Use IN for multi-row subqueries, = only for single-value results."
+        "title": "Using = for NULL comparison",
+        "error_sql": "SELECT * FROM employees WHERE manager_id = NULL;",
+        "error_message": "Returns no rows - NULL cannot be compared with =",
+        "why_it_happens": "NULL represents unknown value, not a specific value. It requires special operators.",
+        "fix_sql": "SELECT * FROM employees WHERE manager_id IS NULL;",
+        "key_takeaway": "Use IS NULL and IS NOT NULL, never = NULL or != NULL."
       },
       {
-        "title": "NULL values causing unexpected results with IN",
-        "error_sql": "SELECT * FROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE status = 'discontinued'\n);",
-        "error_message": "Missing expected rows when subquery returns NULL",
-        "why_it_happens": "IN with NULL returns UNKNOWN (not FALSE), excluding rows unexpectedly.",
-        "fix_sql": "SELECT * FROM products\nWHERE category_id IN (\n    SELECT category_id\n    FROM categories\n    WHERE status = 'discontinued'\n      AND category_id IS NOT NULL\n);",
-        "key_takeaway": "Handle NULL values in subqueries explicitly with IS NOT NULL."
+        "title": "String comparison without quotes",
+        "error_sql": "SELECT * FROM products WHERE category = electronics;",
+        "error_message": "Unknown column 'electronics' in 'where clause'",
+        "why_it_happens": "Without quotes, SQL treats the value as a column name instead of a string literal.",
+        "fix_sql": "SELECT * FROM products WHERE category = 'electronics';",
+        "key_takeaway": "Always enclose string literals in single quotes."
       }
     ],
     "reflection_prompts": [
-      "When should you use IN versus EXISTS in WHERE?",
-      "How do single-value comparisons differ from multi-row IN?",
-      "What happens when a subquery returns NULL?",
-      "Can subqueries reference columns from the outer query?"
+      "What's the difference between < and <= in practical terms?",
+      "Why can't you use = with NULL values?",
+      "When would you use != versus <>?",
+      "How do comparison operators work with dates?"
     ],
     "practice_suggestions": [
-      "Find products priced above the average in their category",
-      "List customers who have ordered every product in a category",
-      "Identify employees in departments with above-average headcount",
-      "Find orders placed on the same day as the highest-value order"
+      "Find employees hired in the last year using date comparisons",
+      "List products with prices between $50 and $100",
+      "Select orders that aren't completed or cancelled",
+      "Find customers who've placed more than 5 orders (requires subquery)"
     ],
-    "difficulty": "intermediate",
-    "estimated_minutes": 20
+    "difficulty": "beginner",
+    "estimated_minutes": 10
   }
 }

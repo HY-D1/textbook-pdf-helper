@@ -830,5 +830,69 @@
         "What are the NULL handling differences between IN and EXISTS?"
       ]
     }
+  },
+  "join": {
+    "L2_hint_plus_example": {
+      "hint_text": "JOIN combines rows from multiple tables based on matching columns. Use the ON clause to specify how tables relate (e.g., customer_id = order_customer_id).",
+      "example_sql": "SELECT c.name, o.order_date\nFROM customers c\nJOIN orders o ON c.id = o.customer_id;",
+      "example_explanation": "This joins customers to their orders. The ON clause links c.id (customer table) to o.customer_id (orders table). Only customers with orders are returned.",
+      "common_pitfall": "Forgetting the ON clause - without it, you get a Cartesian product (every row paired with every row)"
+    }
+  },
+  "comparison-operators": {
+    "L2_hint_plus_example": {
+      "hint_text": "Comparison operators (=, !=, <, >, <=, >=) filter data in WHERE clauses. Use = for equality, != or <> for not equal, and < > for ranges.",
+      "example_sql": "SELECT * FROM products\nWHERE price > 50\n  AND price <= 200;",
+      "example_explanation": "Finds products priced between $50 and $200. > excludes 50, <= includes 200. Combine conditions with AND.",
+      "common_pitfall": "Using = with NULL (e.g., WHERE col = NULL) - use IS NULL instead"
+    }
+  },
+  "alias": {
+    "L2_hint_plus_example": {
+      "hint_text": "Use AS to give columns or tables temporary names (aliases). Aliases make output cleaner and queries more readable.",
+      "example_sql": "SELECT first_name AS fname, last_name AS lname\nFROM employees AS e;",
+      "example_explanation": "Renames columns to 'fname' and 'lname' in results. The table alias 'e' can be used to refer to columns (e.first_name).",
+      "common_pitfall": "Forgetting that AS is optional but omitting it can make queries hard to read"
+    }
+  },
+  "distinct": {
+    "L2_hint_plus_example": {
+      "hint_text": "SELECT DISTINCT removes duplicate values from results. Use it when you want unique values only.",
+      "example_sql": "SELECT DISTINCT department\nFROM employees;",
+      "example_explanation": "Returns each department name only once, even if multiple employees work there. Without DISTINCT, you'd see the department repeated for each employee.",
+      "common_pitfall": "DISTINCT applies to ALL selected columns - SELECT DISTINCT dept, name gives unique combinations, not unique departments"
+    }
+  },
+  "select-basic": {
+    "L2_hint_plus_example": {
+      "hint_text": "SELECT retrieves data from tables. Specify column names, or use * for all columns. Always prefer explicit columns in production.",
+      "example_sql": "SELECT first_name, last_name, email\nFROM employees;",
+      "example_explanation": "Retrieves only three columns for all employees. More efficient than SELECT * and makes code more maintainable.",
+      "common_pitfall": "SELECT * in production - retrieves unnecessary data and breaks if table structure changes"
+    }
+  },
+  "where-clause": {
+    "L2_hint_plus_example": {
+      "hint_text": "WHERE filters rows before they're returned. Use comparison operators (=, <, >, etc.) and combine conditions with AND/OR.",
+      "example_sql": "SELECT * FROM employees\nWHERE department = 'Sales'\n  AND salary > 50000;",
+      "example_explanation": "Finds Sales employees earning over $50,000. Both conditions must be true (AND). Use OR if either can be true.",
+      "common_pitfall": "String literals need quotes ('Sales'), numbers don't (50000). Forgetting quotes causes 'column not found' errors"
+    }
+  },
+  "order-by": {
+    "L2_hint_plus_example": {
+      "hint_text": "ORDER BY sorts results. Use ASC for ascending (A-Z, default) or DESC for descending (Z-A). Multiple columns create nested sort.",
+      "example_sql": "SELECT name, price\nFROM products\nORDER BY price DESC, name ASC;",
+      "example_explanation": "Shows highest-priced products first. When prices tie, sorts those products alphabetically by name.",
+      "common_pitfall": "Without ORDER BY, result order is unpredictable - never rely on 'default' ordering"
+    }
+  },
+  "inner-join": {
+    "L2_hint_plus_example": {
+      "hint_text": "INNER JOIN returns only rows with matches in BOTH tables. Rows without matches in either table are excluded.",
+      "example_sql": "SELECT c.name, o.total\nFROM customers c\nINNER JOIN orders o ON c.id = o.customer_id;",
+      "example_explanation": "Returns only customers who have placed orders. Customers with no orders are excluded from results.",
+      "common_pitfall": "Confusing INNER JOIN with OUTER JOIN - INNER excludes unmatched rows, OUTER keeps them"
+    }
   }
 }
