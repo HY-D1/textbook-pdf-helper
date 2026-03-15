@@ -158,6 +158,8 @@ class FallbackRouter:
         2. Preflight signals (embedded text, column bleed)
         3. Downstream quality (L3 scores, concept coverage)
         
+        Missing metrics are treated as unknown (neutral), not automatically bad.
+        
         Args:
             preflight_report: Preflight analysis results
             extraction_quality: Extraction quality metrics
@@ -199,12 +201,15 @@ class FallbackRouter:
         downstream: dict[str, Any],
         pages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Extract and normalize all signals from inputs."""
+        """Extract and normalize all signals from inputs.
+        
+        Missing values are set to None to indicate "unknown" rather than "bad".
+        """
         signals = {}
         
-        # Preflight signals
-        signals["text_coverage_score"] = preflight.get("text_coverage_score", 0.0)
-        signals["has_embedded_text"] = preflight.get("has_embedded_text", False)
+        # Preflight signals - use None as default to indicate unknown
+        signals["text_coverage_score"] = preflight.get("text_coverage_score")
+        signals["has_embedded_text"] = preflight.get("has_embedded_text")
         signals["ocr_needed"] = preflight.get("ocr_needed", False)
         signals["estimated_table_count"] = preflight.get("estimated_table_count", 0)
         signals["average_page_text_density"] = preflight.get("average_page_text_density", 0)
@@ -212,13 +217,14 @@ class FallbackRouter:
         signals["column_bleed_detected"] = "2-column bleed detected" in signals["warning_flags"]
         signals["heavy_headers_footers"] = "heavy headers/footers" in signals["warning_flags"]
         
-        # Extraction quality signals
+        # Extraction quality signals - use None for unknown
         signals["total_chars"] = extraction.get("total_chars", 0)
-        signals["readable_ratio"] = extraction.get("readable_ratio", 0.0)
-        signals["gibberish_ratio"] = extraction.get("gibberish_ratio", 0.0)
-        signals["is_quality_good"] = extraction.get("is_quality_good", False)
+        signals["readable_ratio"] = extraction.get("readable_ratio")
+        signals["gibberish_ratio"] = extraction.get("gibberish_ratio")
+        signals["is_quality_good"] = extraction.get("is_quality_good")
         signals["needs_ocr"] = extraction.get("needs_ocr", False)
-        signals["coverage_score"] = extraction.get("coverage_score", signals["text_coverage_score"])
+        # coverage_score can come from extraction or preflight
+        signals["coverage_score"] = extraction.get("coverage_score") or signals["text_coverage_score"]
         
         # Page-level aggregate signals
         if pages:
@@ -234,13 +240,16 @@ class FallbackRouter:
         else:
             signals["page_count"] = 0
             signals["pages_with_low_coverage"] = 0
-            signals["ratio_pages_with_text"] = 0.0
-            signals["repeated_line_ratio"] = 0.0
+            signals["ratio_pages_with_text"] = None
+            signals["repeated_line_ratio"] = None
         
         # Downstream quality signals
         signals["l3_quality_score"] = downstream.get("l3_quality_score", 0.0)
         signals["concept_coverage"] = downstream.get("concept_coverage", 0.0)
-        signals["has_weak_l3_content"] = signals["l3_quality_score"] < self.thresholds.min_l3_quality_score
+        signals["has_weak_l3_content"] = (
+            signals["l3_quality_score"] > 0 and  # Only if we have a real score
+            signals["l3_quality_score"] < self.thresholds.min_l3_quality_score
+        )
         
         return signals
     
@@ -251,27 +260,48 @@ class FallbackRouter:
         Determine classification based on signals.
         
         Priority order:
-        1. needs_ocr_fallback: Very poor extraction quality
+        1. needs_ocr_fallback: Explicit evidence of poor extraction quality
         2. needs_layout_fallback: Structural issues with acceptable text
         3. needs_llm_repair: Acceptable extraction but weak downstream
-        4. deterministic_ok: Everything looks good
+        4. deterministic_ok: No evidence of problems (default when metrics are good or unknown)
+        
+        Missing metrics (None) are treated as unknown, not automatically bad.
         """
-        coverage = signals.get("coverage_score", 0)
-        readable = signals.get("readable_ratio", 0)
-        gibberish = signals.get("gibberish_ratio", 0)
-        has_embedded = signals.get("has_embedded_text", False)
+        coverage = signals.get("coverage_score")
+        readable = signals.get("readable_ratio")
+        gibberish = signals.get("gibberish_ratio")
+        has_embedded = signals.get("has_embedded_text")
         needs_ocr = signals.get("needs_ocr", False)
+        is_quality_good = signals.get("is_quality_good")
         column_bleed = signals.get("column_bleed_detected", False)
         table_count = signals.get("estimated_table_count", 0)
-        l3_quality = signals.get("l3_quality_score", 0)
-        concept_coverage = signals.get("concept_coverage", 0)
+        l3_quality = signals.get("l3_quality_score", 0.0)
         
-        # Priority 1: OCR Fallback - critical extraction failures
-        if needs_ocr or coverage < 0.50 or readable < 0.50 or not has_embedded:
+        # Priority 1: OCR Fallback - ONLY with explicit evidence of poor quality
+        # We need at least one real metric showing poor quality, not just missing data
+        ocr_triggers = []
+        
+        if needs_ocr:
+            ocr_triggers.append("needs_ocr flag set")
+        
+        # Only consider coverage if we have a real value (not None)
+        if coverage is not None and coverage < 0.50:
+            ocr_triggers.append(f"coverage={coverage:.1%}")
+        
+        # Only consider readable_ratio if we have a real value
+        if readable is not None and readable < 0.50:
+            ocr_triggers.append(f"readable={readable:.1%}")
+        
+        # Only consider has_embedded if explicitly False (not None)
+        if has_embedded is False:
+            ocr_triggers.append("no embedded text")
+        
+        # Only trigger OCR if we have explicit evidence
+        if ocr_triggers:
             confidence = self._calculate_confidence(signals, "ocr")
             explanation = (
-                f"Extraction quality insufficient: coverage={coverage:.1%}, "
-                f"readable={readable:.1%}. OCR required."
+                f"Extraction quality insufficient: {', '.join(ocr_triggers)}. "
+                f"OCR required."
             )
             return RoutingClassification.NEEDS_OCR_FALLBACK, confidence, explanation
         
@@ -285,7 +315,13 @@ class FallbackRouter:
             return RoutingClassification.NEEDS_LAYOUT_FALLBACK, confidence, explanation
         
         # Priority 3: LLM Repair - extraction ok but downstream weak
-        if coverage >= self.thresholds.min_text_coverage and l3_quality > 0 and l3_quality < self.thresholds.min_l3_quality_score:
+        # Only if we have real coverage data showing acceptable extraction
+        # AND real L3 quality data showing problems
+        coverage_ok = coverage is not None and coverage >= self.thresholds.min_text_coverage
+        has_real_l3 = l3_quality > 0  # L3 quality of 0 means no data yet
+        l3_weak = has_real_l3 and l3_quality < self.thresholds.min_l3_quality_score
+        
+        if coverage_ok and l3_weak:
             confidence = self._calculate_confidence(signals, "repair")
             explanation = (
                 f"Extraction acceptable (coverage={coverage:.1%}) but L3 quality low "
@@ -293,32 +329,50 @@ class FallbackRouter:
             )
             return RoutingClassification.NEEDS_LLM_REPAIR, confidence, explanation
         
-        # Priority 4: Deterministic OK
+        # Priority 4: Deterministic OK (default)
+        # This is the safe default when:
+        # - We have good metrics, OR
+        # - We don't have enough data to prove there's a problem
         confidence = self._calculate_confidence(signals, "deterministic")
-        explanation = (
-            f"Extraction quality good: coverage={coverage:.1%}, "
-            f"readable={readable:.1%}. No fallback needed."
-        )
+        
+        # Build explanation based on what we know
+        if coverage is not None:
+            explanation = (
+                f"Extraction quality acceptable: coverage={coverage:.1%}. "
+                f"No fallback needed."
+            )
+        elif is_quality_good is True:
+            explanation = "Extraction quality marked as good. No fallback needed."
+        elif signals.get("total_chars", 0) > 1000:
+            explanation = f"Substantial text extracted ({signals['total_chars']} chars). No fallback needed."
+        else:
+            explanation = "No evidence of extraction problems. Continuing with deterministic pipeline."
+        
         return RoutingClassification.DETERMINISTIC_OK, confidence, explanation
     
     def _calculate_confidence(
         self, signals: dict[str, Any], classification_type: str
     ) -> float:
         """Calculate confidence score for the classification."""
-        coverage = signals.get("coverage_score", 0)
-        readable = signals.get("readable_ratio", 0)
-        gibberish = signals.get("gibberish_ratio", 0)
+        coverage = signals.get("coverage_score")
+        readable = signals.get("readable_ratio")
+        gibberish = signals.get("gibberish_ratio")
+        
+        # Handle None values gracefully
+        coverage_val = coverage if coverage is not None else 0.5  # Neutral if unknown
+        readable_val = readable if readable is not None else 0.5
+        gibberish_val = gibberish if gibberish is not None else 0.0
         
         if classification_type == "deterministic":
             # Higher coverage/readable = higher confidence
             score = (
-                coverage * self.thresholds.coverage_weight +
-                readable * self.thresholds.readability_weight +
-                (1 - gibberish) * self.thresholds.structure_weight
+                coverage_val * self.thresholds.coverage_weight +
+                readable_val * self.thresholds.readability_weight +
+                (1 - gibberish_val) * self.thresholds.structure_weight
             )
         elif classification_type == "ocr":
             # Lower coverage = higher confidence in OCR need
-            score = 1.0 - (coverage * 0.5 + readable * 0.5)
+            score = 1.0 - (coverage_val * 0.5 + readable_val * 0.5)
         elif classification_type == "layout":
             score = 0.75  # Moderate confidence for layout issues
         else:  # repair
@@ -365,10 +419,12 @@ class FallbackRouter:
         
         for page in pages:
             page_num = page.get("page_number", 0)
-            coverage = page.get("coverage_score", 0)
+            coverage = page.get("coverage_score")
             
             # Classify individual page
-            if coverage < 0.50:
+            if coverage is None:
+                page_class = "unknown"
+            elif coverage < 0.50:
                 page_class = "needs_ocr"
             elif coverage < self.thresholds.min_text_coverage:
                 page_class = "marginal"
@@ -378,7 +434,7 @@ class FallbackRouter:
             decisions.append({
                 "page_number": page_num,
                 "classification": page_class,
-                "coverage_score": round(coverage, 3),
+                "coverage_score": round(coverage, 3) if coverage is not None else None,
                 "text_length": page.get("text_length", 0),
             })
         

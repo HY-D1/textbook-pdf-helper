@@ -78,6 +78,8 @@ from .export_filters import (
 )
 from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLevel
 from .fallback_router import FallbackRouter, RoutingArtifact, SliceRoutingDecision, RoutingClassification
+from .extract import check_extraction_quality
+from .quality_metrics import TextCoverageAnalyzer
 
 
 # =============================================================================
@@ -1080,7 +1082,7 @@ class InstructionalPipeline:
             raise ValueError(f"Failed to resolve chapter range: {e}")
     
     def _process_extracted_blocks(self, blocks: list[ContentBlock]) -> tuple[str, dict]:
-        """Process extracted blocks and create metadata."""
+        """Process extracted blocks and create metadata with real quality metrics."""
         # Combine all text content
         text_parts = []
         for block in blocks:
@@ -1088,13 +1090,34 @@ class InstructionalPipeline:
                 text_parts.append(block.text_content)
         
         self._raw_text = "\n\n".join(text_parts)
+        
+        # Convert blocks to pages for quality analysis
+        pages = self._blocks_to_pages(blocks)
+        
+        # Compute real quality metrics using existing quality tools
+        quality_metrics = self._compute_extraction_quality(pages)
+        
+        # Store metadata with REAL metrics (not placeholders)
         self._extraction_metadata = {
             "total_blocks": len(blocks),
             "text_length": len(self._raw_text),
             "doc_id": self.config.doc_id,
+            # Real quality metrics from analysis
+            "coverage_score": quality_metrics.get("coverage_score"),
+            "readable_ratio": quality_metrics.get("readable_ratio"),
+            "gibberish_ratio": quality_metrics.get("gibberish_ratio"),
+            "is_quality_good": quality_metrics.get("is_quality_good"),
+            "needs_ocr": quality_metrics.get("needs_ocr", False),
+            "total_chars": quality_metrics.get("total_chars", 0),
+            "page_count": len(pages),
+            # Page-level details for router
+            "page_analyses": quality_metrics.get("page_analyses", []),
         }
         
-        self._logger.info(f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks")
+        self._logger.info(
+            f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks, "
+            f"coverage={self._extraction_metadata.get('coverage_score', 'unknown')}"
+        )
         
         # Run fallback router to classify extraction quality (new)
         self._run_fallback_router()
@@ -1149,6 +1172,60 @@ class InstructionalPipeline:
         
         return pages
     
+    def _compute_extraction_quality(
+        self, pages: list[tuple[int, str]]
+    ) -> dict[str, Any]:
+        """
+        Compute real extraction quality metrics from pages.
+        
+        Uses existing quality analysis tools to calculate coverage,
+        readability, and other metrics needed for routing decisions.
+        
+        Args:
+            pages: List of (page_number, text) tuples
+            
+        Returns:
+            Dictionary with quality metrics
+        """
+        if not pages:
+            return {
+                "coverage_score": None,
+                "readable_ratio": None,
+                "is_quality_good": None,
+            }
+        
+        # Use existing quality check function
+        quality_result = check_extraction_quality(pages)
+        
+        # Use TextCoverageAnalyzer for detailed page analysis
+        analyzer = TextCoverageAnalyzer()
+        page_analyses = analyzer.analyze_pages(pages)
+        
+        # Build page analysis data for router
+        page_analysis_data = []
+        for pa in page_analyses:
+            page_analysis_data.append({
+                "page_number": pa.page_number,
+                "coverage_score": pa.coverage_score,
+                "text_length": pa.text_length,
+                "has_embedded_text": pa.has_embedded_text,
+            })
+        
+        # Calculate aggregate coverage
+        total_text = "\n".join(text for _, text in pages)
+        coverage_score = analyzer.calculate_coverage(total_text)
+        
+        return {
+            "coverage_score": coverage_score,
+            "readable_ratio": quality_result.get("readable_ratio"),
+            "gibberish_ratio": quality_result.get("gibberish_ratio"),
+            "is_quality_good": quality_result.get("is_quality_good"),
+            "needs_ocr": quality_result.get("needs_ocr", False),
+            "total_chars": quality_result.get("total_chars", 0),
+            "page_count": len(pages),
+            "page_analyses": page_analysis_data,
+        }
+    
     def _run_fallback_router(self) -> dict[str, Any]:
         """
         Run fallback router to classify extraction quality.
@@ -1165,23 +1242,27 @@ class InstructionalPipeline:
         if self._fallback_router is None:
             self._fallback_router = FallbackRouter()
         
-        # Build preflight-like report from extraction metadata
+        # Build preflight-like report from REAL extraction metadata
+        # These are actual computed values, not placeholders
         preflight_report = {
-            "text_coverage_score": self._extraction_metadata.get("coverage_score", 0.0),
-            "has_embedded_text": self._extraction_metadata.get("has_text", True),
+            "text_coverage_score": self._extraction_metadata.get("coverage_score"),
+            "has_embedded_text": self._extraction_metadata.get("page_count", 0) > 0,
             "ocr_needed": self._extraction_metadata.get("needs_ocr", False),
-            "estimated_table_count": self._extraction_metadata.get("table_count", 0),
-            "average_page_text_density": self._extraction_metadata.get("avg_text_density", 0),
-            "warning_flags": self._extraction_metadata.get("warning_flags", []),
+            "warning_flags": [],  # Could be populated from preflight if available
         }
         
-        # Build extraction quality report
+        # Build extraction quality report with REAL metrics
         extraction_quality = {
-            "total_chars": len(self._raw_text),
-            "is_quality_good": self._extraction_metadata.get("is_quality_good", True),
+            "total_chars": self._extraction_metadata.get("total_chars", len(self._raw_text)),
+            "is_quality_good": self._extraction_metadata.get("is_quality_good"),
             "needs_ocr": self._extraction_metadata.get("needs_ocr", False),
-            "coverage_score": self._extraction_metadata.get("coverage_score", 0.0),
+            "coverage_score": self._extraction_metadata.get("coverage_score"),
+            "readable_ratio": self._extraction_metadata.get("readable_ratio"),
+            "gibberish_ratio": self._extraction_metadata.get("gibberish_ratio"),
         }
+        
+        # Get page analyses for per-page routing decisions
+        page_analyses = self._extraction_metadata.get("page_analyses", [])
         
         # Determine slice ID from page range if available
         slice_id = "full_document"
@@ -1196,10 +1277,11 @@ class InstructionalPipeline:
             else:
                 slice_id = f"chapters_custom"
         
-        # Get routing decision
+        # Get routing decision with REAL metrics
         decision = self._fallback_router.classify_slice(
             preflight_report=preflight_report,
             extraction_quality=extraction_quality,
+            page_analyses=page_analyses,
             slice_id=slice_id,
         )
         

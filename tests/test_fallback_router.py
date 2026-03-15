@@ -93,6 +93,47 @@ class TestSliceRoutingDecision:
 class TestFallbackRouterHappyPaths:
     """Tests for happy path classifications."""
     
+    def test_healthy_slice_real_metrics_deterministic_ok(self):
+        """Test that a healthy PDF slice with real metrics gets deterministic_ok."""
+        router = FallbackRouter()
+        
+        # Simulate real metrics from a healthy PDF extraction
+        # (like Murach's MySQL which has good embedded text)
+        preflight = {
+            "text_coverage_score": 0.85,  # Good coverage
+            "has_embedded_text": True,
+            "ocr_needed": False,
+            "warning_flags": [],
+        }
+        
+        extraction = {
+            "coverage_score": 0.85,
+            "readable_ratio": 0.82,  # Good readability
+            "gibberish_ratio": 0.05,  # Low gibberish
+            "is_quality_good": True,
+            "needs_ocr": False,
+            "total_chars": 15000,  # Substantial text
+        }
+        
+        pages = [
+            {"page_number": 1, "coverage_score": 0.88, "has_embedded_text": True, "text": "Good content"},
+            {"page_number": 2, "coverage_score": 0.85, "has_embedded_text": True, "text": "More good content"},
+            {"page_number": 3, "coverage_score": 0.82, "has_embedded_text": True, "text": "Even more content"},
+        ]
+        
+        decision = router.classify_slice(
+            preflight_report=preflight,
+            extraction_quality=extraction,
+            page_analyses=pages,
+            slice_id="murach_ch3_healthy",
+        )
+        
+        # Healthy slice should get deterministic_ok
+        assert decision.classification == RoutingClassification.DETERMINISTIC_OK, \
+            f"Expected deterministic_ok, got {decision.classification}. Explanation: {decision.explanation}"
+        assert decision.confidence > 0.7
+        assert "coverage=85%" in decision.explanation or "acceptable" in decision.explanation.lower()
+    
     def test_deterministic_ok_strong_signals(self):
         """Test deterministic_ok when all signals are strong."""
         router = FallbackRouter()
@@ -258,7 +299,7 @@ class TestFallbackRouterEdgeCases:
     """Tests for edge cases."""
     
     def test_empty_inputs(self):
-        """Test handling of empty/None inputs."""
+        """Test handling of empty/None inputs - should default to deterministic_ok."""
         router = FallbackRouter()
         
         decision = router.classify_slice(
@@ -267,8 +308,10 @@ class TestFallbackRouterEdgeCases:
             page_analyses=None,
         )
         
-        # Should default to OCR fallback when no signals
-        assert decision.classification == RoutingClassification.NEEDS_OCR_FALLBACK
+        # Missing metrics should default to deterministic_ok (safe default)
+        # NOT automatically OCR fallback
+        assert decision.classification == RoutingClassification.DETERMINISTIC_OK
+        assert "no evidence" in decision.explanation.lower() or "deterministic" in decision.explanation.lower()
     
     def test_partial_signals(self):
         """Test handling of partial signal availability."""
