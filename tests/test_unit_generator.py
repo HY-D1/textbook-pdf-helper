@@ -400,5 +400,163 @@ class TestEvidenceSpanCreation:
         assert spans[0].block_type == "prose"
 
 
+# =============================================================================
+# SQL EXTRACTION AND VALIDATION TESTS (Week 1 Demo Regression Tests)
+# =============================================================================
+
+class TestSQLExtractionValidation:
+    """Regression tests for SQL example extraction and validation.
+    
+    These tests verify that:
+    - Contaminated SQL examples are rejected
+    - Valid multi-line SQL is retained
+    - Concept-fit validation works correctly for Week 1 concepts
+    """
+    
+    def test_reject_prose_contaminated_select(self, unit_generator):
+        """Reject SELECT statements with prose like 'for retrieving'."""
+        contaminated = [
+            "SELECT for retrieving data from tables",
+            "SELECT * FROM users This retrieves all users",
+            "WHERE for filtering rows by condition",
+        ]
+        
+        for sql in contaminated:
+            is_valid, reason = unit_generator._is_valid_sql_lenient(sql)
+            assert not is_valid, f"Should reject contaminated SQL: {sql[:40]}..."
+            assert 'prose' in reason.lower() or 'keyword' in reason.lower(), \
+                f"Rejection reason should indicate prose: {reason}"
+    
+    def test_reject_keyword_for_verb_pattern(self, unit_generator):
+        """Reject SQL that starts with keyword followed by 'for' + verb."""
+        contaminated = [
+            "SELECT for retrieving all columns",
+            "WHERE for filtering data",
+            "JOIN for combining tables",
+            "GROUP BY for aggregating results",
+        ]
+        
+        for sql in contaminated:
+            is_valid, reason = unit_generator._is_valid_sql_lenient(sql)
+            assert not is_valid, f"Should reject keyword+for+verb: {sql[:40]}..."
+    
+    def test_reject_trailing_prose_after_semicolon(self, unit_generator):
+        """Reject SQL with trailing prose after semicolon."""
+        contaminated = [
+            "SELECT * FROM users; This retrieves all users",
+            "SELECT name FROM employees; Returns employee names",
+        ]
+        
+        for sql in contaminated:
+            is_valid, reason = unit_generator._is_valid_sql_lenient(sql)
+            assert not is_valid, f"Should reject trailing prose: {sql[:40]}..."
+    
+    def test_reject_prose_first_word(self, unit_generator):
+        """Reject SQL where first word after keyword is prose."""
+        contaminated = [
+            "SELECT returns all columns from table",
+            "SELECT this is an example query",
+            "WHERE the condition is met",
+        ]
+        
+        for sql in contaminated:
+            is_valid, reason = unit_generator._is_valid_sql_lenient(sql)
+            assert not is_valid, f"Should reject prose first word: {sql[:40]}..."
+    
+    def test_accept_valid_multi_line_sql(self, unit_generator):
+        """Accept valid multi-line SQL statements."""
+        valid_sql = [
+            "SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id;",
+            "SELECT department, AVG(salary) FROM employees GROUP BY department HAVING COUNT(*) > 5;",
+            "SELECT name FROM customers WHERE city = 'Seattle' AND status = 'active';",
+            "SELECT DISTINCT category FROM products ORDER BY category ASC;",
+        ]
+        
+        for sql in valid_sql:
+            is_valid, reason = unit_generator._is_valid_sql_lenient(sql)
+            assert is_valid, f"Should accept valid SQL: {sql[:40]}... (reason: {reason})"
+    
+    def test_concept_fit_rejects_mismatched_sql(self, unit_generator):
+        """Concept-fit validation should reject mismatched SQL for concepts."""
+        # These SQL statements don't match the concept they claim to demonstrate
+        mismatched = [
+            ("outer-join", "SELECT * FROM users JOIN orders ON users.id = orders.user_id;"),  # INNER JOIN for outer-join
+            ("inner-join", "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id;"),  # LEFT JOIN for inner-join
+            ("group-by", "SELECT * FROM users;"),  # No GROUP BY
+            ("distinct", "SELECT name FROM users;"),  # No DISTINCT
+            ("where-clause", "SELECT * FROM users;"),  # No WHERE
+            ("order-by", "SELECT * FROM users;"),  # No ORDER BY
+        ]
+        
+        for concept_id, sql in mismatched:
+            is_valid, reason = unit_generator._validate_concept_fit(sql, concept_id)
+            assert not is_valid, f"Should reject '{sql[:40]}...' for concept '{concept_id}'"
+    
+    def test_concept_fit_accepts_correct_sql(self, unit_generator):
+        """Concept-fit validation should accept SQL that matches concept."""
+        matched = [
+            ("outer-join", "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id;"),
+            ("inner-join", "SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id;"),
+            ("group-by", "SELECT department, COUNT(*) FROM employees GROUP BY department;"),
+            ("distinct", "SELECT DISTINCT city FROM customers;"),
+            ("where-clause", "SELECT * FROM users WHERE age > 25;"),
+            ("order-by", "SELECT * FROM products ORDER BY price DESC;"),
+        ]
+        
+        for concept_id, sql in matched:
+            is_valid, reason = unit_generator._validate_concept_fit(sql, concept_id)
+            assert is_valid, f"Should accept '{sql[:40]}...' for concept '{concept_id}' (reason: {reason})"
+    
+    def test_strip_prose_preserves_valid_sql(self, unit_generator):
+        """Prose stripping should preserve valid SQL without contamination."""
+        valid_sql = [
+            "SELECT * FROM users WHERE status = 'active';",
+            "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id;",
+            "SELECT department, AVG(salary) as avg_sal FROM employees GROUP BY department;",
+        ]
+        
+        for sql in valid_sql:
+            result = unit_generator._strip_prose_from_sql(sql)
+            # Result should be very similar to input (maybe whitespace changes)
+            assert 'SELECT' in result, f"Should preserve SELECT: {result}"
+            assert 'FROM' in result, f"Should preserve FROM: {result}"
+            assert result.endswith(';'), f"Should end with semicolon: {result}"
+    
+    def test_strip_prose_removes_contamination(self, unit_generator):
+        """Prose stripping should remove trailing prose contamination."""
+        contaminated_pairs = [
+            ("SELECT * FROM users This retrieves all users", "SELECT * FROM users;"),
+            ("SELECT name FROM employees; Returns employee names", "SELECT name FROM employees;"),
+        ]
+        
+        for contaminated, expected in contaminated_pairs:
+            result = unit_generator._strip_prose_from_sql(contaminated)
+            assert 'This retrieves' not in result, f"Should strip 'This retrieves': {result}"
+            assert 'Returns employee' not in result, f"Should strip 'Returns employee': {result}"
+    
+    def test_week1_concepts_sql_validation(self, unit_generator):
+        """Test SQL validation for key Week 1 demo concepts with strict validation."""
+        # Concepts that have strict structure requirements
+        strict_concepts = [
+            ("where-clause", "SELECT * FROM users;", False),  # Should reject - no WHERE
+            ("where-clause", "SELECT * FROM users WHERE age > 25;", True),  # Should accept
+            ("order-by", "SELECT * FROM users;", False),  # Should reject - no ORDER BY
+            ("order-by", "SELECT * FROM users ORDER BY name;", True),  # Should accept
+            ("distinct", "SELECT * FROM users;", False),  # Should reject - no DISTINCT
+            ("distinct", "SELECT DISTINCT city FROM users;", True),  # Should accept
+            ("inner-join", "SELECT * FROM users;", False),  # Should reject - no JOIN
+            ("inner-join", "SELECT * FROM users JOIN orders ON users.id = orders.user_id;", True),
+            ("outer-join", "SELECT * FROM users JOIN orders ON users.id = orders.user_id;", False),  # INNER JOIN for outer
+            ("outer-join", "SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id;", True),
+        ]
+        
+        for concept, sql, expected_valid in strict_concepts:
+            is_valid, reason = unit_generator._validate_concept_fit(sql, concept)
+            if expected_valid:
+                assert is_valid, f"Concept '{concept}' should accept '{sql[:40]}...' (reason: {reason})"
+            else:
+                assert not is_valid, f"Concept '{concept}' should reject '{sql[:40]}...'"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
