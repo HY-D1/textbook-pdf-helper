@@ -318,6 +318,8 @@ Manual utility scripts are in `scripts/manual/` (not part of main CLI).
 | **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
 | **[Repository Layout](docs/REPO_LAYOUT.md)** | Canonical repo structure and organization |
 | **[Quality Improvements Summary](docs/QUALITY_IMPROVEMENTS_SUMMARY.md)** | Recent quality enhancements and improvements |
+| **[Week 1 Pipeline Contract](docs/pipeline_contract_week1_v15.md)** | Locked production pipeline (v1.5): default/fallback/repair paths |
+| **[Fallback Decision Rules](docs/fallback_decision_rules_week1.md)** | Success/failure triggers for OCR and LLM repair |
 
 ---
 
