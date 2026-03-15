@@ -1163,13 +1163,14 @@ class TestUnitLibraryProcessCommand:
         """Run actual process command and verify output."""
         import subprocess
         import json
+        import sys
         
         output_dir = tmp_path / "test_output"
         fixture_path = Path(__file__).parent / "fixtures" / "golden_chapter.pdf"
         
-        # Determine command - use 'algl-pdf' if available, else python -m
+        # Use python -m algl_pdf_helper for reliable cross-platform execution
         cmd = [
-            "algl-pdf",
+            sys.executable, "-m", "algl_pdf_helper",
             "process",
             str(fixture_path),
             "-o", str(output_dir),
