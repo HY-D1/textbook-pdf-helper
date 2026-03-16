@@ -160,6 +160,12 @@ CORE_CONCEPTS = {
     "insert-statement",
     "update-statement",
     "delete-statement",
+    # Week 1 demo concepts (Murach Chapter 3)
+    "alias",
+    "distinct",
+    "comparison-operators",
+    "pattern-matching",
+    "null-handling",
 }
 
 # Minimum lengths for substantive content
@@ -1770,7 +1776,9 @@ class LearningQualityGates:
                 
         elif target_stage == "L3_explanation":
             # Explicit takeaway or summary required
-            for field_name in ["key_takeaway", "takeaway", "summary", "one_sentence_summary"]:
+            # Also accept definition or why_it_matters as they serve as the takeaway
+            for field_name in ["key_takeaway", "takeaway", "summary", "one_sentence_summary", 
+                              "definition", "why_it_matters"]:
                 if content.get(field_name):
                     takeaway = content[field_name]
                     takeaway_field = field_name

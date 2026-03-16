@@ -1092,6 +1092,36 @@ def _check_core_concept_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
     return True, f"Core concept '{unit.concept_id}' has proper textbook-sourced L2 example"
 
 
+def _check_week_1_demo_default_l2(unit: InstructionalUnit) -> tuple[bool, str]:
+    """Block default L2 examples for Week 1 demo concepts.
+    
+    Week 1 demo concepts (Murach Chapter 3 core concepts) must have
+    curated or extracted examples, not default/generic ones. This is 
+    a HARD BLOCK in all export modes to ensure demo quality.
+    
+    Args:
+        unit: The instructional unit to check
+        
+    Returns:
+        Tuple of (passed, message)
+    """
+    # Only check L2 units
+    if unit.target_stage != "L2_hint_plus_example":
+        return True, "Not L2 - check skipped"
+    
+    # Check if this is a Week 1 demo concept
+    if unit.concept_id not in WEEK_1_DEMO_CONCEPTS:
+        return True, f"Not Week 1 concept ('{unit.concept_id}') - check skipped"
+    
+    # Detect if using default example
+    is_default, reason = _detect_default_l2(unit)
+    
+    if is_default:
+        return False, f"Week 1 concept '{unit.concept_id}' must not use default L2 example - {reason}"
+    
+    return True, f"Week 1 concept '{unit.concept_id}' has quality L2 example"
+
+
 def _check_synthetic_only_l3(unit: InstructionalUnit) -> tuple[bool, str]:
     """Check if L3 explanation is purely synthetic without source grounding.
     
@@ -1165,6 +1195,21 @@ CORE_SQL_CONCEPTS: set[str] = {
     'delete-statement',
     'self-join',
     'having-clause',
+    'alias',
+    'comparison-operators',
+    'distinct',
+}
+
+# Week 1 demo slice concepts - Murach Chapter 3 core concepts
+WEEK_1_DEMO_CONCEPTS: set[str] = {
+    'select-basic',
+    'where-clause',
+    'order-by',
+    'alias',
+    'distinct',
+    'comparison-operators',
+    'pattern-matching',
+    'null-handling',
 }
 
 
@@ -2297,6 +2342,14 @@ STUDENT_READY_FILTERS: list[ExportRule] = HARD_BLOCK_RULES.copy() + [
         description="Core SQL concept using default L2 example - requires textbook example",
         check_fn=_check_core_concept_default_l2,
         error_message="Core concept must have textbook-sourced L2 example, not default/generic"
+    ),
+    # Block Week 1 demo concepts using default L2 examples (highest priority for demo)
+    ExportRule(
+        rule_id="week_1_demo_default_l2",
+        rule_type=RuleType.HARD_BLOCK,
+        description="Week 1 demo concept must not use default L2 example - demo quality requirement",
+        check_fn=_check_week_1_demo_default_l2,
+        error_message="Week 1 demo concept blocked - default L2 not allowed for demo presentation"
     ),
     # Block purely synthetic L3 without source grounding
     ExportRule(

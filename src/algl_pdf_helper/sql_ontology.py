@@ -1002,6 +1002,16 @@ ERROR_SUBTYPE_TO_CONCEPT_MAPPING: dict[str, list[str]] = {
     # Alias and Reference Errors
     "ambiguous_column_reference": ["alias"],
     "undefined_alias": ["alias"],
+    "alias_reference_in_where": ["alias"],
+    "alias_syntax_error": ["alias"],
+    
+    # Pattern Matching Errors
+    "like_pattern_syntax": ["pattern-matching"],
+    "like_wildcard_misuse": ["pattern-matching"],
+    
+    # NULL Handling Errors
+    "null_arithmetic_error": ["null-handling"],
+    "null_aggregate_ignored": ["null-handling"],
 }
 
 

@@ -766,6 +766,7 @@ def create_ollama_repair_if_enabled(
     enabled: bool = True,
     model: str = RECOMMENDED_REPAIR_MODEL,
     host: str = "http://localhost:11434",
+    auto_fallback: bool = True,
 ) -> tuple[OllamaRepair | None, dict[str, Any]]:
     """
     Factory function to create OllamaRepair if enabled.
@@ -774,7 +775,7 @@ def create_ollama_repair_if_enabled(
         Tuple of (repair_instance, status_dict)
     """
     if not enabled:
-        return None, {"enabled": False, "available": False, "reason": "disabled"}
+        return None, {"enabled": False, "available": False, "reason": "disabled", "disabled_reason": "disabled"}
     
     repair = OllamaRepair(model=model, host=host)
     
@@ -783,6 +784,7 @@ def create_ollama_repair_if_enabled(
             "enabled": True,
             "available": False,
             "reason": "ollama_not_running",
+            "disabled_reason": "ollama_not_running",
             "model_requested": model,
         }
     
@@ -791,6 +793,7 @@ def create_ollama_repair_if_enabled(
         "available": True,
         "model": repair.model,
         "recommended_model": RECOMMENDED_REPAIR_MODEL,
+        "disabled_reason": None,
     }
 
 
