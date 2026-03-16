@@ -399,5 +399,110 @@ class TestLegacyCompatibility:
             assert result["_repaired_by_ollama"] is True
 
 
+class TestAssessContentQuality:
+    """Tests for content quality assessment."""
+    
+    def test_high_quality_content_scores_high(self):
+        """Test that complete content gets high score."""
+        repair = OllamaRepair()
+        
+        content = {
+            "definition": "A JOIN is a SQL clause that combines rows from two or more tables based on a related column between them.",
+            "why_it_matters": "JOINs are essential for querying normalized databases where data is spread across multiple tables to reduce redundancy.",
+            "explanation": "When tables are normalized, related data is stored separately. JOINs allow you to reconstruct these relationships in your queries.",
+            "example": "SELECT * FROM customers JOIN orders ON customers.id = orders.customer_id;",
+        }
+        
+        score = repair.assess_content_quality(content)
+        assert score >= 0.7, f"Expected high score, got {score}"
+    
+    def test_low_quality_content_scores_low(self):
+        """Test that incomplete content gets low score."""
+        repair = OllamaRepair()
+        
+        content = {
+            "definition": "Short",  # Too short
+            "why_it_matters": "",    # Missing
+            "explanation": "",       # Missing
+        }
+        
+        score = repair.assess_content_quality(content)
+        assert score < 0.5, f"Expected low score, got {score}"
+    
+    def test_empty_content_returns_zero(self):
+        """Test that empty/non-dict content returns 0."""
+        repair = OllamaRepair()
+        
+        assert repair.assess_content_quality(None) == 0.0
+        assert repair.assess_content_quality("string") == 0.0
+        assert repair.assess_content_quality({}) < 0.5
+
+
+class TestSelectiveRepairPassCompatibility:
+    """Tests for SelectiveRepairPass backward compatibility fixes."""
+    
+    def test_repair_if_needed_accepts_concept_id_kwarg(self):
+        """Test that repair_if_needed accepts concept_id parameter without error."""
+        from algl_pdf_helper.ollama_repair import SelectiveRepairPass, SelectiveRepairResult
+        
+        repair = OllamaRepair()
+        repair._available = False  # Force unavailable to avoid actual repair
+        
+        selective = SelectiveRepairPass(repair)
+        
+        # Create mock unit
+        mock_unit = Mock()
+        mock_unit.concept_id = "test-concept"
+        mock_unit.content = {"definition": "Test definition"}
+        
+        # Call with concept_id kwarg (this was causing the error)
+        result = selective.repair_if_needed(
+            unit=mock_unit,
+            source_blocks=[],
+            concept_id="test-concept",  # This extra param was causing: "unexpected keyword argument"
+        )
+        
+        # Should return SelectiveRepairResult, not raise TypeError
+        assert isinstance(result, SelectiveRepairResult)
+        assert result.reason == "ollama_not_available"
+    
+    def test_selective_repair_result_has_expected_attributes(self):
+        """Test that SelectiveRepairResult has .repaired, .get_unit(), .reason."""
+        from algl_pdf_helper.ollama_repair import SelectiveRepairResult
+        
+        mock_unit = Mock()
+        
+        result = SelectiveRepairResult(
+            unit=mock_unit,
+            repaired=True,
+            reason="test_reason",
+        )
+        
+        assert result.repaired is True
+        assert result.reason == "test_reason"
+        assert result.get_unit() is mock_unit
+    
+    def test_repair_result_no_repair_needed(self):
+        """Test result when no repair is needed (quality above threshold)."""
+        from algl_pdf_helper.ollama_repair import SelectiveRepairPass, SelectiveRepairResult
+        
+        repair = OllamaRepair()
+        repair._available = True
+        
+        # Mock assess_content_quality to return high quality
+        with patch.object(repair, 'assess_content_quality', return_value=0.9):
+            selective = SelectiveRepairPass(repair, repair_threshold=0.6)
+            
+            mock_unit = Mock()
+            mock_unit.concept_id = "test-concept"
+            mock_unit.content = {"definition": "Good definition that is long enough"}
+            
+            result = selective.repair_if_needed(mock_unit, [])
+            
+            assert isinstance(result, SelectiveRepairResult)
+            assert result.repaired is False
+            assert result.reason == "no_repair_needed"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

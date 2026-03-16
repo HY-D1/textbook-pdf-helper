@@ -769,6 +769,69 @@ Generate the repair JSON now:"""
         
         return content
     
+    def assess_content_quality(
+        self,
+        content: dict[str, Any],
+        source_blocks: list[Any] | None = None,
+    ) -> float:
+        """
+        Assess the quality of L3 content using heuristics.
+        
+        This method provides a fast local quality assessment without calling Ollama.
+        It uses heuristics based on content length, presence of key fields, etc.
+        
+        Args:
+            content: Content dictionary to assess
+            source_blocks: Optional source blocks for comparison (not used in heuristic mode)
+            
+        Returns:
+            Quality score between 0.0 and 1.0
+        """
+        if not isinstance(content, dict):
+            return 0.0
+        
+        scores = []
+        
+        # Check definition quality
+        definition = content.get("definition", "")
+        if len(definition) >= 100:
+            scores.append(1.0)
+        elif len(definition) >= 50:
+            scores.append(0.7)
+        elif len(definition) >= 20:
+            scores.append(0.4)
+        else:
+            scores.append(0.1)
+        
+        # Check why_it_matters quality
+        why = content.get("why_it_matters", "")
+        if len(why) >= 80:
+            scores.append(1.0)
+        elif len(why) >= 40:
+            scores.append(0.7)
+        elif len(why) >= 20:
+            scores.append(0.4)
+        else:
+            scores.append(0.1)
+        
+        # Check explanation quality
+        explanation = content.get("explanation", "")
+        if len(explanation) >= 200:
+            scores.append(1.0)
+        elif len(explanation) >= 100:
+            scores.append(0.7)
+        elif len(explanation) >= 50:
+            scores.append(0.4)
+        else:
+            scores.append(0.2)
+        
+        # Check for SQL examples
+        has_example = bool(content.get("example") or content.get("example_repairs"))
+        scores.append(1.0 if has_example else 0.5)
+        
+        # Calculate average
+        return sum(scores) / len(scores) if scores else 0.5
+    
     # Legacy method for backwards compatibility
     def repair_l3_content(
         self,
@@ -827,6 +890,26 @@ def create_ollama_repair_if_enabled(
 # SELECTIVE REPAIR PASS (for backwards compatibility)
 # =============================================================================
 
+@dataclass
+class SelectiveRepairResult:
+    """
+    Result wrapper for selective repair pass.
+    
+    Provides the interface expected by unit_generator.py:
+    - .repaired: bool indicating if repair was applied
+    - .get_unit(): returns the (repaired or original) unit
+    - .reason: string explaining the repair decision
+    """
+    unit: Any
+    repaired: bool = False
+    reason: str = ""
+    error: str | None = None
+    
+    def get_unit(self) -> Any:
+        """Get the unit (repaired or original)."""
+        return self.unit
+
+
 class SelectiveRepairPass:
     """
     Selective repair pass for automatic weak content detection.
@@ -860,30 +943,49 @@ class SelectiveRepairPass:
         self,
         unit: Any,
         source_blocks: list[Any],
-    ) -> Any:
+        **kwargs,  # Accept extra params for backward compatibility (e.g., concept_id)
+    ) -> SelectiveRepairResult:
         """
         Repair unit if quality is below threshold.
         
         Args:
             unit: InstructionalUnit to potentially repair
             source_blocks: Source content blocks for evidence
+            **kwargs: Additional keyword arguments (ignored, for compatibility)
             
         Returns:
-            Unit (repaired or original)
+            SelectiveRepairResult with .repaired, .get_unit(), .reason attributes
         """
+        # Handle case where ollama is not available
         if not self.ollama_repair or not self.ollama_repair.available:
-            return unit
+            return SelectiveRepairResult(
+                unit=unit,
+                repaired=False,
+                reason="ollama_not_available",
+            )
         
         # Check if unit needs repair
         content = getattr(unit, 'content', {})
         if not isinstance(content, dict):
-            return unit
+            return SelectiveRepairResult(
+                unit=unit,
+                repaired=False,
+                reason="invalid_content",
+            )
         
         # Assess quality
-        quality = self.ollama_repair.assess_content_quality(content, source_blocks)
+        try:
+            quality = self.ollama_repair.assess_content_quality(content, source_blocks)
+        except Exception as e:
+            self._logger.debug(f"Quality assessment failed: {e}")
+            quality = 0.5  # Default to middle quality on error
         
         if quality >= self.repair_threshold:
-            return unit
+            return SelectiveRepairResult(
+                unit=unit,
+                repaired=False,
+                reason="no_repair_needed",
+            )
         
         # Attempt repair
         concept_id = getattr(unit, 'concept_id', 'unknown')
@@ -897,35 +999,56 @@ class SelectiveRepairPass:
             getattr(b, 'text_content', str(b)) for b in source_blocks
         )
         
-        result = self.ollama_repair.repair_l3_content_structured(
-            concept_id=concept_id,
-            weak_content=weak_content,
-            source_evidence=source_evidence,
-        )
-        
-        if result.repair_accepted:
-            # Update unit content
-            new_content = dict(content)
-            if result.repaired_content:
+        try:
+            result = self.ollama_repair.repair_l3_content_structured(
+                concept_id=concept_id,
+                weak_content=weak_content,
+                source_evidence=source_evidence,
+            )
+            
+            if result.repair_accepted and result.repaired_content:
+                # Update unit content
+                new_content = dict(content)
                 new_content.update({
                     k: v for k, v in result.repaired_content.items()
                     if k not in ('_cache_metadata',)
                 })
-            
-            # Update metadata
-            if "_metadata" not in new_content:
-                new_content["_metadata"] = {}
-            new_content["_metadata"].update({
-                "_repaired_by_ollama": True,
-                "_repair_model": result.model_used,
-                "content_quality": "repaired",
-            })
-            
-            # Create updated unit
-            from dataclasses import replace
-            return replace(unit, content=new_content)
+                
+                # Update metadata
+                if "_metadata" not in new_content:
+                    new_content["_metadata"] = {}
+                new_content["_metadata"].update({
+                    "_repaired_by_ollama": True,
+                    "_repair_model": result.model_used,
+                    "content_quality": "repaired",
+                })
+                
+                # Create updated unit
+                from dataclasses import replace
+                repaired_unit = replace(unit, content=new_content)
+                
+                return SelectiveRepairResult(
+                    unit=repaired_unit,
+                    repaired=True,
+                    reason=f"repair_applied (confidence: {result.repair_metadata.get('confidence', 'unknown')})",
+                )
+            else:
+                # Repair attempted but not accepted
+                return SelectiveRepairResult(
+                    unit=unit,
+                    repaired=False,
+                    reason=f"repair_rejected: {result.error or 'validation_failed'}",
+                    error=result.error,
+                )
         
-        return unit
+        except Exception as e:
+            self._logger.warning(f"Repair failed for {concept_id}: {e}")
+            return SelectiveRepairResult(
+                unit=unit,
+                repaired=False,
+                reason="repair_exception",
+                error=str(e),
+            )
     
     def assess_quality(
         self,
@@ -935,4 +1058,8 @@ class SelectiveRepairPass:
         """Assess content quality."""
         if not self.ollama_repair:
             return 0.5
-        return self.ollama_repair.assess_content_quality(content, source_blocks)
+        try:
+            return self.ollama_repair.assess_content_quality(content, source_blocks)
+        except Exception as e:
+            self._logger.debug(f"Quality assessment failed: {e}")
+            return 0.5
