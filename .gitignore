@@ -56,6 +56,7 @@ test_reports/*.json
 !test_reports/CLEANUP_FINAL_SUMMARY.md
 !test_reports/COMPREHENSIVE_TEST_SUMMARY.md
 !test_reports/FINAL_VALIDATION_REPORT.md
+!test_reports/week1_weak_slice_test_report.md
 
 # Temporary files
 *.tmp
