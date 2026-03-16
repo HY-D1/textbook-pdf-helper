@@ -1380,6 +1380,18 @@ class InstructionalPipeline:
             except (ValueError, IndexError):
                 pass
         
+        # Handle full_document or other non-page-specific slice ids
+        # Return all pages from the PDF
+        if slice_id in ("full_document", "chapters_custom", "unknown"):
+            try:
+                import fitz
+                doc = fitz.open(self.config.pdf_path)
+                page_count = len(doc)
+                doc.close()
+                return list(range(1, page_count + 1))
+            except Exception:
+                pass
+        
         # Fall back to config
         if self.config.page_range:
             if isinstance(self.config.page_range, tuple):

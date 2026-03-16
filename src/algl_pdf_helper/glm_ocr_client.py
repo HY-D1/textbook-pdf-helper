@@ -110,7 +110,7 @@ class GLMOCRClient:
     DEFAULT_TIMEOUT = 120  # seconds - OCR can be slow
     
     # GLM-OCR supports large context (131K), so we can process multiple pages
-    MAX_PAGES_PER_BATCH = 5  # Conservative limit for memory/performance
+    MAX_PAGES_PER_BATCH = 1  # Reduced to 1 to avoid memory issues with local Ollama
     
     def __init__(
         self,
@@ -270,7 +270,7 @@ class GLMOCRClient:
                 page = doc.load_page(page_num - 1)  # 0-based indexing
                 
                 # Render page to image (reasonable resolution for OCR)
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better OCR
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))  # 1.5x zoom to reduce memory
                 img_data = pix.tobytes("png")
                 img_b64 = base64.b64encode(img_data).decode("utf-8")
                 images_base64.append(img_b64)

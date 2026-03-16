@@ -380,6 +380,7 @@ class OllamaRepair:
         timeout: int = DEFAULT_TIMEOUT,
         cache: RepairCache | None = None,
         auto_fallback: bool = True,
+        skip_preflight: bool = False,
     ):
         self.host = host.rstrip("/")
         self.timeout = timeout
@@ -387,8 +388,8 @@ class OllamaRepair:
         self.auto_fallback = auto_fallback
         self._available: bool | None = None
         
-        # Check availability and resolve model
-        if self.available:
+        # Check availability and resolve model (unless skip_preflight)
+        if not skip_preflight and self.available:
             self.model = self._resolve_model(model)
         else:
             self.model = model
@@ -399,6 +400,31 @@ class OllamaRepair:
         if self._available is None:
             self._available = self._check_availability()
         return self._available
+    
+    @staticmethod
+    def run_preflight_check(model: str = DEFAULT_MODEL) -> tuple[bool, str]:
+        """
+        Static preflight check to avoid creating instance when unavailable.
+        
+        Args:
+            model: Model name to check (not used, for compatibility)
+            
+        Returns:
+            Tuple of (available, message)
+        """
+        try:
+            host = "http://localhost:11434"
+            req = urllib.request.Request(
+                f"{host}/api/tags",
+                method="GET",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as response:
+                if response.status == 200:
+                    return True, "Ollama available"
+                return False, f"Ollama returned status {response.status}"
+        except Exception as e:
+            return False, f"Ollama not reachable: {e}"
     
     def _check_availability(self) -> bool:
         """Check if Ollama server is reachable."""
