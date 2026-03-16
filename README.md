@@ -31,6 +31,30 @@ Available extras:
 - `ocr` - OCR support for scanned PDFs (requires tesseract)
 - `dev` - Development dependencies (pytest, etc.)
 
+### 🎯 Week 1 Demo
+
+For a reproducible walkthrough of the Week 1 pipeline (Murach Ch3 deterministic extraction + OCR fallback proof):
+
+**See:** [`docs/week1_demo_runbook.md`](docs/week1_demo_runbook.md)
+
+Quick start:
+```bash
+# Demo 1: Normal deterministic-first run (Murach Ch3)
+algl-pdf process raw_pdf/murachs-mysql-3rd-edition.pdf \
+  --output-dir ./outputs/week1-demo/murach-ch3 \
+  --page-range 93-132 \
+  --export-mode prototype \
+  --llm-provider ollama \
+  --use-ollama-repair
+
+# Demo 2: Weak-slice OCR proof (image-only PDF)
+algl-pdf process raw_pdf/murach-ch3-weak-slice.pdf \
+  --output-dir ./outputs/week1-demo/weak-slice \
+  --page-range 1-5 \
+  --llm-provider ollama \
+  --use-ollama-repair
+```
+
 ---
 
 ## 📚 Workflows

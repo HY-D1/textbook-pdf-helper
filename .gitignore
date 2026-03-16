@@ -108,6 +108,7 @@ smart_process.sh
 # Week 1 v1.5 pipeline contract docs (source-of-truth)
 !docs/pipeline_contract_week1_v15.md
 !docs/fallback_decision_rules_week1.md
+!docs/week1_demo_runbook.md
 
 # Root-level markdown files (move to docs/ for archival)
 AGENTS.md
