@@ -558,5 +558,78 @@ class TestSQLExtractionValidation:
                 assert not is_valid, f"Concept '{concept}' should reject '{sql[:40]}...'"
 
 
+class TestProseFragmentRejection:
+    """Tests for prose fragment rejection in SQL validation."""
+    
+    def test_reject_alter_table_can_be_used(self, unit_generator):
+        """Reject 'ALTER TABLE can be used' prose fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "ALTER TABLE can be used;"
+        )
+        assert not is_valid, "Should reject modal verb fragment"
+        assert "modal" in reason.lower() or "prose" in reason.lower(), f"Expected modal/prose reason, got: {reason}"
+    
+    def test_reject_alter_table_can_also_be_used(self, unit_generator):
+        """Reject 'ALTER TABLE can also be used' prose fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "ALTER TABLE can also be used;"
+        )
+        assert not is_valid, "Should reject modal verb fragment with 'also'"
+        assert "modal" in reason.lower() or "prose" in reason.lower(), f"Expected modal/prose reason, got: {reason}"
+    
+    def test_reject_drop_table_command(self, unit_generator):
+        """Reject 'DROP TABLE command' noun phrase fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "DROP TABLE command.;"
+        )
+        assert not is_valid, "Should reject noun phrase fragment"
+        assert "noun" in reason.lower() or "prose" in reason.lower() or "fragment" in reason.lower(), f"Expected noun/fragment reason, got: {reason}"
+    
+    def test_reject_create_table_statement(self, unit_generator):
+        """Reject 'CREATE TABLE statement' noun phrase fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "CREATE TABLE statement;"
+        )
+        assert not is_valid, "Should reject noun phrase fragment"
+        assert "noun" in reason.lower() or "prose" in reason.lower() or "fragment" in reason.lower(), f"Expected noun/fragment reason, got: {reason}"
+    
+    def test_reject_with_null_values(self, unit_generator):
+        """Reject 'with null values' prepositional fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "with null values;"
+        )
+        assert not is_valid, "Should reject prepositional fragment"
+        assert "prepositional" in reason.lower() or "prose" in reason.lower() or "fragment" in reason.lower(), f"Expected prepositional reason, got: {reason}"
+    
+    def test_reject_with_special_attention(self, unit_generator):
+        """Reject 'with special attention' prose fragment."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "with special attention paid to high frequency values, so;"
+        )
+        assert not is_valid, "Should reject adjectival fragment"
+        assert "prepositional" in reason.lower() or "prose" in reason.lower() or "fragment" in reason.lower(), f"Expected fragment reason, got: {reason}"
+    
+    def test_accept_valid_alter_table(self, unit_generator):
+        """Accept valid ALTER TABLE statement."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "ALTER TABLE employees ADD COLUMN email VARCHAR(100);"
+        )
+        assert is_valid, f"Should accept valid ALTER TABLE, got: {reason}"
+    
+    def test_accept_valid_drop_table(self, unit_generator):
+        """Accept valid DROP TABLE statement."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "DROP TABLE IF EXISTS temp_data;"
+        )
+        assert is_valid, f"Should accept valid DROP TABLE, got: {reason}"
+    
+    def test_accept_valid_create_table(self, unit_generator):
+        """Accept valid CREATE TABLE statement."""
+        is_valid, reason = unit_generator._is_valid_sql_lenient(
+            "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(50));"
+        )
+        assert is_valid, f"Should accept valid CREATE TABLE, got: {reason}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

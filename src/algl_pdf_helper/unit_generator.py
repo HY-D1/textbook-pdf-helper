@@ -2432,7 +2432,47 @@ class UnitGenerator:
                     if any(indicator in after_semicolon.lower() for indicator in prose_indicators):
                         return False, f"Trailing prose after semicolon: '{after_semicolon[:30]}...'"
         
-        # === CHECK 3: Concept keywords must be present (re-verify) ===
+        # === CHECK 3: Reject prose fragments that passed initial cleaning ===
+        # These are sentence fragments that contain SQL keywords but are not valid SQL
+        prose_fragment_patterns = [
+            # Modal verb patterns: "ALTER TABLE can also be used", "DROP TABLE can be"
+            (r'\b(alter|drop|create)\s+\w+\s+can\s+(also\s+)?(be\s+)?used\b', 'modal_used_fragment'),
+            # Noun phrase fragments: "DROP TABLE command", "ALTER TABLE statement"
+            (r'\b(alter|drop|create)\s+\w+\s+(command|statement|clause|operation)\b', 'noun_phrase_fragment'),
+            # Prepositional fragments: "with null values", "with special attention"
+            (r'^\s*with\s+\w+\s+(values|attention|care|focus|emphasis)\b', 'prepositional_fragment'),
+            # Adjective fragments: "with high frequency", "with default values"
+            (r'^\s*with\s+\w+\s+\w+\s+(values|so|then)\b', 'adjectival_fragment'),
+        ]
+        
+        for pattern, reason in prose_fragment_patterns:
+            if re.search(pattern, sql_lower):
+                return False, f"Prose fragment ({reason}): '{sql[:50]}...'"
+        
+        # Check for DDL statements that are too short to be valid
+        # ALTER TABLE needs: ALTER TABLE table_name action
+        if sql_upper.startswith('ALTER TABLE'):
+            word_count = len(sql.split())
+            if word_count < 4:  # ALTER TABLE x ACTION
+                return False, f"ALTER TABLE too short ({word_count} words), likely prose fragment"
+        
+        # DROP TABLE needs: DROP TABLE table_name [CASCADE]
+        if sql_upper.startswith('DROP TABLE'):
+            word_count = len(sql.split())
+            if word_count < 3:  # DROP TABLE x
+                return False, f"DROP TABLE too short ({word_count} words), likely prose fragment"
+            # Reject if ends with prose words
+            last_word = words[-1].rstrip(';').lower() if words else ''
+            if last_word in {'command', 'operation', 'statement', 'used', 'values'}:
+                return False, f"DROP TABLE ends with prose word '{last_word}'"
+        
+        # CREATE needs substantial content
+        if re.search(r'^\s*CREATE\s+', sql_upper):
+            word_count = len(sql.split())
+            if word_count < 4:  # CREATE TABLE x ( ...needs more...
+                return False, f"CREATE statement too short ({word_count} words), likely prose fragment"
+        
+        # === CHECK 4: Concept keywords must be present (re-verify) ===
         # Re-run concept-fit validation to ensure keywords weren't lost during normalization
         is_valid_fit, fit_reason = self._validate_concept_fit(sql, concept_id)
         if not is_valid_fit:
@@ -4628,6 +4668,30 @@ class UnitGenerator:
             if re.search(pattern, sql_lower):
                 print(f"[SQL VALIDATE] Rejecting contaminated SQL (prose pattern '{pattern}'): {sql[:60]}...")
                 return False, 'prose_contamination'
+        
+        # === Reject prose fragments with SQL keywords ===
+        # These are sentence fragments that contain SQL keywords but are not valid SQL
+        # NOTE: All patterns use lowercase since sql_lower is lowercase
+        prose_fragment_patterns = [
+            # Modal verb patterns: "ALTER TABLE can also be used", "ALTER TABLE can be used"
+            (r'\b(alter|drop|create)\s+\w+\s+can\s+(also\s+)?be\s+used\b', 'modal_used_fragment'),
+            # Noun phrase fragments: "DROP TABLE command", "ALTER TABLE statement"
+            (r'\b(alter|drop|create)\s+\w+\s+(command|statement|clause|operation)\s*([;.]|$)', 'noun_phrase_fragment'),
+            # Prepositional fragments: "with null values", "with special attention"
+            (r'^\s*with\s+\w+\s+(values|attention|care|focus|emphasis)\b', 'prepositional_fragment'),
+            # Adjective fragments: "with high frequency values"
+            (r'^\s*with\s+\w+\s+\w+\s+(values|so|then)\b', 'adjectival_fragment'),
+        ]
+        
+        for pattern, reason in prose_fragment_patterns:
+            if re.search(pattern, sql_lower):
+                print(f"[SQL VALIDATE] Rejecting prose fragment ({reason}): {sql[:60]}...")
+                return False, f'prose_fragment_{reason}'
+        
+        # === Reject "can be used" and "can also be used" after SQL keywords ===
+        if re.search(r'\b(alter|drop|create)\s+\w+.*\bcan\s+(also\s+)?be\s+used\b', sql_lower):
+            print(f"[SQL VALIDATE] Rejecting modal verb fragment: {sql[:60]}...")
+            return False, 'modal_verb_fragment'
         
         # === Explicit rejection for keyword + "for" + verb pattern ===
         # Pattern: "SELECT for retrieving", "WHERE for filtering", etc.
