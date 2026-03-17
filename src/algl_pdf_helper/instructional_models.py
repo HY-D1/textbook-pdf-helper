@@ -1041,6 +1041,32 @@ class ConceptUnitEntry(BaseModel):
     estimated_read_time: int = Field(default=60, ge=1, description="Estimated reading time in seconds")
     prerequisites: list[str] = Field(default_factory=list, description="Prerequisite concept IDs")
 
+    # Day 3: Backbone alignment fields (from sql_ontology + practice_map)
+    error_subtypes: list[str] = Field(
+        default_factory=list,
+        description="SQL-Engage error subtypes associated with this concept"
+    )
+    practice_problem_ids: list[str] = Field(
+        default_factory=list,
+        description="Practice problem IDs linked to this concept"
+    )
+    supports_hintwise: bool = Field(
+        default=False,
+        description="Whether this concept supports HintWise-style hints"
+    )
+    supports_replay: bool = Field(
+        default=False,
+        description="Whether this concept supports replay/interactive features"
+    )
+    backbone_sources: list[str] = Field(
+        default_factory=list,
+        description="Sources for backbone data: sql_ontology, practice_map, external_csv"
+    )
+    blocked_by_prerequisite: list[str] = Field(
+        default_factory=list,
+        description="Prerequisites that are not yet mastered (blocking this unit)"
+    )
+
 
 class ConceptUnitsReport(BaseModel):
     """
