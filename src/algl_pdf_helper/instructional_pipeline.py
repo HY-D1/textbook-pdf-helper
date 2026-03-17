@@ -57,6 +57,11 @@ from .instructional_models import (
     MisconceptionUnit,
     ReinforcementItem,
     UnitLibraryExport,
+    ExtractionReport,
+    LLMIntervention,
+    LLMInterventionsReport,
+    ConceptUnitEntry,
+    ConceptUnitsReport,
 )
 from .section_extractor import SectionExtractor, ContentBlock, ContentFilter, BlockType
 from .pedagogy_extractor import PedagogyExtractor, PedagogyIntegrator
@@ -201,7 +206,10 @@ class PipelineConfig:
     
     # Off-book curated content configuration
     allow_offbook_curated: bool = False  # Default False - must explicitly opt-in for off-book concepts
-    
+
+    # LLM configuration
+    skip_llm: bool = False  # Skip all LLM-based processing
+
     # Ollama repair configuration
     use_ollama_repair: bool = True
     ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:3b"))
@@ -724,10 +732,16 @@ class InstructionalPipeline:
             "pages_from_cache": 0,
             "pages_extracted": 0,
         }
-        
+
         # GLM-OCR fallback handler (new)
         self._ocr_fallback: GLMOCRFallback | None = None
         self._ocr_result: dict[str, Any] | None = None
+
+        # Day 2: Artifact tracking
+        self._extraction_report: dict[str, Any] | None = None
+        self._llm_interventions_report: Any | None = None
+        self._llm_interventions: list[dict[str, Any]] = []
+        self._skip_llm: bool = False
     
     def run(self) -> PipelineResult:
         """
@@ -907,7 +921,12 @@ class InstructionalPipeline:
             
             # Write OCR fallback artifact if present (new)
             self._write_ocr_artifact()
-            
+
+            # Write Day 2 artifacts
+            self._write_extraction_report()
+            self._write_llm_interventions()
+            self._write_concept_units()
+
             # Clear checkpoint on successful completion
             if result.success and self.config.resume_from_checkpoint:
                 self._checkpoint_manager.clear_checkpoint()
@@ -1448,26 +1467,273 @@ class InstructionalPipeline:
     def _write_ocr_artifact(self) -> Path | None:
         """
         Write GLM-OCR fallback result to output directory.
-        
+
         Returns:
             Path to written artifact or None if no OCR result
         """
         if not self._ocr_result:
             return None
-        
+
         try:
             output_path = self.config.output_dir / "ocr_fallback_result.json"
-            
+
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(self._ocr_result, f, indent=2, ensure_ascii=False)
-            
+
             self._logger.info(f"Saved OCR fallback artifact: {output_path}")
             return output_path
-            
+
         except Exception as e:
             self._logger.warning(f"Failed to write OCR artifact: {e}")
             return None
-    
+
+    def _record_llm_intervention(
+        self,
+        phase: str,
+        target_id: str,
+        target_type: str,
+        reason: str,
+        outcome: str,
+        success: bool,
+        duration_seconds: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Record an LLM intervention for the interventions report.
+
+        Args:
+            phase: Pipeline phase where intervention occurred
+            target_id: ID of the target (concept, unit, etc.)
+            target_type: Type of target
+            reason: Why the intervention was triggered
+            outcome: Result description
+            success: Whether the intervention succeeded
+            duration_seconds: Time taken
+            metadata: Additional metadata
+        """
+        intervention = {
+            "intervention_id": f"int_{len(self._llm_interventions) + 1:04d}",
+            "phase": phase,
+            "target_id": target_id,
+            "target_type": target_type,
+            "reason": reason,
+            "llm_provider": self.config.llm_provider,
+            "llm_model": self.config.llm_model or "unknown",
+            "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
+            "outcome": outcome,
+            "success": success,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": duration_seconds,
+            "metadata": metadata or {},
+        }
+        self._llm_interventions.append(intervention)
+        self._logger.debug(f"Recorded LLM intervention: {intervention['intervention_id']} for {target_id}")
+
+    def _write_extraction_report(self) -> Path | None:
+        """
+        Write extraction report artifact.
+
+        Documents the PDF extraction process, methods used, and quality metrics.
+
+        Returns:
+            Path to written artifact or None if extraction data not available
+        """
+        try:
+            # Determine extraction method
+            use_marker = hasattr(self, '_marker_used') and self._marker_used
+            use_pymupdf = not use_marker and hasattr(self, '_extractor') and self._extractor is not None
+            ocr_fallback_used = self._ocr_result is not None
+
+            # Get page count
+            page_count = 0
+            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                page_count = self._extraction_metadata.get('page_count', 0)
+            if not page_count and self.config.pdf_path.exists():
+                try:
+                    import fitz
+                    with fitz.open(self.config.pdf_path) as doc:
+                        page_count = len(doc)
+                except Exception:
+                    pass
+
+            # Get chunk/section counts
+            chunk_count = len(self._content_blocks) if hasattr(self, '_content_blocks') else 0
+            section_count = len(self._teaching_blocks) if hasattr(self, '_teaching_blocks') else 0
+
+            # Get text coverage
+            text_coverage = 0.0
+            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                text_coverage = self._extraction_metadata.get('text_coverage_score', 0.0)
+
+            report = ExtractionReport(
+                source_pdf=str(self.config.pdf_path),
+                extraction_method="marker" if use_marker else "pymupdf" if use_pymupdf else "unknown",
+                page_count=page_count,
+                chunk_count=chunk_count,
+                section_count=section_count,
+                use_marker=use_marker,
+                use_pymupdf=use_pymupdf,
+                ocr_fallback_used=ocr_fallback_used,
+                text_coverage_score=text_coverage,
+                warnings=self._extraction_metadata.get('warnings', []) if hasattr(self, '_extraction_metadata') else [],
+                errors=self._extraction_metadata.get('errors', []) if hasattr(self, '_extraction_metadata') else [],
+                repair_applied=self._extraction_metadata.get('repair_applied', {}) if hasattr(self, '_extraction_metadata') else {},
+            )
+
+            output_path = self.config.output_dir / "extraction_report.json"
+            report.save(output_path)
+            self._logger.info(f"Saved extraction report: {output_path}")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write extraction report: {e}")
+            return None
+
+    def _write_llm_interventions(self) -> Path | None:
+        """
+        Write LLM interventions report artifact.
+
+        Documents all LLM interventions during pipeline execution.
+
+        Returns:
+            Path to written artifact or None if no interventions
+        """
+        if not self._llm_interventions:
+            # Write empty report
+            pass
+
+        try:
+            # Calculate phase summary
+            phase_summary: dict[str, dict[str, Any]] = {}
+            for intv in self._llm_interventions:
+                phase = intv["phase"]
+                if phase not in phase_summary:
+                    phase_summary[phase] = {"count": 0, "successful": 0, "failed": 0}
+                phase_summary[phase]["count"] += 1
+                if intv["success"]:
+                    phase_summary[phase]["successful"] += 1
+                else:
+                    phase_summary[phase]["failed"] += 1
+
+            successful = sum(1 for i in self._llm_interventions if i["success"])
+
+            report_data = {
+                "schema_version": "1.0.0",
+                "llm_provider": self.config.llm_provider,
+                "llm_model": self.config.llm_model or "unknown",
+                "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
+                "total_interventions": len(self._llm_interventions),
+                "successful_interventions": successful,
+                "failed_interventions": len(self._llm_interventions) - successful,
+                "interventions": self._llm_interventions,
+                "phase_summary": phase_summary,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            output_path = self.config.output_dir / "llm_interventions.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+            self._logger.info(f"Saved LLM interventions report: {output_path} ({len(self._llm_interventions)} interventions)")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write LLM interventions report: {e}")
+            return None
+
+    def _write_concept_units(self) -> Path | None:
+        """
+        Write concept units report artifact.
+
+        Provides a flat, queryable list of all instructional units with provenance.
+
+        Returns:
+            Path to written artifact or None if no units
+        """
+        if not hasattr(self, '_filtered_library') or not self._filtered_library:
+            return None
+
+        try:
+            units = []
+            for unit in self._filtered_library.instructional_units:
+                # Determine level from target_stage
+                level = unit.target_stage.replace("_", " ") if unit.target_stage else "unknown"
+
+                # Get generation mode
+                content = unit.content or {}
+                generation_mode = "extracted"
+                if content.get("_repaired_by_ollama"):
+                    generation_mode = "repaired"
+                elif content.get("_used_curated_fallback"):
+                    generation_mode = "curated"
+                elif content.get("_synthetic"):
+                    generation_mode = "synthetic"
+
+                # Get LLM provider info if LLM was used
+                llm_provider = None
+                llm_model = None
+                if content.get("_repaired_by_ollama"):
+                    llm_provider = "ollama"
+                    llm_model = content.get("_repair_model", "unknown")
+                elif content.get("_llm_provider"):
+                    llm_provider = content.get("_llm_provider")
+                    llm_model = content.get("_llm_model")
+
+                # Get quality flags
+                quality_flags = []
+                if unit.grounding_confidence < 0.5:
+                    quality_flags.append("low_confidence")
+                if content.get("_review_flags"):
+                    quality_flags.extend(content.get("_review_flags", []))
+
+                entry = ConceptUnitEntry(
+                    concept_id=unit.concept_id,
+                    unit_id=unit.unit_id,
+                    title=content.get("title", unit.concept_id),
+                    level=level,
+                    unit_type=unit.unit_type,
+                    source_pdf=self.config.doc_id or "unknown",
+                    source_pages=unit.source_pages,
+                    evidence_spans=[s.span_id for s in unit.evidence_spans],
+                    evidence_count=len(unit.evidence_spans),
+                    extraction_method="marker" if hasattr(self, '_marker_used') and self._marker_used else "pymupdf",
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    generation_mode=generation_mode,
+                    confidence=unit.grounding_confidence,
+                    quality_flags=quality_flags,
+                    has_examples=bool(content.get("examples")),
+                    example_count=len(content.get("examples", [])),
+                    estimated_read_time=unit.estimated_read_time,
+                    prerequisites=unit.prerequisites,
+                )
+                units.append(entry)
+
+            report_data = {
+                "schema_version": "1.0.0",
+                "source_pdf": self.config.doc_id or "unknown",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "total_units": len(units),
+                "units_by_level": {},
+                "units": [u.model_dump() for u in units],
+            }
+
+            # Count by level
+            for u in units:
+                level = u.level
+                report_data["units_by_level"][level] = report_data["units_by_level"].get(level, 0) + 1
+
+            output_path = self.config.output_dir / "concept_units.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+            self._logger.info(f"Saved concept units report: {output_path} ({len(units)} units)")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write concept units report: {e}")
+            return None
+
     def _segment_content(self, raw_text: str | None = None) -> list[ContentBlock]:
         """
         Stage 2: Segment content into typed blocks.
