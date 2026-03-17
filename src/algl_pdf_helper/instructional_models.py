@@ -14,7 +14,9 @@ The models support:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
@@ -898,6 +900,178 @@ class UnitLibraryExport(BaseModel):
     def from_dict(cls, data: dict[str, Any]) -> "UnitLibraryExport":
         """Create a UnitLibraryExport from a dictionary."""
         return cls(**data)
+
+
+# =============================================================================
+# Pipeline Artifact Models (Day 2)
+# =============================================================================
+
+
+class ExtractionReport(BaseModel):
+    """
+    Extraction report artifact - documents PDF extraction process and results.
+
+    Provides transparency into how content was extracted from the source PDF,
+    including methods used, quality metrics, and any issues encountered.
+    """
+
+    schema_version: str = Field(default="1.0.0", description="Schema version for this report")
+    source_pdf: str = Field(..., description="Path or identifier of the source PDF")
+    extraction_method: str = Field(..., description="Primary extraction method: marker, pymupdf, ocr_fallback")
+    page_count: int = Field(..., ge=0, description="Total number of pages in the PDF")
+    chunk_count: int = Field(default=0, ge=0, description="Number of content chunks extracted")
+    section_count: int = Field(default=0, ge=0, description="Number of sections identified")
+    use_marker: bool = Field(default=False, description="Whether Marker was used for extraction")
+    use_pymupdf: bool = Field(default=False, description="Whether PyMuPDF was used for extraction")
+    ocr_fallback_used: bool = Field(default=False, description="Whether OCR fallback was triggered")
+    extraction_timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    repair_applied: dict[str, Any] = Field(default_factory=dict, description="Summary of repairs applied during extraction")
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings during extraction")
+    errors: list[str] = Field(default_factory=list, description="Fatal errors that may impact quality")
+    text_coverage_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Overall text coverage quality")
+    average_page_density: float = Field(default=0.0, ge=0.0, description="Average characters per page")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return self.model_dump()
+
+    def save(self, output_path: Path) -> None:
+        """Save the report to a JSON file."""
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+
+
+class LLMIntervention(BaseModel):
+    """
+    Single LLM intervention record.
+
+    Documents a specific instance where an LLM was invoked to improve or repair content.
+    """
+
+    intervention_id: str = Field(..., description="Unique identifier for this intervention")
+    phase: str = Field(..., description="Pipeline phase where intervention occurred")
+    target_id: str = Field(..., description="ID of target (concept, unit, section, etc.)")
+    target_type: str = Field(..., description="Type of target: concept, unit, section, example, etc.")
+    reason: str = Field(..., description="Why the intervention was triggered")
+    llm_provider: str = Field(..., description="LLM provider used: ollama, openai, kimi")
+    llm_model: str = Field(..., description="Specific model name used")
+    ollama_host: str | None = Field(default=None, description="Ollama host if applicable")
+    outcome: str = Field(..., description="Result: success, partial, failure, rejected")
+    success: bool = Field(..., description="Whether the intervention achieved its goal")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    duration_seconds: float | None = Field(default=None, description="Time taken for the intervention")
+    input_tokens: int | None = Field(default=None, description="Input token count if available")
+    output_tokens: int | None = Field(default=None, description="Output token count if available")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional phase-specific metadata")
+
+
+class LLMInterventionsReport(BaseModel):
+    """
+    LLM interventions report artifact - complete log of LLM usage.
+
+    Provides transparency into how and where LLMs were used to improve content,
+    including outcomes and success rates by phase.
+    """
+
+    schema_version: str = Field(default="1.0.0")
+    llm_provider: str = Field(..., description="Primary LLM provider")
+    llm_model: str = Field(..., description="Primary model used")
+    ollama_host: str | None = Field(default=None, description="Ollama host URL if applicable")
+    total_interventions: int = Field(default=0, ge=0)
+    successful_interventions: int = Field(default=0, ge=0)
+    failed_interventions: int = Field(default=0, ge=0)
+    interventions: list[LLMIntervention] = Field(default_factory=list)
+    phase_summary: dict[str, dict[str, Any]] = Field(default_factory=dict, description="Summary stats per phase")
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def add_intervention(self, intervention: LLMIntervention) -> None:
+        """Add an intervention and update statistics."""
+        self.interventions.append(intervention)
+        self.total_interventions += 1
+        if intervention.success:
+            self.successful_interventions += 1
+        else:
+            self.failed_interventions += 1
+
+        # Update phase summary
+        phase = intervention.phase
+        if phase not in self.phase_summary:
+            self.phase_summary[phase] = {"count": 0, "successful": 0, "failed": 0}
+        self.phase_summary[phase]["count"] += 1
+        if intervention.success:
+            self.phase_summary[phase]["successful"] += 1
+        else:
+            self.phase_summary[phase]["failed"] += 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return self.model_dump()
+
+    def save(self, output_path: Path) -> None:
+        """Save the report to a JSON file."""
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+
+
+class ConceptUnitEntry(BaseModel):
+    """
+    Canonical concept unit entry for concept_units.json artifact.
+
+    Provides a flat, queryable list of all instructional units with complete
+    provenance and quality metadata.
+    """
+
+    concept_id: str = Field(..., description="Canonical concept identifier")
+    unit_id: str = Field(..., description="Unique unit identifier")
+    title: str = Field(..., description="Human-readable title")
+    level: str = Field(..., description="Unit level: L1, L2, L3, L4, misconception, reinforcement")
+    unit_type: str = Field(..., description="Type of instructional content")
+    source_pdf: str = Field(..., description="Source PDF identifier")
+    source_pages: list[int] = Field(default_factory=list, description="Page numbers in source")
+    evidence_spans: list[str] = Field(default_factory=list, description="Source span IDs")
+    evidence_count: int = Field(default=0, description="Number of evidence spans")
+    extraction_method: str = Field(..., description="Method used for extraction")
+    llm_provider: str | None = Field(default=None, description="LLM provider if LLM was used")
+    llm_model: str | None = Field(default=None, description="Specific model if LLM was used")
+    generation_mode: str = Field(..., description="How unit was generated: extracted, repaired, curated, synthetic")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Grounding confidence score")
+    quality_flags: list[str] = Field(default_factory=list, description="Quality warnings or flags")
+    has_examples: bool = Field(default=False, description="Whether unit contains SQL examples")
+    example_count: int = Field(default=0, ge=0, description="Number of SQL examples")
+    estimated_read_time: int = Field(default=60, ge=1, description="Estimated reading time in seconds")
+    prerequisites: list[str] = Field(default_factory=list, description="Prerequisite concept IDs")
+
+
+class ConceptUnitsReport(BaseModel):
+    """
+    Concept units report artifact - flat list of all units with provenance.
+
+    Provides a SQL-Adapt-friendly view of all instructional units with
+    complete provenance, provider metadata, and quality indicators.
+    """
+
+    schema_version: str = Field(default="1.0.0")
+    source_pdf: str = Field(..., description="Source PDF identifier")
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    total_units: int = Field(default=0, ge=0)
+    units_by_level: dict[str, int] = Field(default_factory=dict)
+    units: list[ConceptUnitEntry] = Field(default_factory=list)
+
+    def add_unit(self, unit: ConceptUnitEntry) -> None:
+        """Add a unit and update statistics."""
+        self.units.append(unit)
+        self.total_units += 1
+        level = unit.level
+        self.units_by_level[level] = self.units_by_level.get(level, 0) + 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return self.model_dump()
+
+    def save(self, output_path: Path) -> None:
+        """Save the report to a JSON file."""
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
 
 # =============================================================================
