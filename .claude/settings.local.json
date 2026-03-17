@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_integration_ci.py tests/test_artifact_contracts.py tests/test_day3_contracts.py tests/test_replay_system.py -v)"
+    ]
+  }
+}
