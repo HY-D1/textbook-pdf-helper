@@ -864,7 +864,7 @@ def create_ollama_repair_if_enabled(
         Tuple of (repair_instance, status_dict)
     """
     if not enabled:
-        return None, {"enabled": False, "available": False, "reason": "disabled", "disabled_reason": "disabled"}
+        return None, {"enabled": False, "available": False, "reason": "disabled", "disabled_reason": "disabled", "model": None}
     
     repair = OllamaRepair(model=model, host=host)
     
@@ -874,6 +874,7 @@ def create_ollama_repair_if_enabled(
             "available": False,
             "reason": "ollama_not_running",
             "disabled_reason": "ollama_not_running",
+            "model": None,
             "model_requested": model,
         }
     

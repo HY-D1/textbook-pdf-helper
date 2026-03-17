@@ -8,8 +8,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
+
 import typer
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    tqdm = None
 
 from .educational_pipeline import EducationalNoteGenerator, LLMProvider
 from .concept_mapper import load_concepts_config, find_concepts_config
@@ -19,23 +27,29 @@ app = typer.Typer(help="Generate educational notes from PDFs")
 
 def create_progress_bar():
     """Create a progress bar callback."""
+    if not HAS_TQDM:
+        # Return a no-op callback if tqdm is not available
+        def noop_callback(step: str, current: int, total: int, message: str = ""):
+            pass
+        return noop_callback
+
     current_bar = None
     current_step = None
-    
+
     def progress_callback(step: str, current: int, total: int, message: str = ""):
         nonlocal current_bar, current_step
-        
+
         # Close previous bar if step changed
         if step != current_step and current_bar is not None:
             current_bar.close()
             current_bar = None
-        
+
         # Create new bar for new step
         if current_bar is None or step != current_step:
             current_step = step
             step_names = {
                 "extract": "📄 PDF Extraction",
-                "structure": "🔍 Content Analysis", 
+                "structure": "🔍 Content Analysis",
                 "enhance": "🎓 Generating Educational Notes",
                 "format": "📋 Formatting Output",
                 "save": "💾 Saving Files",
@@ -47,18 +61,18 @@ def create_progress_bar():
                 bar_format=bar_format,
                 ncols=80,
             )
-        
+
         # Update progress
         current_bar.n = current
         if message:
             current_bar.set_postfix_str(message[:50])
         current_bar.refresh()
-        
+
         # Close if complete
         if current >= total:
             current_bar.close()
             current_bar = None
-    
+
     return progress_callback
 
 
@@ -78,8 +92,16 @@ def generate(
         help="Use LLM to enhance notes (requires API key)",
     ),
     llm_provider: str = typer.Option(
-        "openai",
-        help="LLM provider: openai or kimi",
+        os.getenv("ALGL_LLM_PROVIDER", "ollama"),
+        help="LLM provider: ollama (default), openai, or kimi. Falls back to env var ALGL_LLM_PROVIDER.",
+    ),
+    ollama_host: str = typer.Option(
+        os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+        help="Ollama server host. Falls back to env var OLLAMA_HOST.",
+    ),
+    ollama_model: str = typer.Option(
+        os.getenv("OLLAMA_MODEL", ""),
+        help="Ollama model to use. Auto-detected if not specified. Falls back to env var OLLAMA_MODEL.",
     ),
     estimate_cost: bool = typer.Option(
         False,
@@ -90,11 +112,12 @@ def generate(
     
     # Show cost estimate first
     if estimate_cost or not use_llm:
-        import os
         generator = EducationalNoteGenerator(
             llm_provider=llm_provider,
             kimi_api_key=os.getenv("KIMI_API_KEY"),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
+            ollama_host=ollama_host,
+            ollama_model=ollama_model or None,
         )
         cost = generator.estimate_cost(num_concepts=30)  # Estimate for 30 concepts
         
@@ -148,12 +171,13 @@ def generate(
     typer.echo()
     
     # Initialize generator
-    import os
     generator = EducationalNoteGenerator(
         use_marker=use_marker,
         llm_provider=llm_provider,
         kimi_api_key=os.getenv("KIMI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
+        ollama_host=ollama_host,
+        ollama_model=ollama_model or None,
     )
     
     if use_llm and not generator.llm_available:
@@ -161,6 +185,10 @@ def generate(
         if llm_provider == LLMProvider.KIMI:
             typer.echo("   Set KIMI_API_KEY or MOONSHOT_API_KEY environment variable")
             typer.echo("   Get key: https://platform.moonshot.cn/")
+        elif llm_provider == LLMProvider.OLLAMA:
+            typer.echo("   Ollama not running or unreachable")
+            typer.echo(f"   Host: {ollama_host}")
+            typer.echo("   Start Ollama: ollama serve")
         else:
             typer.echo("   Set OPENAI_API_KEY environment variable")
         typer.echo("   Will generate basic notes without LLM enhancement")
@@ -231,48 +259,74 @@ def generate(
 @app.command()
 def status():
     """Check status of dependencies."""
+    import os
     from .educational_pipeline import MARKER_AVAILABLE, OPENAI_AVAILABLE
-    
+    from .generation_pipeline import check_ollama_available, get_recommended_model
+
+    # Get env vars with defaults
+    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ollama_model = os.getenv("OLLAMA_MODEL", get_recommended_model())
+
     typer.echo("📋 Dependency Status")
     typer.echo("=" * 40)
-    
+
+    # Check Ollama (default/recommended provider)
+    ollama_available = check_ollama_available(ollama_host)
+    if ollama_available:
+        typer.echo("✅ Ollama (local LLM): Available")
+        typer.echo(f"   Host: {ollama_host}")
+        typer.echo(f"   Model: {ollama_model}")
+    else:
+        typer.echo("⚠️  Ollama (local LLM): Not running or unreachable")
+        typer.echo(f"   Expected host: {ollama_host}")
+        typer.echo("   Start Ollama: ollama serve")
+        typer.echo(f"   Pull model:   ollama pull {ollama_model}")
+
     # Check Marker
     if MARKER_AVAILABLE:
         typer.echo("✅ Marker (PDF extraction): Available")
     else:
         typer.echo("❌ Marker (PDF extraction): Not installed")
         typer.echo("   Install: pip install marker-pdf")
-    
+
     # Check OpenAI
     if OPENAI_AVAILABLE:
         typer.echo("✅ OpenAI SDK: Available")
-        
-        import os
         if os.getenv("OPENAI_API_KEY"):
             typer.echo("✅ OPENAI_API_KEY: Set")
         else:
             typer.echo("⚠️  OPENAI_API_KEY: Not set")
     else:
         typer.echo("❌ OpenAI SDK: Not installed")
-        typer.echo("   Install: pip install openai")
-    
+
     # Check Kimi
-    import os
     if os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY"):
         typer.echo("✅ KIMI_API_KEY/MOONSHOT_API_KEY: Set")
     else:
         typer.echo("⚠️  KIMI_API_KEY/MOONSHOT_API_KEY: Not set")
-        typer.echo("   Get key: https://platform.moonshot.cn/")
-    
+
+    # Show env var configuration
+    typer.echo()
+    typer.echo("🔧 Environment Configuration:")
+    typer.echo(f"   OLLAMA_HOST:  {ollama_host}")
+    typer.echo(f"   OLLAMA_MODEL: {ollama_model}")
+    if os.getenv("ALGL_SKIP_LLM"):
+        typer.echo("   ALGL_SKIP_LLM: Set (LLM steps will be skipped)")
+    if os.getenv("ALGL_REQUIRE_OLLAMA"):
+        typer.echo("   ALGL_REQUIRE_OLLAMA: Set (will fail if Ollama unavailable)")
+
     typer.echo()
     typer.echo("💡 Recommendation:")
-    if not MARKER_AVAILABLE:
-        typer.echo("   Install all dependencies for best results:")
-        typer.echo("   pip install marker-pdf openai")
+    if not ollama_available:
+        typer.echo("   Start Ollama for local, free LLM processing:")
+        typer.echo("   ollama serve")
+        typer.echo(f"   ollama pull {ollama_model}")
+    elif not MARKER_AVAILABLE:
+        typer.echo("   Install Marker for best PDF extraction:")
+        typer.echo("   pip install marker-pdf")
     else:
-        typer.echo("   For cheapest costs, use Kimi:")
-        typer.echo("   export KIMI_API_KEY='your-key'")
-        typer.echo("   algl-pdf edu generate book.pdf --llm-provider kimi")
+        typer.echo("   All set! Generate notes with:")
+        typer.echo("   algl-pdf edu generate book.pdf")
 
 
 @app.command()

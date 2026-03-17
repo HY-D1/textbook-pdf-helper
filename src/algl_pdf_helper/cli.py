@@ -1170,9 +1170,9 @@ try:
             help="Document ID (auto-generated if not provided)",
         ),
         llm_provider: str = typer.Option(
-            "grounded",
+            os.getenv("ALGL_LLM_PROVIDER", "ollama"),
             "--llm-provider",
-            help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented.",
+            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER.",
         ),
         llm_model: str | None = typer.Option(
             None,

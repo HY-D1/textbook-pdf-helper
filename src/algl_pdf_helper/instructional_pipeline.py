@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -182,7 +183,7 @@ class PipelineConfig:
     pdf_path: Path
     output_dir: Path = field(default_factory=lambda: Path("./output"))
     doc_id: str | None = None
-    llm_provider: Literal["kimi", "openai", "ollama"] = "kimi"
+    llm_provider: Literal["kimi", "openai", "ollama", "grounded"] = os.getenv("ALGL_LLM_PROVIDER", "ollama")
     llm_model: str | None = None  # Will be resolved to provider-specific default
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
@@ -203,9 +204,9 @@ class PipelineConfig:
     
     # Ollama repair configuration
     use_ollama_repair: bool = True
-    ollama_model: str = "qwen2.5:3b"  # Default for MacBook (small, fast)
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:3b"))
     ollama_repair_threshold: float = 0.6  # Confidence below this triggers repair
-    ollama_host: str = "http://localhost:11434"
+    ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     ollama_auto_fallback: bool = True  # Auto-fallback to available models
     
     # Provider-specific default models

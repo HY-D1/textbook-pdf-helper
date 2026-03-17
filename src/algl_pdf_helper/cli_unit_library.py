@@ -122,8 +122,8 @@ ExportModeCLI = typer.Option(
 )
 
 LLMProviderCLI = typer.Option(
-    "grounded",
-    help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented."
+    "ollama",
+    help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER."
 )
 
 # Provider-specific default models
