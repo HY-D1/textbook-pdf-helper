@@ -1199,6 +1199,11 @@ try:
             "--validate-sql/--no-validate-sql",
             help="Validate SQL examples",
         ),
+        skip_llm: bool = typer.Option(
+            False,
+            "--skip-llm",
+            help="Skip all LLM-based processing (extraction/repair only, no generation)",
+        ),
         min_quality_score: float = typer.Option(
             0.8,
             "--min-quality-score",
@@ -1303,6 +1308,7 @@ try:
             skip_reinforcement=skip_reinforcement,
             skip_misconceptions=skip_misconceptions,
             validate_sql=validate_sql,
+            skip_llm=skip_llm,
             min_quality_score=min_quality_score,
             export_mode=export_mode,
             use_ollama_repair=use_ollama_repair,
