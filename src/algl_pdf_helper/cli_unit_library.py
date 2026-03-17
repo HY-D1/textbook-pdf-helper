@@ -122,8 +122,8 @@ ExportModeCLI = typer.Option(
 )
 
 LLMProviderCLI = typer.Option(
-    "grounded",
-    help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented."
+    "ollama",
+    help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER."
 )
 
 # Provider-specific default models
@@ -247,6 +247,11 @@ def process_command(
         True,
         "--validate-sql/--no-validate-sql",
         help="Validate SQL examples",
+    ),
+    skip_llm: bool = typer.Option(
+        False,
+        "--skip-llm",
+        help="Skip all LLM-based processing (extraction/repair only, no generation)",
     ),
     min_quality_score: float = typer.Option(
         0.8,
@@ -418,6 +423,7 @@ def process_command(
         skip_reinforcement=skip_reinforcement,
         skip_misconceptions=skip_misconceptions,
         validate_sql=validate_sql,
+        skip_llm=skip_llm,
         min_quality_score=min_quality_score,
         use_ollama_repair=use_ollama_repair,
         ollama_model=ollama_model,

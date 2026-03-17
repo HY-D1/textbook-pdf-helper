@@ -2432,7 +2432,47 @@ class UnitGenerator:
                     if any(indicator in after_semicolon.lower() for indicator in prose_indicators):
                         return False, f"Trailing prose after semicolon: '{after_semicolon[:30]}...'"
         
-        # === CHECK 3: Concept keywords must be present (re-verify) ===
+        # === CHECK 3: Reject prose fragments that passed initial cleaning ===
+        # These are sentence fragments that contain SQL keywords but are not valid SQL
+        prose_fragment_patterns = [
+            # Modal verb patterns: "ALTER TABLE can also be used", "DROP TABLE can be"
+            (r'\b(alter|drop|create)\s+\w+\s+can\s+(also\s+)?(be\s+)?used\b', 'modal_used_fragment'),
+            # Noun phrase fragments: "DROP TABLE command", "ALTER TABLE statement"
+            (r'\b(alter|drop|create)\s+\w+\s+(command|statement|clause|operation)\b', 'noun_phrase_fragment'),
+            # Prepositional fragments: "with null values", "with special attention"
+            (r'^\s*with\s+\w+\s+(values|attention|care|focus|emphasis)\b', 'prepositional_fragment'),
+            # Adjective fragments: "with high frequency", "with default values"
+            (r'^\s*with\s+\w+\s+\w+\s+(values|so|then)\b', 'adjectival_fragment'),
+        ]
+        
+        for pattern, reason in prose_fragment_patterns:
+            if re.search(pattern, sql_lower):
+                return False, f"Prose fragment ({reason}): '{sql[:50]}...'"
+        
+        # Check for DDL statements that are too short to be valid
+        # ALTER TABLE needs: ALTER TABLE table_name action
+        if sql_upper.startswith('ALTER TABLE'):
+            word_count = len(sql.split())
+            if word_count < 4:  # ALTER TABLE x ACTION
+                return False, f"ALTER TABLE too short ({word_count} words), likely prose fragment"
+        
+        # DROP TABLE needs: DROP TABLE table_name [CASCADE]
+        if sql_upper.startswith('DROP TABLE'):
+            word_count = len(sql.split())
+            if word_count < 3:  # DROP TABLE x
+                return False, f"DROP TABLE too short ({word_count} words), likely prose fragment"
+            # Reject if ends with prose words
+            last_word = words[-1].rstrip(';').lower() if words else ''
+            if last_word in {'command', 'operation', 'statement', 'used', 'values'}:
+                return False, f"DROP TABLE ends with prose word '{last_word}'"
+        
+        # CREATE needs substantial content
+        if re.search(r'^\s*CREATE\s+', sql_upper):
+            word_count = len(sql.split())
+            if word_count < 4:  # CREATE TABLE x ( ...needs more...
+                return False, f"CREATE statement too short ({word_count} words), likely prose fragment"
+        
+        # === CHECK 4: Concept keywords must be present (re-verify) ===
         # Re-run concept-fit validation to ensure keywords weren't lost during normalization
         is_valid_fit, fit_reason = self._validate_concept_fit(sql, concept_id)
         if not is_valid_fit:
@@ -4350,15 +4390,10 @@ class UnitGenerator:
         Converts: "SELECT * FROM users This retrieves all users"
         To:       "SELECT * FROM users"
         
-        Enhanced to handle patterns like:
-        - "Retrieves", "Returns", "Shows", "Displays"
-        - "This query", "This statement"
-        - "Example" with optional colon
-        - Uppercase prose starters after SQL punctuation
-        - Trailing explanatory clauses
-        - Action verbs: "Removes", "Deletes", "Updates", "Creates", "Adds", "Modifies"
-        - Explanation starters: "The following"
-        - Result descriptors: "result", "output", "result set", "rows"
+        IMPROVED for Week 1 demo reliability:
+        - More precise prose detection to reduce false positives
+        - Preserves valid SQL with column/table names that look like prose words
+        - Handles trailing fragments after semicolons
         
         Args:
             sql: Raw SQL string that may contain trailing prose
@@ -4371,60 +4406,49 @@ class UnitGenerator:
         
         original = sql
         
-        # ENHANCED: More comprehensive prose indicators
-        # These patterns indicate the start of explanatory prose
+        # IMPROVED: More targeted prose indicators
+        # These patterns strongly indicate the start of explanatory prose
         prose_indicators = [
-            # Action verbs describing what the query does
-            r'\s+Retrieves\s+',
-            r'\s+Returns\s+',
-            r'\s+Shows\s+',
-            r'\s+Displays\s+',
-            r'\s+Gets\s+',
-            r'\s+Fetches\s+',
-            r'\s+Lists\s+',
-            r'\s+Outputs\s+',
-            r'\s+Produces\s+',
-            r'\s+Gives\s+',
-            # NEW: Additional action verbs for DDL/DML operations
-            r'\s+Removes\s+',
-            r'\s+Deletes\s+',
-            r'\s+Updates\s+',
-            r'\s+Creates\s+',
-            r'\s+Adds\s+',
-            r'\s+Modifies\s+',
-            r'\s+Inserts\s+',
-            r'\s+Drops\s+',
-            r'\s+Alters\s+',
-            # Reference to the query itself
-            r'\s+This\s+query\s+',
-            r'\s+This\s+statement\s+',
-            r'\s+This\s+command\s+',
-            r'\s+This\s+example\s+',
-            r'\s+The\s+query\s+',
-            r'\s+The\s+statement\s+',
-            r'\s+The\s+command\s+',
-            r'\s+This\s+',
-            # NEW: Explanation starters
+            # Strong action verbs describing what the query does (must be followed by content)
+            r'\s+Retrieves\s+[a-z]',
+            r'\s+Returns\s+[a-z]',
+            r'\s+Shows\s+[a-z]',
+            r'\s+Displays\s+[a-z]',
+            r'\s+Gets\s+[a-z]',
+            r'\s+Fetches\s+[a-z]',
+            r'\s+Lists\s+[a-z]',
+            r'\s+Outputs\s+[a-z]',
+            r'\s+Produces\s+[a-z]',
+            r'\s+Gives\s+[a-z]',
+            # DDL/DML action verbs
+            r'\s+Removes\s+[a-z]',
+            r'\s+Deletes\s+[a-z]',
+            r'\s+Updates\s+[a-z]',
+            r'\s+Creates\s+[a-z]',
+            r'\s+Adds\s+[a-z]',
+            r'\s+Modifies\s+[a-z]',
+            r'\s+Inserts\s+[a-z]',
+            r'\s+Drops\s+[a-z]',
+            r'\s+Alters\s+[a-z]',
+            # Reference to the query itself (strong indicator)
+            r'\s+This\s+(?:query|statement|command|example)\s+',
+            r'\s+The\s+(?:query|statement|command)\s+',
+            r'\s+This\s+is\s+',
+            # Explanation starters
             r'\s+The\s+following\s+',
-            # Example indicators
-            r'\s+Example\s*:?\s*',
-            r'\s+For\s+example\s*',
+            r'\s+For\s+example[,:]?\s*',
             r'\s+Such\s+as\s*',
-            # Explanatory phrases
-            r'\s+Use\s+this\s+',
-            r'\s+The\s+',
-            r'\s+Here\s+',
+            # Explanatory phrases with following content
+            r'\s+Use\s+this\s+(?:to|for)\s+',
+            r'\s+Here\s+is\s*',
             r'\s+In\s+this\s+',
-            r'\s+Note\s*:?\s*',
-            r'\s+See\s+',
-            r'\s+which\s+',
-            r'\s+and\s+this\s+',
-            r'\s+that\s+',
+            r'\s+Note\s*:\s*',
+            r'\s+See\s+(?:also|below|above)?\s*',
             # Results/Output descriptions
-            r'\s+result\s+(?:is|will|shows?)',
-            r'\s+output\s+(?:is|will|shows?)',
-            r'\s+result\s+set',
-            r'\s+rows?\s+(?:are|is|will|returned|affected)',
+            r'\s+result\s+(?:is|will|shows?)\s+',
+            r'\s+output\s+(?:is|will|shows?)\s+',
+            r'\s+result\s+set\s*',
+            r'\s+rows?\s+(?:are|is|will|returned|affected)\s+',
         ]
         
         # Try each prose indicator - stop at first match and strip everything from there
@@ -4435,32 +4459,25 @@ class UnitGenerator:
                 sql = sql[:match.start()].strip()
                 break
         
-        # ENHANCED: Handle uppercase prose starters after SQL punctuation
-        # Pattern: semicolon, period, or closing paren followed by space and uppercase word
-        # This catches cases like: "SELECT * FROM emp; This retrieves..."
-        uppercase_prose_pattern = r'[;)\.\'"]\s+([A-Z][a-z]+\s+(?:retrieves|returns|shows|displays|gets|fetches|lists|is|will|can|demonstrates?|illustrates?|removes|deletes|updates|creates|adds|modifies))'
+        # Handle uppercase prose starters after SQL punctuation
+        # Pattern: semicolon, period, or closing paren followed by space and uppercase word + lowercase
+        uppercase_prose_pattern = r'[;)\.\'"]\s+([A-Z][a-z]+\s+(?:retrieves|returns|shows|displays|gets|fetches|lists|is|will|can|demonstrates?|illustrates?|removes|deletes|updates|creates|adds|modifies)\s+[a-z])'
         match = re.search(uppercase_prose_pattern, sql, re.IGNORECASE)
         if match:
             # Find the position of the uppercase word
             uppercase_start = match.start(1)
             sql = sql[:uppercase_start].strip()
         
-        # NEW: Trailing fragment detection - strip everything after last semicolon if followed by prose
-        # Pattern: semicolon followed by space and any text (trailing fragment after valid SQL)
-        trailing_fragment_pattern = r';\s+([A-Za-z].*)$'
+        # Trailing fragment detection - strip everything after last semicolon if followed by prose
+        trailing_fragment_pattern = r';\s+([A-Z][a-z].*)$'
         match = re.search(trailing_fragment_pattern, sql)
         if match:
-            # Check if what follows looks like prose (starts with uppercase letter and forms words)
             trailing_text = match.group(1)
-            # If trailing text has multiple words or common prose starters, strip it
-            if len(trailing_text.split()) > 1 or any(
-                trailing_text.startswith(word) for word in ['This', 'The', 'It', 'This', 'Removes', 'Returns', 'Shows']
-            ):
+            # Only strip if trailing text looks like a complete sentence (multiple words)
+            if len(trailing_text.split()) > 2:
                 sql = sql[:match.start() + 1].strip()  # Keep the semicolon, strip what follows
         
-        # Also check for lowercase transition (English sentence start)
-        # Pattern: word boundary, then lowercase letter after space
-        # But be careful not to cut table/column names
+        # IMPROVED: More careful word-level analysis
         words = sql.split()
         cut_index = len(words)
         
@@ -4473,30 +4490,28 @@ class UnitGenerator:
                               'ASC', 'DESC', 'BETWEEN', 'LIKE', 'IN', 'EXISTS', 'ALL', 'ANY',
                               'VALUES', 'SET', 'INTO'}
         
-        # ENHANCED: Expanded prose words list with more action verbs and result descriptors
+        # IMPROVED: Reduced prose words list - only clear prose indicators
+        # Removed common words that could be table/column names
         prose_words_lower = {
-            'the', 'this', 'that', 'these', 'those', 
-            'retrieves', 'returns', 'shows', 'displays', 'gets', 'fetches', 'lists',
-            'example', 'query', 'statement', 'command', 'result', 'results',
-            'gives', 'produces', 'outputs', 'output', 'input', 'demonstrates', 
-            'illustrates', 'displays', 'presents', 'provides', 'yields',
-            'note', 'see', 'example', 'therefore', 'thus', 'hence',
-            # NEW: Additional action verbs
+            'this', 'that',  # Demonstrative pronouns
+            'retrieves', 'returns', 'shows', 'displays', 'gets', 'fetches',
+            'example', 'query', 'statement', 'command',
+            'gives', 'produces', 'outputs', 'demonstrates', 
+            'illustrates', 'presents', 'provides', 'yields',
+            'note', 'see', 'therefore', 'thus', 'hence',
             'removes', 'deletes', 'updates', 'creates', 'adds', 'modifies',
             'inserts', 'drops', 'alters',
-            # NEW: Result descriptors
-            'row', 'rows', 'record', 'records',
         }
         
         for i, word in enumerate(words):
             word_upper = word.upper()
             word_lower = word.lower().rstrip(',;:()')
             
-            # Skip SQL keywords that might be lowercase
+            # Skip SQL keywords
             if word_upper in sql_keywords_upper:
                 continue
             
-            # Skip table/column names (often mixed case or with underscores)
+            # Skip table/column names (with underscores or mixed case)
             if '_' in word or (len(word) > 1 and any(c.isupper() for c in word[1:])):
                 continue
             
@@ -4504,50 +4519,55 @@ class UnitGenerator:
             if word.startswith(("'", '"')) or word.endswith(("'", '"')):
                 continue
             
-            # ENHANCED: If we see a common prose word, cut immediately
-            if word_lower in prose_words_lower:
-                cut_index = i
-                break
+            # Skip single-character words
+            if len(word_lower) <= 1:
+                continue
             
-            # Check for lowercase word that could indicate start of sentence
-            # but only after we've seen enough SQL structure
-            if i > 3 and word[0].islower() and word_lower not in prose_words_lower:
-                # This might be prose - check next word too
-                if i + 1 < len(words) and words[i + 1][0].islower():
-                    cut_index = i
-                    break
+            # Check for prose words - but require context (next word should be lowercase or prose too)
+            if word_lower in prose_words_lower:
+                # Check if next word suggests prose continuation
+                if i + 1 < len(words):
+                    next_word = words[i + 1].lower().rstrip(',;:')
+                    # If next word is lowercase and not a SQL keyword, likely prose
+                    if words[i + 1][0].islower() and next_word not in sql_keywords_upper:
+                        cut_index = i
+                        break
+                    # If word is a strong prose indicator, cut anyway
+                    if word_lower in {'retrieves', 'returns', 'shows', 'displays', 'demonstrates'}:
+                        cut_index = i
+                        break
         
         sql = ' '.join(words[:cut_index])
         
-        # NEW: Word-level prose detection at the end - check if last word is a prose verb
-        # This catches cases like: "SELECT DISTINCT dept FROM employees Removes;"
+        # Word-level prose detection at the end - check if last word is a prose verb
         prose_verbs = {'removes', 'returns', 'shows', 'displays', 'gets', 'fetches', 
                        'lists', 'retrieves', 'produces', 'gives', 'outputs', 'yields',
                        'deletes', 'updates', 'creates', 'adds', 'modifies', 'inserts', 'drops'}
         
         if words:
             last_word_clean = words[-1].lower().rstrip(',;:')
-            if last_word_clean in prose_verbs:
+            if last_word_clean in prose_verbs and len(words) > 3:
                 # Find the last SQL keyword before this prose verb
                 sql_keywords_for_truncate = {'select', 'from', 'where', 'group', 'order', 
                                               'having', 'join', 'insert', 'update', 'delete',
                                               'create', 'alter', 'drop', 'values', 'set', 'into'}
                 for j in range(len(words) - 2, -1, -1):
                     if words[j].lower().rstrip(',;:()') in sql_keywords_for_truncate:
-                        # Truncate after this keyword's clause (find semicolon or end)
+                        # Truncate after this keyword's clause
                         sql = ' '.join(words[:j+1]).rstrip(',;: ')
                         break
                 else:
                     # No SQL keyword found, just remove the last word
                     sql = ' '.join(words[:-1]).rstrip(',;: ')
         
-        # ENHANCED: Strip trailing punctuation that might be left after cutting
+        # Strip trailing punctuation
         sql = sql.rstrip(',;: ')
         
         # Ensure we end with semicolon
         if sql and not sql.endswith(';'):
             sql += ';'
         
+        # Log changes for debugging
         if sql != original and len(original) > 60:
             print(f"[SQL CLEAN] Stripped prose: '{original[:60]}...' -> '{sql[:60]}...'")
         elif sql != original:
@@ -4598,6 +4618,11 @@ class UnitGenerator:
     def _is_valid_sql_lenient(self, sql: str) -> tuple[bool, str]:
         """Validate SQL more leniently for textbook examples.
         
+        STRENGTHENED for Week 1 demo reliability:
+        - Rejects prose-contaminated SQL earlier
+        - Validates concept-specific structure
+        - Checks for common textbook contamination patterns
+        
         Args:
             sql: SQL string to validate
             
@@ -4624,40 +4649,80 @@ class UnitGenerator:
         if not has_content:
             return False, 'no_content'
         
-        # STRENGTHENED: Check for prose contamination
-        prose_words = ['retrieves', 'returns', 'shows', 'displays', 'example', 'this query', 
-                       'this statement', 'the result', 'gives', 'produces', 'outputs',
-                       'for retrieving', 'for filtering', 'for combining', 'for sorting']
+        # === STRENGTHENED: Early prose contamination detection ===
+        # Check for prose patterns that indicate explanation text, not SQL
+        prose_patterns = [
+            # Action verbs describing what query does
+            r'\b(retrieves|returns|shows|displays|gets|fetches|lists|gives|produces|outputs)\s+',
+            # Reference to query itself
+            r'\b(this\s+(query|statement|example)|the\s+(query|statement|result))\s+',
+            # Purpose phrases
+            r'\bfor\s+(retrieving|filtering|combining|sorting|displaying|showing)\b',
+            # Explanation starters
+            r'\b(example|note|see|which|and\s+this|that\s+is)\s*[:\s]',
+            # Result descriptions
+            r'\b(result|output|result\s+set|rows?)\s+(is|will|shows?)\b',
+        ]
         
-        # Count prose words (check for phrases too) - INCREASED threshold sensitivity
-        prose_count = 0
-        for w in prose_words:
-            if w in sql_lower:
-                prose_count += 1
+        for pattern in prose_patterns:
+            if re.search(pattern, sql_lower):
+                print(f"[SQL VALIDATE] Rejecting contaminated SQL (prose pattern '{pattern}'): {sql[:60]}...")
+                return False, 'prose_contamination'
         
-        # If ANY prose phrase found, reject (strengthened from > 1)
-        if prose_count > 0:
-            print(f"[SQL VALIDATE] Rejecting contaminated SQL (prose phrase): {sql[:60]}...")
-            return False, 'prose_contamination'
+        # === Reject prose fragments with SQL keywords ===
+        # These are sentence fragments that contain SQL keywords but are not valid SQL
+        # NOTE: All patterns use lowercase since sql_lower is lowercase
+        prose_fragment_patterns = [
+            # Modal verb patterns: "ALTER TABLE can also be used", "ALTER TABLE can be used"
+            (r'\b(alter|drop|create)\s+\w+\s+can\s+(also\s+)?be\s+used\b', 'modal_used_fragment'),
+            # Noun phrase fragments: "DROP TABLE command", "ALTER TABLE statement"
+            (r'\b(alter|drop|create)\s+\w+\s+(command|statement|clause|operation)\s*([;.]|$)', 'noun_phrase_fragment'),
+            # Prepositional fragments: "with null values", "with special attention"
+            (r'^\s*with\s+\w+\s+(values|attention|care|focus|emphasis)\b', 'prepositional_fragment'),
+            # Adjective fragments: "with high frequency values"
+            (r'^\s*with\s+\w+\s+\w+\s+(values|so|then)\b', 'adjectival_fragment'),
+        ]
         
-        # NEW: Explicit rejection for SQL starting with keyword but followed by "for" + verb
+        for pattern, reason in prose_fragment_patterns:
+            if re.search(pattern, sql_lower):
+                print(f"[SQL VALIDATE] Rejecting prose fragment ({reason}): {sql[:60]}...")
+                return False, f'prose_fragment_{reason}'
+        
+        # === Reject "can be used" and "can also be used" after SQL keywords ===
+        if re.search(r'\b(alter|drop|create)\s+\w+.*\bcan\s+(also\s+)?be\s+used\b', sql_lower):
+            print(f"[SQL VALIDATE] Rejecting modal verb fragment: {sql[:60]}...")
+            return False, 'modal_verb_fragment'
+        
+        # === Explicit rejection for keyword + "for" + verb pattern ===
         # Pattern: "SELECT for retrieving", "WHERE for filtering", etc.
         if re.search(r'^(SELECT|WHERE|JOIN|GROUP|ORDER|INSERT|UPDATE|DELETE)\s+for\s+\w+ing\b', sql_upper):
             print(f"[SQL VALIDATE] Rejecting keyword+for+verb pattern: {sql[:60]}...")
             return False, 'prose_keyword_for_verb'
         
-        # NEW: Reject SQL where first word after keyword is lowercase prose word
-        # Extract first word after the initial SQL keyword
+        # === Reject SQL where first word after keyword is prose word ===
         first_word_match = re.search(r'^(?:SELECT|INSERT|UPDATE|DELETE|WHERE|JOIN|GROUP|ORDER)\s+(\w+)', sql_upper)
         if first_word_match:
             first_word = first_word_match.group(1)
-            # Common prose words that should not follow SQL keywords
             prose_first_words = ['FOR', 'THE', 'A', 'AN', 'THIS', 'THAT', 'RETURNS', 'SHOWS', 
                                  'DISPLAYS', 'GIVES', 'PRODUCES', 'OUTPUTS', 'IS', 'ARE', 
-                                 'WAS', 'WERE', 'BE', 'BEEN', 'BEING', 'HAVE', 'HAS', 'HAD']
+                                 'WAS', 'WERE', 'BE', 'BEEN', 'BEING', 'HAVE', 'HAS', 'HAD',
+                                 'REMOVES', 'DELETES', 'UPDATES', 'CREATES', 'ADDS']
             if first_word in prose_first_words:
                 print(f"[SQL VALIDATE] Rejecting prose first word '{first_word}': {sql[:60]}...")
                 return False, 'prose_first_word'
+        
+        # === Check for trailing prose after semicolon ===
+        if ';' in sql:
+            parts = sql.split(';')
+            if len(parts) > 1:
+                after_semicolon = parts[-1].strip()
+                if after_semicolon and len(after_semicolon) > 3:
+                    # Check if trailing content looks like prose
+                    prose_indicators = ['removes', 'returns', 'retrieves', 'shows', 'displays', 
+                                       'gets', 'this', 'that', 'the', 'example', 'result']
+                    if any(indicator in after_semicolon.lower() for indicator in prose_indicators):
+                        print(f"[SQL VALIDATE] Rejecting trailing prose after semicolon: {sql[:60]}...")
+                        return False, 'trailing_prose'
         
         return True, ''
     

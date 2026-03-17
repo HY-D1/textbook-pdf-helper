@@ -1,382 +1,191 @@
 # Adaptive Textbook Helper
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+A CLI tool that transforms SQL textbooks from PDFs into structured instructional units (L1-L4 hints, explanations, worked examples) for adaptive learning systems, using local Ollama LLMs and grounded extraction pipelines.
 
-> **Transform static PDFs into dynamic, inspectable knowledge substrates for interaction-driven SQL learning.**
+## Demo
 
-This project treats textbooks not as static sequences of chapters, but as **versioned content substrates** that can be re-assembled into adaptive instructional artifacts—micro-hints, worked examples, explanations, and reflective notes—based on learner traces and support needs.
+```bash
+# Process a PDF with Ollama repair (default)
+python -m algl_pdf_helper process raw_pdf/sample.pdf --output-dir outputs/demo
 
----
+# Skip LLM for fast extraction-only run
+python -m algl_pdf_helper process raw_pdf/sample.pdf --output-dir outputs/demo --skip-llm
 
-## 🚀 Quick Start
+# Replay synthetic traces under different policies
+python -m algl_pdf_helper replay tests/fixtures/traces --output-dir outputs/replay
+```
 
-### Installation
+## Features
+
+### Implemented (v1.0)
+
+- **PDF Processing Pipeline**: Extracts text, chunks, maps concepts, generates instructional units
+- **Ollama-First Defaults**: Local LLM repair for weak L3 content (default: `qwen3.5:9b-q8_0`)
+- **Canonical Artifacts**: `extraction_report.json`, `llm_interventions.json`, `concept_units.json`, `quality_report.json`
+- **Educational Commands**: `edu status`, `edu generate`, `edu cost`
+- **Replay System**: Replay learner traces under 3 escalation policies (fast/slow/adaptive)
+- **SQL-Engage Backbone**: 50 SQL concepts, 59 prerequisite edges, 29 error subtypes
+- **HintWise Adapter**: Contract for hint eligibility payloads
+- **Learner Textbook Assembly**: Personal textbooks from concept units + learner events
+
+### Planned (v2.0)
+
+- Live HintWise HTTP integration
+- Real learner trace ingestion (not synthetic)
+- Online bandit policy adaptation
+- Marker PDF extraction backend
+- Full adaptive web app UI
+
+## Architecture
+
+The pipeline follows a 5-phase flow:
+
+1. **Extraction** (pymupdf → text pages)
+2. **Cleaning** (normalize, strip headers)
+3. **Chunking** (word-based chunks with overlap)
+4. **Concept Mapping** (SQL ontology → chunks)
+5. **Unit Generation** (L1-L4 instructional units with Ollama repair)
+
+Data flows: `PDF → chunks → concepts → units → artifacts`. The replay layer simulates policy decisions on learner traces without live integration.
+
+```mermaid
+graph LR
+    A[PDF Input] --> B[Extraction]
+    B --> C[Chunking]
+    C --> D[Concept Mapping]
+    D --> E[Unit Generation]
+    E --> F[Artifacts]
+    F --> G[Replay System]
+    G --> H[Policy Comparison]
+```
+
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Ollama server running locally (default: `http://localhost:11434`)
+- Recommended model: `qwen3.5:9b-q8_0`
+
+### Quick Start
 
 ```bash
 # Create virtual environment
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
-# Install with unit library support (required for most commands)
+# Install with unit library support
 pip install -e '.[unit]'
 
-# Or install with specific extras
-pip install -e '.[unit,validation,ocr]'
+# Verify Ollama is available
+python -m algl_pdf_helper edu status
+
+# Process a PDF
+python -m algl_pdf_helper process raw_pdf/sample.pdf --output-dir ./output
 ```
 
-Available extras:
-- `unit` - Unit library pipeline (process, validate, inspect commands)
-- `validation` - Enhanced validation tools
-- `ocr` - OCR support for scanned PDFs (requires tesseract)
-- `dev` - Development dependencies (pytest, etc.)
-
----
-
-## 📚 Workflows
-
-This tool supports two distinct output workflows:
-
-### Workflow 1: Unit Library (Pedagogical Content)
-
-Generate instructional units with L1-L4 hint levels, explanations, and worked examples.
+### Run Tests
 
 ```bash
-# Process PDF into unit library
-algl-pdf process ./textbook.pdf --output-dir ./output
+# Core contract tests (fast)
+pytest tests/test_artifact_contracts.py tests/test_day3_contracts.py tests/test_replay_system.py -q
 
-# Validate output
-algl-pdf validate ./output/
-
-# Inspect a specific concept
-algl-pdf inspect ./output/ --concept select-basic
+# Full suite (includes integration tests that may timeout without Ollama)
+pytest -q
 ```
 
-**Output files:**
-- `instructional_units.jsonl` - Generated instructional units (L1-L4)
-- `source_spans.jsonl` - Evidence grounding spans
-- `concept_graph.json` - Prerequisite relationships
-- `quality_report.json` - Content quality analysis
-- `export_manifest.json` - Provenance and statistics
+### Configuration
 
-### Workflow 2: Adaptive App Handoff (Textbook-Static Export)
+| Environment Variable | Purpose | Default |
+|---------------------|---------|---------|
+| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama model name | `qwen3.5:9b-q8_0` |
+| `ALGL_LLM_PROVIDER` | Override default provider | `ollama` |
 
-Export PDF content for consumption by the adaptive web application.
+## API Reference
 
-```bash
-# Step 1: Index the PDF
-algl-pdf index ./textbook.pdf \
-  --output-dir ./index_output \
-  --concepts-config ./concepts.yaml
+### CLI Commands
 
-# Step 2: Export to textbook-static format
-algl-pdf export ./index_output --output-dir ./textbook_static
-```
+| Command | Description |
+|---------|-------------|
+| `process` | Process PDF into unit library with artifacts |
+| `edu` | Educational note generation (`status`, `generate`, `cost`) |
+| `replay` | Replay traces under policies for comparison |
+| `index` | Build PDF index to textbook-static format |
+| `validate` | Validate an existing unit library |
+| `inspect` | Inspect units for a specific concept |
+| `cache` | Manage Ollama repair cache |
 
-**Output files:**
-- `concept-map.json` - Concept index with namespaced IDs (`docId/conceptId`)
-- `textbook-manifest.json` - Textbook manifest (schema v1)
-- `chunks-metadata.json` - Chunk metadata per document
-- `concepts/{docId}/{conceptId}.md` - Individual concept markdown files
+### Key Options for `process`
+
+| Option | Description |
+|--------|-------------|
+| `--output-dir, -o` | Output directory (required) |
+| `--skip-llm` | Skip all LLM-based processing |
+| `--llm-provider` | LLM provider: `ollama` (default), `grounded`, `kimi`, `openai` |
+| `--ollama-model` | Ollama model for repair |
+| `--use-ollama-repair` | Enable Ollama repair for weak L3 content (default: on) |
+| `--filter-level` | `strict`, `production` (default), or `development` |
+| `--export-mode` | `prototype` (default) or `student_ready` |
+
+## Data Model / Schema
+
+### Core Artifacts (process command)
+
+- `extraction_report.json` - Extraction method, page counts, quality metrics
+- `llm_interventions.json` - LLM repair calls, success/failure tracking
+- `concept_units.json` - Generated units with provenance metadata
+- `quality_report.json` - Content quality analysis, pass/fail status
+
+### Replay Artifacts
+
+- `replay_summary.json` / `replay_summary.csv` - Run metadata, policy metrics
+- `per_learner_metrics.csv` - Per-learner HDI, CSI, APS scores
+- `policy_comparison.csv` - Cross-policy comparison statistics
+
+### Backbone Files
+
+- `sql_engage_backbone.json` - 50 SQL concepts, prerequisite edges, practice map
+- `learner_textbook.json` - Personal textbook with saved units and mastery
+
+See [docs/schema-reference.md](docs/schema-reference.md) for detailed field documentation.
+
+## Trade-offs & Design Decisions
+
+**Chose:** Ollama as default LLM provider with local-first operation.
+**Gave up:** Cloud LLM convenience and higher throughput.
+**Why:** Enables air-gapped operation, reduces API costs, and keeps learner data local by default.
+
+**Chose:** Synthetic trace fixtures for replay testing.
+**Gave up:** Real learner data coverage.
+**Why:** No live adaptive system is in production; fixtures provide deterministic policy comparison without data privacy concerns.
+
+**Chose:** Separate backbone adapter over direct integration.
+**Gave up:** Tight coupling with SQL-Engage service.
+**Why:** The PDF helper operates as a standalone pipeline; explicit adapter contracts allow future HTTP integration without refactoring.
+
+## Limitations
+
+1. **Integration Tests Timeout**: `test_process_command_creates_units` and `test_end_to_end_pipeline` may timeout in CI without Ollama running locally with the expected model.
+
+2. **OCR Fallback**: GLM-OCR integration attempts Ollama vision but may fail with 500 errors if models are not loaded.
+
+3. **Unit Generation on Weak Slices**: Test PDF slices with minimal SQL content may produce 0 instructional units (expected behavior).
+
+4. **No Live Bandit**: The replay system computes metrics deterministically; online policy adaptation is not implemented.
+
+5. **Synthetic Data Only**: All learner traces in fixtures are synthetic; no real learner data is included.
+
+See [docs/final-verification.md](docs/final-verification.md) for current test status.
+
+## Next Steps
+
+- [ ] Add HTTP client for live HintWise integration
+- [ ] Implement real learner trace ingestion endpoint
+- [ ] Add online bandit update loop for policy learning
+- [ ] Expand SQL concept ontology beyond 50 core concepts
+- [ ] Add production monitoring for Ollama repair success rates
 
 ---
 
-## 🔧 CLI Commands
-
-### Unit Library Commands
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `process` | Process PDF into unit library | `algl-pdf process ./book.pdf -o ./out` |
-| `validate` | Validate an existing unit library | `algl-pdf validate ./output/` |
-| `inspect` | Inspect units for a specific concept | `algl-pdf inspect ./out/ -c select-basic` |
-| `filter` | Re-run export filters on existing library | `algl-pdf filter ./out/ --level strict` |
-| `diagnose` | Analyze unit library for content gaps | `algl-pdf diagnose ./output/` |
-| `export-legacy` | Convert old concept-map.json to new format | `algl-pdf export-legacy ./old.json -o ./new/` |
-
-### Textbook-Static Commands
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `index` | Build PDF index to textbook-static format | `algl-pdf index ./book.pdf -o ./out` |
-| `export` | Export indexed PDF to SQL-Adapt format | `algl-pdf export ./index_out -o ./export_out` |
-
-### Process Command Options
-
-```bash
-algl-pdf process ./textbook.pdf \
-  --output-dir ./output \
-  --filter-level strict \
-  --export-mode student_ready \
-  --llm-provider kimi \
-  --llm-model kimi-k2-5 \
-  --use-ollama-repair \
-  --ollama-model qwen3.5:9b-q8_0 \
-  --skip-reinforcement \
-  --skip-misconceptions \
-  --min-quality-score 0.8
-```
-
-Available options:
-- `--output-dir, -o` - Output directory for the unit library (required)
-- `--filter-level` - Export filter level: `strict` (production-ready), `production` (validated), `development` (all content)
-- `--export-mode` - Export mode: `prototype` (allows placeholders) or `student_ready` (strict, blocks weak content)
-- `--llm-provider` - LLM provider: `kimi`, `openai`, or `ollama`
-- `--llm-model` - LLM model to use (default: `kimi-k2-5`)
-- `--use-ollama-repair/--no-ollama-repair` - Use Ollama to repair weak L3 content (default: enabled)
-- `--ollama-model` - Ollama model for repair (default: `qwen3.5:9b-q8_0`)
-- `--skip-reinforcement` - Skip generating reinforcement items
-- `--skip-misconceptions` - Skip generating misconception units
-- `--validate-sql/--no-validate-sql` - Validate SQL examples (default: enabled)
-- `--min-quality-score` - Minimum quality score threshold (0.0-1.0, default: 0.8)
-
-### Index Command Options
-
-```bash
-algl-pdf index ./textbook.pdf \
-  --output-dir ./output \
-  --concepts-config ./concepts.yaml \
-  --chunk-words 180 \
-  --overlap-words 30
-```
-
-Available options:
-- `--output-dir, -o` - Output directory (required)
-- `--concepts-config` - Path to concepts.yaml config file
-- `--chunk-words` - Words per chunk (default: 180)
-- `--overlap-words` - Overlapping words between chunks (default: 30)
-- `--use-aliases` - Use stable doc aliases instead of SHA256 doc IDs
-- `--ocr` - Force OCR for scanned PDFs
-
-### Document Processing Commands
-
-```bash
-# Check PDF extraction quality
-algl-pdf check-quality ./my.pdf --detailed
-
-# Run preflight analysis
-algl-pdf preflight ./my.pdf
-
-# Extract text with specific strategy
-algl-pdf extract ./my.pdf --strategy ocrmypdf
-```
-
-### Auto-Mapping Commands
-
-```bash
-# Auto-generate concept mapping draft
-algl-pdf suggest-mapping ./textbook.pdf --output ./concepts.yaml
-
-# Create review package for human validation
-algl-pdf review-mapping ./textbook.pdf --output ./review-package.json
-
-# Extract document structure
-algl-pdf extract-structure ./textbook.pdf
-```
-
-### CI/Quality Gate Commands
-
-```bash
-# Evaluate processing quality
-algl-pdf evaluate ./output --threshold 0.75
-
-# Detect regressions
-algl-pdf detect-regressions ./baseline ./current
-```
-
-### Server Mode
-
-```bash
-# Start HTTP server
-algl-pdf serve --host 127.0.0.1 --port 7345
-
-# Endpoint: POST /v1/index (multipart form with pdf file)
-# Returns: { document, manifest, chunks, conceptMap }
-```
-
----
-
-## 📁 Output Files
-
-### Unit Library Output
-
-The `process` command produces a unit library with these files:
-
-- `concept_ontology.json` - Canonical SQL concept definitions
-- `concept_graph.json` - Prerequisite graph for mapped concepts
-- `source_spans.jsonl` - Evidence grounding spans
-- `instructional_units.jsonl` - Generated instructional units
-- `misconception_bank.jsonl` - Error-linked remediation
-- `reinforcement_bank.jsonl` - Spaced repetition items
-- `quality_report.json` - Content quality analysis
-- `export_manifest.json` - Provenance and statistics
-
-### Textbook-Static Output
-
-The `index` + `export` commands produce output for the adaptive app:
-
-- `concept-map.json` - Concept index with namespaced IDs (`docId/conceptId`)
-- `textbook-manifest.json` - Textbook manifest (schema v1)
-- `chunks-metadata.json` - Chunk metadata per document
-- `concepts/{docId}/{conceptId}.md` - Individual concept markdown files
-
----
-
-## 🧪 CI-Tested Example
-
-This exact command runs in CI on every commit:
-
-```bash
-algl-pdf process tests/fixtures/golden_chapter.pdf \
-  --output-dir ./test_output \
-  --filter-level strict
-```
-
----
-
-## 🧠 Adaptive Escalation
-
-The system implements four escalation profiles:
-
-| Profile | Strategy | Use Case |
-|---------|----------|----------|
-| **Fast Escalator** | Lower thresholds; prioritize time-to-clarity | Time-constrained learners |
-| **Slow Escalator** | Higher thresholds; enforce productive struggle | Deep learning focus |
-| **Explanation-First** | Bypass ladder for prerequisite violations | Known knowledge gaps |
-| **Adaptive Bandit** | Learn optimal per-learner | General population |
-
-### Escalation Ladder
-
-```
-Hint Level 1 (Nudge)
-    ↓ (after 3 errors or 3 min)
-Hint Level 2 (Directed Hint)
-    ↓ (after 5 errors or 5 min)
-Explanation
-    ↓ (after 7 errors or 10 min)
-Worked Example
-```
-
-Safety overrides:
-- Repeated prerequisite failure → jump to explanation
-- Learner explicit request → escalate one level
-
----
-
-## 📊 Derived Metrics
-
-The system computes four key metrics from interaction traces:
-
-| Metric | Description | Use Case |
-|--------|-------------|----------|
-| **HDI** (Hint Dependency) | Help-seeking behavior patterns | Detect hint over-reliance |
-| **CSI** (Cognitive Strain) | Interaction-based load proxy | Detect cognitive overload |
-| **APS** (Affective Proxy) | Predicted affective state | Detect frustration/boredom |
-| **RQS** (Reflection Quality) | Self-explanation quality | Assess note-taking depth |
-
----
-
-## 🔬 Research Foundation
-
-This project is grounded in established learning science:
-
-- **Assistance Dilemma** (Koedinger et al.): Balancing help and productive struggle
-- **Retrieval-Augmented Generation** (RAG): Grounded, traceable LLM outputs
-- **Cognitive Load Theory** (Sweller): Managing intrinsic/extraneous load
-- **Productive Failure** (Kapur): Initial struggle benefits learning
-- **Self-Explanation** (Chi): Constructive engagement improves understanding
-- **Retrieval Practice** (Roediger & Karpicke): Testing improves retention
-
----
-
-## 📂 Repository Structure
-
-```
-.
-├── README.md              # This file
-├── pyproject.toml         # Package configuration
-├── Makefile              # Build automation
-├── src/                  # Source code (algl_pdf_helper package)
-├── tests/                # Test suite
-├── scripts/              # Utility scripts
-├── schemas/              # JSON schemas
-├── data/                 # Static data files
-├── raw_pdf/              # Input PDF storage
-└── docs/                 # Documentation
-```
-
-See [docs/REPO_LAYOUT.md](docs/REPO_LAYOUT.md) for detailed repository layout.
-
-Manual utility scripts are in `scripts/manual/` (not part of main CLI).
-
-## 📖 Documentation
-
-| Document | Purpose |
-|----------|---------|
-| **[Usage Guide](docs/USAGE.md)** | Comprehensive CLI usage with examples |
-| **[Project Blueprint](docs/PROJECT_BLUEPRINT.md)** | Vision, research foundation, four-pack architecture |
-| **[Architecture](docs/ARCHITECTURE.md)** | Five-phase pipeline, component reference |
-| **[Repository Layout](docs/REPO_LAYOUT.md)** | Canonical repo structure and organization |
-| **[Quality Improvements Summary](docs/QUALITY_IMPROVEMENTS_SUMMARY.md)** | Recent quality enhancements and improvements |
-
----
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run CI-specific tests
-make test-ci
-
-# Run integration tests
-make test-integration
-
-# Update baselines
-make update-baselines
-
-# Run evaluation
-make evaluate
-```
-
----
-
-## 🤝 Integration
-
-### SQL-Adapt Integration
-
-The textbook-static export produces files consumable by the adaptive web application:
-
-```typescript
-// Load concept map
-const conceptMap = await fetch('/textbook-static/concept-map.json').then(r => r.json());
-
-// Load individual concept content
-const conceptContent = await fetch(`/textbook-static/concepts/${docId}/${conceptId}.md`).then(r => r.text());
-
-// Check prerequisites before showing hint (from concept-graph.json in unit library)
-function checkPrerequisites(conceptId: string): string[] {
-  const concept = conceptMap.concepts[conceptId];
-  return concept?.relatedConcepts || [];
-}
-
-// Log interaction event
-function logEvent(event: AttemptSubmittedEvent) {
-  event.trace_id = generateUUID();
-  event.code_version = 'git:abc123';
-  sendToTelemetry(event);
-}
-```
-
-**Note:** The `prereq-dag.json` file referenced in earlier documentation has been replaced by the `concept-graph.json` file in the unit library workflow, or `relatedConcepts` within the `concept-map.json` entries in the textbook-static workflow.
-
----
-
-## 📜 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-*The Adaptive Textbook Helper: Making every PDF a substrate for personalized, research-grounded learning.*
+*For detailed pipeline documentation, see [docs/ollama-pipeline.md](docs/ollama-pipeline.md) and [docs/replay-evaluation.md](docs/replay-evaluation.md).*

@@ -1,0 +1,108 @@
+# Week 1 Demo Scope - ALGL PDF Helper
+# ===================================
+# This file locks the Week 1 demo target for reproducible quality work.
+# 
+# Purpose:
+# - Define a fixed, reproducible source/concept scope for Week 1 development
+# - Establish the baseline for all quality work
+# - Document the exact command and expected outcomes
+#
+# Status: LOCKED for Week 1 baseline
+# Last Updated: 2026-03-15
+
+scope:
+  name: "Week 1 Demo - Murach Chapters 3-4"
+  version: "1.0.0"
+  status: locked
+
+demo_target:
+  # Source PDF
+  source_pdf: "raw_pdf/murachs-mysql-3rd-edition.pdf"
+  
+  # Chapter/Page scope
+  # Chapters 3-4 cover: SELECT basics, WHERE clause, ORDER BY, joins
+  chapter_range: "3,4"
+  
+  # Locked concept IDs for Week 1
+  # These concepts are guaranteed to be present in chapters 3-4
+  concept_ids:
+    - select-basic
+    - where-clause
+    - order-by
+    - alias
+    - distinct
+    - comparison-operators
+    - join
+    - inner-join
+    - outer-join
+    - self-join
+  
+  # Alternative fallback scope (if chapters 3-4 prove unstable)
+  fallback:
+    chapter_range: "3"
+    concept_ids:
+      - select-basic
+      - where-clause
+      - order-by
+      - alias
+      - distinct
+      - comparison-operators
+      - pattern-matching
+      - null-handling
+
+# Processing configuration
+processing:
+  # LLM provider: grounded = rule-based extraction, no external API calls
+  llm_provider: "grounded"
+  
+  # Disable Ollama repair for deterministic output
+  ollama_repair: false
+  
+  # Export mode for student-ready content
+  export_mode: "student_ready"
+  
+  # Quality filter level
+  filter_level: "production"
+
+# Definition of Done for Week 1
+definition_of_done:
+  # Baseline tests pass
+  - "pytest tests/test_concept_mapper.py -q passes"
+  - "pytest tests/test_integration_ci.py -q passes"
+  
+  # Demo command runs successfully
+  - "process command completes without errors"
+  - "output contains at least 5 instructional units"
+  - "all locked concepts have corresponding units"
+  
+  # Output artifacts
+  output_artifacts:
+    - instructional_units.jsonl
+    - export_manifest.json
+    - concept_manifest.json
+
+# Runnable demo command
+demo_command: |
+  algl-pdf process raw_pdf/murachs-mysql-3rd-edition.pdf \
+    --output-dir ./outputs/week1-demo \
+    --chapter-range 3,4 \
+    --llm-provider grounded \
+    --no-ollama-repair \
+    --export-mode student_ready \
+    --filter-level production
+
+# Alternative: Python module invocation (for CI/testing)
+demo_command_python: |
+  python -m algl_pdf_helper process raw_pdf/murachs-mysql-3rd-edition.pdf \
+    --output-dir ./outputs/week1-demo \
+    --chapter-range 3,4 \
+    --llm-provider grounded \
+    --no-ollama-repair \
+    --export-mode student_ready \
+    --filter-level production
+
+# Expected outcomes
+expected_outcomes:
+  min_instructional_units: 5
+  max_processing_time_seconds: 300
+  required_concepts_coverage: 0.8  # 80% of locked concepts must have units

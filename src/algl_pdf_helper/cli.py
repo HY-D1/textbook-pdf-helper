@@ -1170,9 +1170,9 @@ try:
             help="Document ID (auto-generated if not provided)",
         ),
         llm_provider: str = typer.Option(
-            "grounded",
+            os.getenv("ALGL_LLM_PROVIDER", "ollama"),
             "--llm-provider",
-            help="LLM provider: grounded (default, no LLM), ollama, kimi, or openai. Note: only grounded and ollama are fully implemented.",
+            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER.",
         ),
         llm_model: str | None = typer.Option(
             None,
@@ -1198,6 +1198,11 @@ try:
             True,
             "--validate-sql/--no-validate-sql",
             help="Validate SQL examples",
+        ),
+        skip_llm: bool = typer.Option(
+            False,
+            "--skip-llm",
+            help="Skip all LLM-based processing (extraction/repair only, no generation)",
         ),
         min_quality_score: float = typer.Option(
             0.8,
@@ -1303,6 +1308,7 @@ try:
             skip_reinforcement=skip_reinforcement,
             skip_misconceptions=skip_misconceptions,
             validate_sql=validate_sql,
+            skip_llm=skip_llm,
             min_quality_score=min_quality_score,
             export_mode=export_mode,
             use_ollama_repair=use_ollama_repair,
@@ -1530,5 +1536,133 @@ def cache_command(
             
     except ImportError:
         typer.echo("❌ Error: RepairCache not available")
+        raise typer.Exit(1)
+
+
+# Replay/evidence command
+@app.command()
+def replay(
+    trace_input: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Path to trace JSON file or directory of traces",
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir", "-o",
+        help="Output directory for replay artifacts",
+    ),
+    policy: list[str] = typer.Option(
+        None,
+        "--policy",
+        help="Policy ID(s) to run (default: all 3 policies)",
+    ),
+    flags_file: Path | None = typer.Option(
+        None,
+        "--flags",
+        help="JSON file with experiment flags",
+    ),
+    synthetic_fixture: bool = typer.Option(
+        False,
+        "--synthetic-fixture",
+        help="Generate and use synthetic fixture trace",
+    ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run-id",
+        help="Custom run identifier",
+    ),
+):
+    """
+    Replay learner trace(s) under formal policies for comparison.
+
+    This command replays traces under multiple escalation policies and
+    produces research-ready artifacts for policy comparison.
+
+    Artifacts produced:
+    - replay_summary.json / replay_summary.csv
+    - per_learner_metrics.csv
+    - policy_comparison.csv
+
+    Available policies:
+    - fast_escalator: Aggressive early escalation
+    - slow_escalator: Conservative, favors independence
+    - adaptive_escalator: Context-aware strain-based
+
+    Example:
+        algl replay traces/ --output-dir outputs/day4
+        algl replay trace.json -o out --policy fast_escalator --policy slow_escalator
+        algl replay traces/ -o out --synthetic-fixture
+    """
+    from .replay import run_replay
+    from .experiment_flags import ExperimentFlags, load_flags
+    from .trace_schema import make_synthetic_trace
+    import json
+
+    # Load or create flags
+    experiment_flags = None
+    if flags_file:
+        try:
+            experiment_flags = load_flags(flags_file)
+            typer.echo(f"✅ Loaded flags from {flags_file}")
+        except Exception as e:
+            typer.echo(f"⚠️ Could not load flags: {e}")
+
+    # Generate synthetic fixture if requested
+    if synthetic_fixture:
+        synthetic_dir = output_dir / "synthetic_traces"
+        synthetic_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a few synthetic traces
+        synthetic_traces = [
+            make_synthetic_trace("struggling_001", "struggling_with_joins", num_problems=3, error_rate=0.7),
+            make_synthetic_trace("fast_001", "fast_learner", num_problems=3, error_rate=0.2),
+            make_synthetic_trace("average_001", "average_learner", num_problems=3, error_rate=0.5),
+        ]
+
+        for trace in synthetic_traces:
+            trace_path = synthetic_dir / f"{trace.trace_id}.json"
+            trace.save(trace_path)
+            typer.echo(f"📝 Created synthetic trace: {trace_path}")
+
+        # Update input to use synthetic traces
+        trace_input = synthetic_dir
+
+    # Run replay
+    try:
+        typer.echo(f"🔄 Replaying traces from {trace_input}...")
+        typer.echo(f"📁 Output directory: {output_dir}")
+
+        artifacts = run_replay(
+            trace_input=trace_input,
+            output_dir=output_dir,
+            flags=experiment_flags,
+            policy_filter=policy if policy else None,
+            run_id=run_id,
+        )
+
+        typer.echo("\n✅ Replay complete! Artifacts generated:")
+        for name, path in artifacts.items():
+            typer.echo(f"  📄 {name}: {path}")
+
+        # Print summary
+        summary_path = artifacts.get("replay_summary_json")
+        if summary_path and summary_path.exists():
+            with open(summary_path, encoding="utf-8") as f:
+                summary = json.load(f)
+            typer.echo(f"\n📊 Summary:")
+            typer.echo(f"  Total traces: {summary.get('total_traces', 0)}")
+            typer.echo(f"  Policies compared: {summary.get('total_policies', 0)}")
+            for policy_id, metrics in summary.get("policy_metrics", {}).items():
+                typer.echo(f"\n  Policy: {policy_id}")
+                typer.echo(f"    Avg HDI: {metrics.get('avg_hdi', 0):.3f}")
+                typer.echo(f"    Avg CSI: {metrics.get('avg_csi', 0):.3f}")
+                typer.echo(f"    Avg APS: {metrics.get('avg_aps', 0):.3f}")
+
+    except ValueError as e:
+        typer.echo(f"❌ Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"❌ Unexpected error: {e}", err=True)
         raise typer.Exit(1)
 

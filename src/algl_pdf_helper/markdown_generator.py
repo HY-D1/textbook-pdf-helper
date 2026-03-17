@@ -8,6 +8,118 @@ if TYPE_CHECKING:
 
 
 # ============================================================================
+# Chunk Deduplication
+# ============================================================================
+
+
+def _chunk_similarity_hash(text: str) -> str:
+    """Generate a similarity hash for chunk comparison.
+    
+    Normalizes the text to detect near-duplicate chunks.
+    """
+    import hashlib
+    # Normalize: lowercase, collapse whitespace, strip
+    normalized = ' '.join(text.lower().split())
+    return hashlib.md5(normalized.encode('utf-8')).hexdigest()
+
+
+def deduplicate_chunk_list(chunks: list[PdfIndexChunk]) -> list[PdfIndexChunk]:
+    """Remove duplicate chunks from a list while preserving order.
+    
+    Uses content hashing to detect chunks with identical or near-identical
+    text content. This prevents duplication when chunks from overlapping
+    regions are combined.
+    
+    Args:
+        chunks: List of chunks potentially containing duplicates
+        
+    Returns:
+        List of unique chunks in original order
+    """
+    if not chunks:
+        return []
+    
+    seen_hashes: set[str] = set()
+    unique_chunks: list[PdfIndexChunk] = []
+    
+    for chunk in chunks:
+        chunk_hash = _chunk_similarity_hash(chunk.text)
+        
+        # Check for exact match
+        if chunk_hash in seen_hashes:
+            continue
+        
+        # Check for near-duplicates (truncated or extended versions)
+        is_near_duplicate = False
+        for seen_hash in list(seen_hashes):
+            # Simple heuristic: if hashes share prefix, might be related
+            if chunk_hash[:16] == seen_hash[:16]:
+                # Additional check: one text contains the other
+                normalized_chunk = ' '.join(chunk.text.lower().split())
+                normalized_seen = ' '.join(next(
+                    c.text for c in unique_chunks 
+                    if _chunk_similarity_hash(c.text) == seen_hash
+                ).lower().split())
+                
+                if normalized_chunk in normalized_seen or normalized_seen in normalized_chunk:
+                    is_near_duplicate = True
+                    break
+        
+        if not is_near_duplicate:
+            seen_hashes.add(chunk_hash)
+            unique_chunks.append(chunk)
+    
+    return unique_chunks
+
+
+def _clean_and_deduplicate_section_texts(section_texts: list[str]) -> str:
+    """Clean and deduplicate section texts before joining.
+    
+    Args:
+        section_texts: List of text chunks from a section
+        
+    Returns:
+        Cleaned, deduplicated text
+    """
+    from .clean import deduplicate_text, normalize_line_breaks
+    
+    if not section_texts:
+        return ""
+    
+    # First pass: deduplicate at chunk level
+    unique_texts: list[str] = []
+    seen_previews: set[str] = set()
+    
+    for text in section_texts:
+        # Create a preview (first 100 chars normalized)
+        preview = ' '.join(text[:100].lower().split())
+        
+        # Check if we've seen this content
+        is_duplicate = False
+        for seen in seen_previews:
+            if preview in seen or seen in preview:
+                # Check length ratio
+                len_ratio = min(len(preview), len(seen)) / max(len(preview), len(seen))
+                if len_ratio > 0.9:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            seen_previews.add(preview)
+            # Clean individual chunk
+            cleaned = normalize_line_breaks(text)
+            unique_texts.append(cleaned)
+    
+    # Join with paragraph separator
+    full_text = "\n\n".join(unique_texts)
+    
+    # Second pass: deduplicate at paragraph level
+    full_text = deduplicate_text(full_text, min_length=30)
+    
+    return full_text
+
+
+# ============================================================================
 # Section Titles for Student Learning
 # ============================================================================
 
@@ -418,17 +530,25 @@ def generate_concept_markdown(
         lines.append("")
         
         # Get chunk texts for this section
-        section_texts: list[str] = []
+        section_chunks: list[PdfIndexChunk] = []
         for chunk_id in section.chunkIds:
             chunk = get_chunk_by_id(chunks, chunk_id)
             if chunk:
-                # Clean the chunk text
-                cleaned_text = clean_chunk_text(chunk.text)
+                section_chunks.append(chunk)
+        
+        # Deduplicate chunks to remove overlap duplicates
+        section_chunks = deduplicate_chunk_list(section_chunks)
+        
+        # Clean and deduplicate texts
+        section_texts: list[str] = []
+        for chunk in section_chunks:
+            cleaned_text = clean_chunk_text(chunk.text)
+            if cleaned_text.strip():
                 section_texts.append(cleaned_text)
         
         if section_texts:
-            # Join chunks with separator
-            full_text = "\n\n".join(section_texts)
+            # Clean and deduplicate before joining
+            full_text = _clean_and_deduplicate_section_texts(section_texts)
             lines.append(full_text)
         else:
             lines.append("*Content not available in source.*")

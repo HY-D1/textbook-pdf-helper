@@ -1,0 +1,242 @@
+# Week 1 Demo Scope v1.5 - ALGL PDF Helper Production Pipeline
+# ================================================================
+# LOCKED CONTRACT - Week 1 Production Pipeline v1.5
+# 
+# Purpose:
+# - Define the fixed, reproducible production pipeline for Week 1
+# - Lock the explicit default path, fallback path, repair path, and demo scope
+# - Document exact textbook slices and concept targets
+#
+# Status: LOCKED for Week 1 v1.5
+# Last Updated: 2026-03-15
+# Contract Version: 1.5.0
+
+contract:
+  version: "1.5.0"
+  status: locked
+  effective_date: "2026-03-15"
+  expiration_date: "2026-03-29"
+  description: "Week 1 Production Pipeline Contract - 2 week fixed demo scope"
+
+# =============================================================================
+# PRODUCTION PIPELINE PATHS
+# =============================================================================
+#
+# This contract defines exactly THREE paths:
+#
+# 1. DEFAULT PATH: Deterministic extraction first
+#    - PyMuPDF (fitz) direct text extraction
+#    - Quality validation against 70% text coverage threshold
+#    - No external API calls, no cloud LLM usage
+#
+# 2. FALLBACK PATH: GLM OCR for failed slices/pages
+#    - Triggered ONLY when deterministic extraction fails quality threshold
+#    - Per-page or per-slice granularity (not whole-book)
+#    - GLM-4V OCR API (not OCRmyPDF)
+#
+# 3. REPAIR PATH: Local Qwen 9B only
+#    - Ollama-based local repair for weak L3 content
+#    - No Kimi API, no OpenAI, no external LLM for repair
+#    - Runs only on flagged weak concepts, not all units
+
+pipeline_paths:
+  default:
+    name: "Deterministic Extraction"
+    method: "pymupdf_direct"
+    tool: "fitz"
+    quality_threshold: 0.70
+    external_api: false
+    description: "Direct text extraction with PyMuPDF - no external dependencies"
+  
+  fallback:
+    name: "GLM OCR Fallback"
+    method: "glm_ocr_layout"
+    tool: "glm-4v"
+    trigger: "quality_failure"
+    granularity: "per_slice_or_page"
+    whole_book_processing: false
+    description: "GLM OCR only for failed slices/pages - NOT whole-book processing"
+  
+  repair:
+    name: "Local Qwen 9B Repair"
+    method: "ollama_local_repair"
+    tool: "qwen3.5:9b-q8_0"
+    host: "http://localhost:11434"
+    external_api: false
+    repair_threshold: 0.6
+    description: "Local Ollama repair for weak L3 content - no external LLM"
+
+# =============================================================================
+# DEMO SCOPE (Fixed for 2 weeks)
+# =============================================================================
+#
+# WHOLE-BOOK PROCESSING = NOT REQUIRED FOR DEMO
+# We process ONE chapter/page range per textbook, NOT full books
+
+demo_scope:
+  description: "One chapter/page range per textbook - NOT full books"
+  whole_book_processing_required: false
+  max_processing_time_seconds: 600
+  
+  textbooks:
+    # -------------------------------------------------------------------------
+    # Textbook 1: Murach's MySQL (3rd Edition)
+    # -------------------------------------------------------------------------
+    - id: "murach-mysql-3e"
+      name: "Murach's MySQL (3rd Edition)"
+      source_pdf: "raw_pdf/murachs-mysql-3rd-edition.pdf"
+      
+      slice:
+        type: "chapter_range"
+        value: "3"
+        description: "Chapter 3 only (SELECT basics, WHERE, ORDER BY)"
+        page_estimate: "60-80 pages"
+      
+      concept_target:
+        count: 8
+        ids:
+          - select-basic
+          - where-clause
+          - order-by
+          - alias
+          - distinct
+          - comparison-operators
+          - pattern-matching
+          - null-handling
+      
+      export_mode: "student_ready"
+      fallback_policy: "glm_ocr_on_failure"
+    
+    # -------------------------------------------------------------------------
+    # Textbook 2: Ramakrishnan - Database Management Systems
+    # -------------------------------------------------------------------------
+    - id: "ramakrishnan-dbms"
+      name: "Database Management Systems (Ramakrishnan & Gehrke)"
+      source_pdf: "raw_pdf/ramakrishnan-dbms-3rd-edition.pdf"
+      
+      slice:
+        type: "chapter_range"
+        value: "2"
+        description: "Chapter 2 only (Relational data model, SQL introduction)"
+        page_estimate: "40-60 pages"
+      
+      concept_target:
+        count: 10
+        ids:
+          - relational-model
+          - schema-instance
+          - key-constraints
+          - foreign-key
+          - sql-overview
+          - create-table
+          - insert-statement
+          - select-basic
+          - where-clause
+          - join-concept
+      
+      export_mode: "student_ready"
+      fallback_policy: "glm_ocr_on_failure"
+
+# =============================================================================
+# PROCESSING CONFIGURATION
+# =============================================================================
+
+processing:
+  # Extraction settings
+  extraction:
+    strategy: "direct"
+    min_coverage: 0.70
+    auto_ocr: false  # GLM OCR is fallback, not auto
+    smart_skip_threshold: 0.90
+  
+  # Fallback settings (GLM OCR)
+  fallback:
+    enabled: true
+    provider: "glm"
+    model: "glm-4v"
+    granularity: "per_page"
+    trigger: "coverage_below_0.70"
+  
+  # Repair settings (Local Qwen 9B)
+  repair:
+    enabled: true
+    provider: "ollama"
+    model: "qwen3.5:9b-q8_0"
+    host: "http://localhost:11434"
+    threshold: 0.6
+    max_repair_attempts: 3
+  
+  # Export settings
+  export:
+    mode: "student_ready"
+    filter_level: "production"
+    validate_sql: true
+    min_quality_score: 0.8
+
+# =============================================================================
+# EXPLICIT POLICIES
+# =============================================================================
+
+policies:
+  # No whole-book processing for demo
+  whole_book_processing: false
+  
+  # No external LLM for repair (local only)
+  external_llm_for_repair: false
+  
+  # GLM OCR is fallback only, not primary
+  glm_ocr_primary: false
+  glm_ocr_fallback_only: true
+  
+  # Concept count targets
+  min_concepts_per_slice: 8
+  max_concepts_per_slice: 12
+  
+  # Time limits
+  max_processing_time_minutes: 10
+
+# =============================================================================
+# DEFINITION OF DONE (Week 1 v1.5)
+# =============================================================================
+
+definition_of_done:
+  - "Pipeline contract v1.5 documented and committed"
+  - "Murach Ch3 slice processes successfully with deterministic extraction"
+  - "Ramakrishnan Ch2 slice processes successfully with deterministic extraction"
+  - "Fallback decision rules documented"
+  - "8-12 concepts extracted per textbook slice"
+  - "student_ready export mode validated"
+  - "No whole-book processing required for demo"
+  - "Local Qwen 9B repair path documented (even if not fully implemented)"
+
+# =============================================================================
+# RUNNABLE DEMO COMMANDS
+# =============================================================================
+
+demo_commands:
+  murach_ch3: |
+    algl-pdf process raw_pdf/murachs-mysql-3rd-edition.pdf \
+      --output-dir ./outputs/week1-v15/murach-ch3 \
+      --chapter-range 3 \
+      --export-mode student_ready \
+      --filter-level production \
+      --use-ollama-repair \
+      --ollama-model qwen3.5:9b-q8_0
+  
+  ramakrishnan_ch2: |
+    algl-pdf process raw_pdf/ramakrishnan-dbms-3rd-edition.pdf \
+      --output-dir ./outputs/week1-v15/ramakrishnan-ch2 \
+      --chapter-range 2 \
+      --export-mode student_ready \
+      --filter-level production \
+      --use-ollama-repair \
+      --ollama-model qwen3.5:9b-q8_0
+
+# =============================================================================
+# REFERENCES
+# =============================================================================
+
+references:
+  pipeline_contract: "docs/pipeline_contract_week1_v15.md"
+  fallback_rules: "docs/fallback_decision_rules_week1.md"
+  previous_scope: "data/demo_scope_week1.yaml"

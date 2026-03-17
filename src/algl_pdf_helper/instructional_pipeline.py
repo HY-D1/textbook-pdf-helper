@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -56,6 +57,11 @@ from .instructional_models import (
     MisconceptionUnit,
     ReinforcementItem,
     UnitLibraryExport,
+    ExtractionReport,
+    LLMIntervention,
+    LLMInterventionsReport,
+    ConceptUnitEntry,
+    ConceptUnitsReport,
 )
 from .section_extractor import SectionExtractor, ContentBlock, ContentFilter, BlockType
 from .pedagogy_extractor import PedagogyExtractor, PedagogyIntegrator
@@ -77,6 +83,10 @@ from .export_filters import (
     CORE_SQL_CONCEPTS as EXPORT_CORE_SQL_CONCEPTS,
 )
 from .unit_library_exporter import UnitLibraryExporter, ExportConfig, FilterLevel
+from .fallback_router import FallbackRouter, RoutingArtifact, SliceRoutingDecision, RoutingClassification
+from .extract import check_extraction_quality
+from .quality_metrics import TextCoverageAnalyzer
+from .glm_ocr_client import GLMOCRFallback, create_glm_ocr_result_storage
 
 
 # =============================================================================
@@ -178,7 +188,7 @@ class PipelineConfig:
     pdf_path: Path
     output_dir: Path = field(default_factory=lambda: Path("./output"))
     doc_id: str | None = None
-    llm_provider: Literal["kimi", "openai", "ollama"] = "kimi"
+    llm_provider: Literal["kimi", "openai", "ollama", "grounded"] = os.getenv("ALGL_LLM_PROVIDER", "ollama")
     llm_model: str | None = None  # Will be resolved to provider-specific default
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
@@ -196,12 +206,15 @@ class PipelineConfig:
     
     # Off-book curated content configuration
     allow_offbook_curated: bool = False  # Default False - must explicitly opt-in for off-book concepts
-    
+
+    # LLM configuration
+    skip_llm: bool = False  # Skip all LLM-based processing
+
     # Ollama repair configuration
     use_ollama_repair: bool = True
-    ollama_model: str = "qwen2.5:3b"  # Default for MacBook (small, fast)
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:3b"))
     ollama_repair_threshold: float = 0.6  # Confidence below this triggers repair
-    ollama_host: str = "http://localhost:11434"
+    ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     ollama_auto_fallback: bool = True  # Auto-fallback to available models
     
     # Provider-specific default models
@@ -345,6 +358,9 @@ class PipelineResult:
     exercises: list[Any] = field(default_factory=list)
     examples: list[Any] = field(default_factory=list)
     navigation: dict[str, Any] = field(default_factory=dict)
+    
+    # Routing decision (new)
+    routing_decision: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
@@ -685,6 +701,10 @@ class InstructionalPipeline:
         self._examples: list[Any] = []
         self._navigation_index: NavigationIndex = NavigationIndex()
         
+        # Fallback router (new)
+        self._fallback_router: FallbackRouter | None = None
+        self._routing_decision: dict[str, Any] = {}
+        
         self._logger = logging.getLogger(__name__)
         self._logger.info(f"Pipeline initialized for: {config.pdf_path}")
         
@@ -712,6 +732,16 @@ class InstructionalPipeline:
             "pages_from_cache": 0,
             "pages_extracted": 0,
         }
+
+        # GLM-OCR fallback handler (new)
+        self._ocr_fallback: GLMOCRFallback | None = None
+        self._ocr_result: dict[str, Any] | None = None
+
+        # Day 2: Artifact tracking
+        self._extraction_report: dict[str, Any] | None = None
+        self._llm_interventions_report: Any | None = None
+        self._llm_interventions: list[dict[str, Any]] = []
+        self._skip_llm: bool = False
     
     def run(self) -> PipelineResult:
         """
@@ -884,7 +914,19 @@ class InstructionalPipeline:
             result.repaired_units = getattr(self, '_repaired_unit_ids', [])
             result.repair_status = getattr(self, '_repair_status', {})
             result.cache_stats = self._cache_stats
+            result.routing_decision = self._routing_decision
             
+            # Write routing artifact (new)
+            self._write_routing_artifact()
+            
+            # Write OCR fallback artifact if present (new)
+            self._write_ocr_artifact()
+
+            # Write Day 2 artifacts
+            self._write_extraction_report()
+            self._write_llm_interventions()
+            self._write_concept_units()
+
             # Clear checkpoint on successful completion
             if result.success and self.config.resume_from_checkpoint:
                 self._checkpoint_manager.clear_checkpoint()
@@ -1068,7 +1110,7 @@ class InstructionalPipeline:
             raise ValueError(f"Failed to resolve chapter range: {e}")
     
     def _process_extracted_blocks(self, blocks: list[ContentBlock]) -> tuple[str, dict]:
-        """Process extracted blocks and create metadata."""
+        """Process extracted blocks and create metadata with real quality metrics."""
         # Combine all text content
         text_parts = []
         for block in blocks:
@@ -1076,13 +1118,37 @@ class InstructionalPipeline:
                 text_parts.append(block.text_content)
         
         self._raw_text = "\n\n".join(text_parts)
+        
+        # Convert blocks to pages for quality analysis
+        pages = self._blocks_to_pages(blocks)
+        
+        # Compute real quality metrics using existing quality tools
+        quality_metrics = self._compute_extraction_quality(pages)
+        
+        # Store metadata with REAL metrics (not placeholders)
         self._extraction_metadata = {
             "total_blocks": len(blocks),
             "text_length": len(self._raw_text),
             "doc_id": self.config.doc_id,
+            # Real quality metrics from analysis
+            "coverage_score": quality_metrics.get("coverage_score"),
+            "readable_ratio": quality_metrics.get("readable_ratio"),
+            "gibberish_ratio": quality_metrics.get("gibberish_ratio"),
+            "is_quality_good": quality_metrics.get("is_quality_good"),
+            "needs_ocr": quality_metrics.get("needs_ocr", False),
+            "total_chars": quality_metrics.get("total_chars", 0),
+            "page_count": len(pages),
+            # Page-level details for router
+            "page_analyses": quality_metrics.get("page_analyses", []),
         }
         
-        self._logger.info(f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks")
+        self._logger.info(
+            f"Extracted {len(self._raw_text)} characters from {len(blocks)} blocks, "
+            f"coverage={self._extraction_metadata.get('coverage_score', 'unknown')}"
+        )
+        
+        # Run fallback router to classify extraction quality (new)
+        self._run_fallback_router()
         
         # Save to cache if enabled
         if self.config.cache_extraction and self._checkpoint_state.get("pdf_hash"):
@@ -1134,6 +1200,540 @@ class InstructionalPipeline:
         
         return pages
     
+    def _compute_extraction_quality(
+        self, pages: list[tuple[int, str]]
+    ) -> dict[str, Any]:
+        """
+        Compute real extraction quality metrics from pages.
+        
+        Uses existing quality analysis tools to calculate coverage,
+        readability, and other metrics needed for routing decisions.
+        
+        Args:
+            pages: List of (page_number, text) tuples
+            
+        Returns:
+            Dictionary with quality metrics
+        """
+        if not pages:
+            return {
+                "coverage_score": None,
+                "readable_ratio": None,
+                "is_quality_good": None,
+            }
+        
+        # Use existing quality check function
+        quality_result = check_extraction_quality(pages)
+        
+        # Use TextCoverageAnalyzer for detailed page analysis
+        analyzer = TextCoverageAnalyzer()
+        page_analyses = analyzer.analyze_pages(pages)
+        
+        # Build page analysis data for router
+        page_analysis_data = []
+        for pa in page_analyses:
+            page_analysis_data.append({
+                "page_number": pa.page_number,
+                "coverage_score": pa.coverage_score,
+                "text_length": pa.text_length,
+                "has_embedded_text": pa.has_embedded_text,
+            })
+        
+        # Calculate aggregate coverage
+        total_text = "\n".join(text for _, text in pages)
+        coverage_score = analyzer.calculate_coverage(total_text)
+        
+        return {
+            "coverage_score": coverage_score,
+            "readable_ratio": quality_result.get("readable_ratio"),
+            "gibberish_ratio": quality_result.get("gibberish_ratio"),
+            "is_quality_good": quality_result.get("is_quality_good"),
+            "needs_ocr": quality_result.get("needs_ocr", False),
+            "total_chars": quality_result.get("total_chars", 0),
+            "page_count": len(pages),
+            "page_analyses": page_analysis_data,
+        }
+    
+    def _run_fallback_router(self) -> dict[str, Any]:
+        """
+        Run fallback router to classify extraction quality.
+        
+        Analyzes extraction metrics and determines if fallback is needed.
+        Must be called after extraction is complete.
+        
+        Returns:
+            Routing decision dictionary
+        """
+        self._logger.info("Running fallback router classification")
+        
+        # Initialize router if needed
+        if self._fallback_router is None:
+            self._fallback_router = FallbackRouter()
+        
+        # Build preflight-like report from REAL extraction metadata
+        # These are actual computed values, not placeholders
+        preflight_report = {
+            "text_coverage_score": self._extraction_metadata.get("coverage_score"),
+            "has_embedded_text": self._extraction_metadata.get("page_count", 0) > 0,
+            "ocr_needed": self._extraction_metadata.get("needs_ocr", False),
+            "warning_flags": [],  # Could be populated from preflight if available
+        }
+        
+        # Build extraction quality report with REAL metrics
+        extraction_quality = {
+            "total_chars": self._extraction_metadata.get("total_chars", len(self._raw_text)),
+            "is_quality_good": self._extraction_metadata.get("is_quality_good"),
+            "needs_ocr": self._extraction_metadata.get("needs_ocr", False),
+            "coverage_score": self._extraction_metadata.get("coverage_score"),
+            "readable_ratio": self._extraction_metadata.get("readable_ratio"),
+            "gibberish_ratio": self._extraction_metadata.get("gibberish_ratio"),
+        }
+        
+        # Get page analyses for per-page routing decisions
+        page_analyses = self._extraction_metadata.get("page_analyses", [])
+        
+        # Determine slice ID from page range if available
+        slice_id = "full_document"
+        if self.config.page_range:
+            if isinstance(self.config.page_range, tuple):
+                slice_id = f"pages_{self.config.page_range[0]}_{self.config.page_range[1]}"
+            else:
+                slice_id = f"pages_custom"
+        elif self.config.chapter_range:
+            if isinstance(self.config.chapter_range, tuple):
+                slice_id = f"chapters_{self.config.chapter_range[0]}_{self.config.chapter_range[1]}"
+            else:
+                slice_id = f"chapters_custom"
+        
+        # Get routing decision with REAL metrics
+        decision = self._fallback_router.classify_slice(
+            preflight_report=preflight_report,
+            extraction_quality=extraction_quality,
+            page_analyses=page_analyses,
+            slice_id=slice_id,
+        )
+        
+        # Store decision
+        self._routing_decision = decision.to_dict()
+        
+        # Log result
+        self._logger.info(
+            f"Routing decision: {decision.classification.value} "
+            f"(confidence: {decision.confidence})"
+        )
+        if decision.explanation:
+            self._logger.info(f"Routing explanation: {decision.explanation}")
+        
+        # Run GLM-OCR fallback if needed (new)
+        self._maybe_run_ocr_fallback(decision)
+        
+        return self._routing_decision
+    
+    def _maybe_run_ocr_fallback(self, decision: SliceRoutingDecision) -> None:
+        """
+        Run GLM-OCR fallback if the routing decision requires it.
+        
+        Args:
+            decision: The routing decision from classify_slice
+        """
+        # Check if fallback is needed
+        classification = decision.classification.value
+        if classification not in ("needs_ocr_fallback", "needs_layout_fallback"):
+            return
+        
+        self._logger.info(f"GLM-OCR fallback required for slice {decision.slice_id}")
+        
+        # Initialize fallback handler if needed
+        if self._ocr_fallback is None:
+            self._ocr_fallback = GLMOCRFallback()
+        
+        # Determine page numbers from slice_id or config
+        page_numbers = self._get_page_numbers_for_slice(decision.slice_id)
+        if not page_numbers:
+            self._logger.warning("Could not determine page numbers for OCR fallback")
+            return
+        
+        # Run OCR
+        try:
+            ocr_result = self._ocr_fallback.process_slice(
+                pdf_path=self.config.pdf_path,
+                page_numbers=page_numbers,
+                routing_classification=classification,
+                slice_id=decision.slice_id,
+            )
+            
+            if ocr_result:
+                # Store both deterministic and OCR results
+                self._ocr_result = create_glm_ocr_result_storage(
+                    ocr_result=ocr_result,
+                    deterministic_extraction=self._raw_text,
+                )
+                
+                if ocr_result.success:
+                    self._logger.info(
+                        f"GLM-OCR succeeded: {len(ocr_result.ocr_text)} chars "
+                        f"from pages {ocr_result.pages_processed}"
+                    )
+                else:
+                    self._logger.warning(f"GLM-OCR failed: {ocr_result.error}")
+            
+        except Exception as e:
+            self._logger.error(f"GLM-OCR fallback failed: {e}")
+    
+    def _get_page_numbers_for_slice(self, slice_id: str) -> list[int]:
+        """
+        Extract page numbers from slice_id or config.
+        
+        Args:
+            slice_id: The slice identifier (e.g., "pages_1_10")
+            
+        Returns:
+            List of page numbers
+        """
+        # Try to parse from slice_id
+        if slice_id.startswith("pages_"):
+            try:
+                parts = slice_id.replace("pages_", "").split("_")
+                if len(parts) == 2:
+                    start, end = int(parts[0]), int(parts[1])
+                    return list(range(start, end + 1))
+            except (ValueError, IndexError):
+                pass
+        
+        # Handle full_document or other non-page-specific slice ids
+        # Return all pages from the PDF
+        if slice_id in ("full_document", "chapters_custom", "unknown"):
+            try:
+                import fitz
+                doc = fitz.open(self.config.pdf_path)
+                page_count = len(doc)
+                doc.close()
+                return list(range(1, page_count + 1))
+            except Exception:
+                pass
+        
+        # Fall back to config
+        if self.config.page_range:
+            if isinstance(self.config.page_range, tuple):
+                return list(range(self.config.page_range[0], self.config.page_range[1] + 1))
+            elif isinstance(self.config.page_range, list):
+                return self.config.page_range
+        
+        # Unknown - return empty list
+        return []
+    
+    def _write_routing_artifact(self) -> Path | None:
+        """
+        Write routing decision to output directory.
+        
+        Returns:
+            Path to written artifact or None if no decision
+        """
+        if not self._routing_decision:
+            return None
+        
+        try:
+            artifact = RoutingArtifact(self.config.output_dir)
+            from .fallback_router import SliceRoutingDecision, RoutingClassification
+            
+            # Reconstruct decision for saving
+            decision = SliceRoutingDecision(
+                classification=RoutingClassification(
+                    self._routing_decision.get("classification", "deterministic_ok")
+                ),
+                confidence=self._routing_decision.get("confidence", 0.0),
+                slice_id=self._routing_decision.get("slice_id", "unknown"),
+                explanation=self._routing_decision.get("explanation", ""),
+                signals=self._routing_decision.get("signals", {}),
+                thresholds=self._routing_decision.get("thresholds", {}),
+                page_decisions=self._routing_decision.get("page_decisions", []),
+            )
+            
+            path = artifact.save(
+                decision,
+                pipeline_stats={
+                    "total_blocks": self._extraction_metadata.get("total_blocks", 0),
+                    "text_length": len(self._raw_text),
+                }
+            )
+            
+            self._logger.info(f"Saved routing artifact: {path}")
+            return path
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to write routing artifact: {e}")
+            return None
+    
+    def _write_ocr_artifact(self) -> Path | None:
+        """
+        Write GLM-OCR fallback result to output directory.
+
+        Returns:
+            Path to written artifact or None if no OCR result
+        """
+        if not self._ocr_result:
+            return None
+
+        try:
+            output_path = self.config.output_dir / "ocr_fallback_result.json"
+
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(self._ocr_result, f, indent=2, ensure_ascii=False)
+
+            self._logger.info(f"Saved OCR fallback artifact: {output_path}")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write OCR artifact: {e}")
+            return None
+
+    def _record_llm_intervention(
+        self,
+        phase: str,
+        target_id: str,
+        target_type: str,
+        reason: str,
+        outcome: str,
+        success: bool,
+        duration_seconds: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Record an LLM intervention for the interventions report.
+
+        Args:
+            phase: Pipeline phase where intervention occurred
+            target_id: ID of the target (concept, unit, etc.)
+            target_type: Type of target
+            reason: Why the intervention was triggered
+            outcome: Result description
+            success: Whether the intervention succeeded
+            duration_seconds: Time taken
+            metadata: Additional metadata
+        """
+        intervention = {
+            "intervention_id": f"int_{len(self._llm_interventions) + 1:04d}",
+            "phase": phase,
+            "target_id": target_id,
+            "target_type": target_type,
+            "reason": reason,
+            "llm_provider": self.config.llm_provider,
+            "llm_model": self.config.llm_model or "unknown",
+            "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
+            "outcome": outcome,
+            "success": success,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": duration_seconds,
+            "metadata": metadata or {},
+        }
+        self._llm_interventions.append(intervention)
+        self._logger.debug(f"Recorded LLM intervention: {intervention['intervention_id']} for {target_id}")
+
+    def _write_extraction_report(self) -> Path | None:
+        """
+        Write extraction report artifact.
+
+        Documents the PDF extraction process, methods used, and quality metrics.
+
+        Returns:
+            Path to written artifact or None if extraction data not available
+        """
+        try:
+            # Determine extraction method
+            use_marker = hasattr(self, '_marker_used') and self._marker_used
+            use_pymupdf = not use_marker and hasattr(self, '_extractor') and self._extractor is not None
+            ocr_fallback_used = self._ocr_result is not None
+
+            # Get page count
+            page_count = 0
+            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                page_count = self._extraction_metadata.get('page_count', 0)
+            if not page_count and self.config.pdf_path.exists():
+                try:
+                    import fitz
+                    with fitz.open(self.config.pdf_path) as doc:
+                        page_count = len(doc)
+                except Exception:
+                    pass
+
+            # Get chunk/section counts
+            chunk_count = len(self._content_blocks) if hasattr(self, '_content_blocks') else 0
+            section_count = len(self._teaching_blocks) if hasattr(self, '_teaching_blocks') else 0
+
+            # Get text coverage
+            text_coverage = 0.0
+            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                text_coverage = self._extraction_metadata.get('text_coverage_score', 0.0)
+
+            report = ExtractionReport(
+                source_pdf=str(self.config.pdf_path),
+                extraction_method="marker" if use_marker else "pymupdf" if use_pymupdf else "unknown",
+                page_count=page_count,
+                chunk_count=chunk_count,
+                section_count=section_count,
+                use_marker=use_marker,
+                use_pymupdf=use_pymupdf,
+                ocr_fallback_used=ocr_fallback_used,
+                text_coverage_score=text_coverage,
+                warnings=self._extraction_metadata.get('warnings', []) if hasattr(self, '_extraction_metadata') else [],
+                errors=self._extraction_metadata.get('errors', []) if hasattr(self, '_extraction_metadata') else [],
+                repair_applied=self._extraction_metadata.get('repair_applied', {}) if hasattr(self, '_extraction_metadata') else {},
+            )
+
+            output_path = self.config.output_dir / "extraction_report.json"
+            report.save(output_path)
+            self._logger.info(f"Saved extraction report: {output_path}")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write extraction report: {e}")
+            return None
+
+    def _write_llm_interventions(self) -> Path | None:
+        """
+        Write LLM interventions report artifact.
+
+        Documents all LLM interventions during pipeline execution.
+
+        Returns:
+            Path to written artifact or None if no interventions
+        """
+        if not self._llm_interventions:
+            # Write empty report
+            pass
+
+        try:
+            # Calculate phase summary
+            phase_summary: dict[str, dict[str, Any]] = {}
+            for intv in self._llm_interventions:
+                phase = intv["phase"]
+                if phase not in phase_summary:
+                    phase_summary[phase] = {"count": 0, "successful": 0, "failed": 0}
+                phase_summary[phase]["count"] += 1
+                if intv["success"]:
+                    phase_summary[phase]["successful"] += 1
+                else:
+                    phase_summary[phase]["failed"] += 1
+
+            successful = sum(1 for i in self._llm_interventions if i["success"])
+
+            report_data = {
+                "schema_version": "1.0.0",
+                "llm_provider": self.config.llm_provider,
+                "llm_model": self.config.llm_model or "unknown",
+                "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
+                "total_interventions": len(self._llm_interventions),
+                "successful_interventions": successful,
+                "failed_interventions": len(self._llm_interventions) - successful,
+                "interventions": self._llm_interventions,
+                "phase_summary": phase_summary,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            output_path = self.config.output_dir / "llm_interventions.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+            self._logger.info(f"Saved LLM interventions report: {output_path} ({len(self._llm_interventions)} interventions)")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write LLM interventions report: {e}")
+            return None
+
+    def _write_concept_units(self) -> Path | None:
+        """
+        Write concept units report artifact.
+
+        Provides a flat, queryable list of all instructional units with provenance.
+
+        Returns:
+            Path to written artifact or None if no units
+        """
+        if not hasattr(self, '_filtered_library') or not self._filtered_library:
+            return None
+
+        try:
+            units = []
+            for unit in self._filtered_library.instructional_units:
+                # Determine level from target_stage
+                level = unit.target_stage.replace("_", " ") if unit.target_stage else "unknown"
+
+                # Get generation mode
+                content = unit.content or {}
+                generation_mode = "extracted"
+                if content.get("_repaired_by_ollama"):
+                    generation_mode = "repaired"
+                elif content.get("_used_curated_fallback"):
+                    generation_mode = "curated"
+                elif content.get("_synthetic"):
+                    generation_mode = "synthetic"
+
+                # Get LLM provider info if LLM was used
+                llm_provider = None
+                llm_model = None
+                if content.get("_repaired_by_ollama"):
+                    llm_provider = "ollama"
+                    llm_model = content.get("_repair_model", "unknown")
+                elif content.get("_llm_provider"):
+                    llm_provider = content.get("_llm_provider")
+                    llm_model = content.get("_llm_model")
+
+                # Get quality flags
+                quality_flags = []
+                if unit.grounding_confidence < 0.5:
+                    quality_flags.append("low_confidence")
+                if content.get("_review_flags"):
+                    quality_flags.extend(content.get("_review_flags", []))
+
+                entry = ConceptUnitEntry(
+                    concept_id=unit.concept_id,
+                    unit_id=unit.unit_id,
+                    title=content.get("title", unit.concept_id),
+                    level=level,
+                    unit_type=unit.unit_type,
+                    source_pdf=self.config.doc_id or "unknown",
+                    source_pages=unit.source_pages,
+                    evidence_spans=[s.span_id for s in unit.evidence_spans],
+                    evidence_count=len(unit.evidence_spans),
+                    extraction_method="marker" if hasattr(self, '_marker_used') and self._marker_used else "pymupdf",
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    generation_mode=generation_mode,
+                    confidence=unit.grounding_confidence,
+                    quality_flags=quality_flags,
+                    has_examples=bool(content.get("examples")),
+                    example_count=len(content.get("examples", [])),
+                    estimated_read_time=unit.estimated_read_time,
+                    prerequisites=unit.prerequisites,
+                )
+                units.append(entry)
+
+            report_data = {
+                "schema_version": "1.0.0",
+                "source_pdf": self.config.doc_id or "unknown",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "total_units": len(units),
+                "units_by_level": {},
+                "units": [u.model_dump() for u in units],
+            }
+
+            # Count by level
+            for u in units:
+                level = u.level
+                report_data["units_by_level"][level] = report_data["units_by_level"].get(level, 0) + 1
+
+            output_path = self.config.output_dir / "concept_units.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+            self._logger.info(f"Saved concept units report: {output_path} ({len(units)} units)")
+            return output_path
+
+        except Exception as e:
+            self._logger.warning(f"Failed to write concept units report: {e}")
+            return None
+
     def _segment_content(self, raw_text: str | None = None) -> list[ContentBlock]:
         """
         Stage 2: Segment content into typed blocks.

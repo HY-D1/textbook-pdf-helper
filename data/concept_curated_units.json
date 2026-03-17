@@ -830,5 +830,169 @@
         "What are the NULL handling differences between IN and EXISTS?"
       ]
     }
+  },
+  "join": {
+    "L2_hint_plus_example": {
+      "hint_text": "JOIN combines rows from multiple tables based on matching columns. Use the ON clause to specify how tables relate (e.g., customer_id = order_customer_id).",
+      "example_sql": "SELECT c.name, o.order_date\nFROM customers c\nJOIN orders o ON c.id = o.customer_id;",
+      "example_explanation": "This joins customers to their orders. The ON clause links c.id (customer table) to o.customer_id (orders table). Only customers with orders are returned.",
+      "common_pitfall": "Forgetting the ON clause - without it, you get a Cartesian product (every row paired with every row)"
+    }
+  },
+  "comparison-operators": {
+    "L2_hint_plus_example": {
+      "hint_text": "Comparison operators (=, !=, <, >, <=, >=) filter data in WHERE clauses. Use = for equality, != or <> for not equal, and < > for ranges.",
+      "example_sql": "SELECT * FROM products\nWHERE price > 50\n  AND price <= 200;",
+      "example_explanation": "Finds products priced between $50 and $200. > excludes 50, <= includes 200. Combine conditions with AND.",
+      "common_pitfall": "Using = with NULL (e.g., WHERE col = NULL) - use IS NULL instead"
+    }
+  },
+  "alias": {
+    "L2_hint_plus_example": {
+      "hint_text": "Use AS to give columns or tables temporary names (aliases). Aliases make output cleaner and queries more readable.",
+      "example_sql": "SELECT first_name AS fname, last_name AS lname\nFROM employees AS e;",
+      "example_explanation": "Renames columns to 'fname' and 'lname' in results. The table alias 'e' can be used to refer to columns (e.first_name).",
+      "common_pitfall": "Forgetting that AS is optional but omitting it can make queries hard to read"
+    }
+  },
+  "distinct": {
+    "L2_hint_plus_example": {
+      "hint_text": "SELECT DISTINCT removes duplicate values from results. Use it when you want unique values only.",
+      "example_sql": "SELECT DISTINCT department\nFROM employees;",
+      "example_explanation": "Returns each department name only once, even if multiple employees work there. Without DISTINCT, you'd see the department repeated for each employee.",
+      "common_pitfall": "DISTINCT applies to ALL selected columns - SELECT DISTINCT dept, name gives unique combinations, not unique departments"
+    }
+  },
+  "select-basic": {
+    "L2_hint_plus_example": {
+      "hint_text": "SELECT retrieves data from tables. Specify column names, or use * for all columns. Always prefer explicit columns in production.",
+      "example_sql": "SELECT first_name, last_name, email\nFROM employees;",
+      "example_explanation": "Retrieves only three columns for all employees. More efficient than SELECT * and makes code more maintainable.",
+      "common_pitfall": "SELECT * in production - retrieves unnecessary data and breaks if table structure changes"
+    }
+  },
+  "where-clause": {
+    "L2_hint_plus_example": {
+      "hint_text": "WHERE filters rows before they're returned. Use comparison operators (=, <, >, etc.) and combine conditions with AND/OR.",
+      "example_sql": "SELECT * FROM employees\nWHERE department = 'Sales'\n  AND salary > 50000;",
+      "example_explanation": "Finds Sales employees earning over $50,000. Both conditions must be true (AND). Use OR if either can be true.",
+      "common_pitfall": "String literals need quotes ('Sales'), numbers don't (50000). Forgetting quotes causes 'column not found' errors"
+    }
+  },
+  "order-by": {
+    "L2_hint_plus_example": {
+      "hint_text": "ORDER BY sorts results. Use ASC for ascending (A-Z, default) or DESC for descending (Z-A). Multiple columns create nested sort.",
+      "example_sql": "SELECT name, price\nFROM products\nORDER BY price DESC, name ASC;",
+      "example_explanation": "Shows highest-priced products first. When prices tie, sorts those products alphabetically by name.",
+      "common_pitfall": "Without ORDER BY, result order is unpredictable - never rely on 'default' ordering"
+    }
+  },
+  "inner-join": {
+    "L2_hint_plus_example": {
+      "hint_text": "INNER JOIN returns only rows with matches in BOTH tables. Rows without matches in either table are excluded.",
+      "example_sql": "SELECT c.name, o.total\nFROM customers c\nINNER JOIN orders o ON c.id = o.customer_id;",
+      "example_explanation": "Returns only customers who have placed orders. Customers with no orders are excluded from results.",
+      "common_pitfall": "Confusing INNER JOIN with OUTER JOIN - INNER excludes unmatched rows, OUTER keeps them"
+    }
+  },
+  "pattern-matching": {
+    "L2_hint_plus_example": {
+      "hint_text": "LIKE performs pattern matching in WHERE clauses. Use % for any sequence of characters, _ for a single character.",
+      "example_sql": "SELECT name, email\nFROM customers\nWHERE name LIKE 'A%';",
+      "example_explanation": "Finds customers whose names start with 'A'. The % wildcard matches any characters after A. Use '_a%' to find names where the second letter is 'a'.",
+      "common_pitfall": "LIKE is case-insensitive in some databases but not all. For exact matches, use = instead of LIKE (faster)"
+    },
+    "L3_explanation": {
+      "definition": "Pattern matching with LIKE allows searching for text that matches a pattern rather than exact strings. The % wildcard matches zero or more characters, and _ matches exactly one character. This is essential for flexible text searches like finding names starting with a letter or emails from a specific domain.",
+      "why_it_matters": "Pattern matching enables flexible search functionality in applications. Users can search for partial matches, making data retrieval more user-friendly. It's the foundation of search features in nearly every database-driven application, from e-commerce product searches to user directory lookups.",
+      "examples": [
+        {
+          "title": "Finding names starting with a letter",
+          "sql": "SELECT first_name, last_name FROM employees WHERE last_name LIKE 'S%';",
+          "explanation": "The % after 'S' matches any characters following it, returning all employees whose last name starts with S.",
+          "scenario": "HR needs to find all employees whose last name starts with a specific letter for directory organization."
+        },
+        {
+          "title": "Email domain search",
+          "sql": "SELECT name, email FROM users WHERE email LIKE '%@company.com';",
+          "explanation": "The % before @ matches any username, returning only emails from the company.com domain.",
+          "scenario": "IT department verifying all company email accounts in the system."
+        },
+        {
+          "title": "Single character wildcard",
+          "sql": "SELECT * FROM products WHERE product_code LIKE 'PRD___';",
+          "explanation": "Three underscores match exactly three characters, finding codes like PRD001, PRDABC, but not PRD1 or PRD1234.",
+          "scenario": "Inventory system looking for products with a specific 3-digit suffix format."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using = instead of LIKE with wildcards",
+          "error_sql": "SELECT * FROM customers WHERE name = 'A%';",
+          "error_message": "No results returned",
+          "why_it_happens": "The = operator treats % as a literal character, not a wildcard.",
+          "fix_sql": "SELECT * FROM customers WHERE name LIKE 'A%';",
+          "key_takeaway": "Always use LIKE (not =) when searching with wildcards % or _."
+        },
+        {
+          "title": "Forgetting wildcards match empty strings",
+          "error_sql": "SELECT * FROM products WHERE code LIKE 'PRD%5';",
+          "error_message": "Unexpected products returned",
+          "why_it_happens": "% matches zero characters, so PRD5 would also match.",
+          "fix_sql": "SELECT * FROM products WHERE code LIKE 'PRD_%5';",
+          "key_takeaway": "Use _ when you need at least one character between patterns."
+        }
+      ]
+    }
+  },
+  "null-handling": {
+    "L2_hint_plus_example": {
+      "hint_text": "NULL represents unknown or missing values. Use IS NULL or IS NOT NULL to check for NULL - regular comparisons (=, !=) don't work.",
+      "example_sql": "SELECT name, phone\nFROM customers\nWHERE phone IS NULL;",
+      "example_explanation": "Finds customers with no phone number on file. Using = NULL would return no results - NULL requires IS NULL syntax.",
+      "common_pitfall": "Using = NULL or != NULL always returns no rows. NULL is not equal to anything, not even another NULL"
+    },
+    "L3_explanation": {
+      "definition": "NULL represents the absence of a value or unknown data in SQL. Unlike empty strings or zero, NULL means 'no value exists'. Special handling is required because NULL is not equal to anything, including another NULL. Use IS NULL and IS NOT NULL for comparisons, and COALESCE() to provide default values.",
+      "why_it_matters": "NULL handling is critical for data integrity. Real-world data is often incomplete - customers may not provide phone numbers, orders may lack shipping dates. Proper NULL handling prevents incorrect reporting (NULLs don't appear in aggregates like SUM or AVG) and enables proper conditional logic. Misunderstanding NULL causes subtle bugs that are hard to detect.",
+      "examples": [
+        {
+          "title": "Finding missing data",
+          "sql": "SELECT customer_id, name FROM customers WHERE email IS NULL OR phone IS NULL;",
+          "explanation": "IS NULL checks for missing values. This finds customers with incomplete contact information.",
+          "scenario": "Marketing team needs complete contact info for a campaign - finding records to update."
+        },
+        {
+          "title": "Providing defaults with COALESCE",
+          "sql": "SELECT name, COALESCE(phone, 'No phone') AS contact FROM customers;",
+          "explanation": "COALESCE returns the first non-NULL value. If phone is NULL, 'No phone' is displayed instead.",
+          "scenario": "Customer service dashboard showing 'No phone' placeholder instead of blank fields."
+        },
+        {
+          "title": "NULLs in calculations",
+          "sql": "SELECT name, price, discount, price - COALESCE(discount, 0) AS final_price FROM products;",
+          "explanation": "Any arithmetic with NULL returns NULL. COALESCE converts NULL discounts to 0 for correct pricing.",
+          "scenario": "E-commerce checkout calculating final prices when some items have no discount."
+        }
+      ],
+      "common_mistakes": [
+        {
+          "title": "Using = NULL instead of IS NULL",
+          "error_sql": "SELECT * FROM customers WHERE phone = NULL;",
+          "error_message": "Query runs but returns no rows",
+          "why_it_happens": "NULL is not equal to anything. = NULL is always UNKNOWN (treated as false).",
+          "fix_sql": "SELECT * FROM customers WHERE phone IS NULL;",
+          "key_takeaway": "Always use IS NULL or IS NOT NULL - never = NULL or != NULL."
+        },
+        {
+          "title": "NULLs disappearing from aggregates",
+          "error_sql": "SELECT AVG(bonus) FROM employees; -- Some bonuses are NULL",
+          "error_message": "Average seems too high",
+          "why_it_happens": "AVG, SUM, COUNT ignore NULLs. If half the bonuses are NULL, you're averaging only the non-zero ones.",
+          "fix_sql": "SELECT AVG(COALESCE(bonus, 0)) FROM employees;",
+          "key_takeaway": "NULLs are excluded from aggregates. Use COALESCE to treat NULL as 0 if needed."
+        }
+      ]
+    }
   }
 }

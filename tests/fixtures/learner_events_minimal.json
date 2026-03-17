@@ -1,0 +1,66 @@
+{
+  "_description": "Minimal synthetic learner events for testing LearnerTextbook assembly",
+  "_schema_version": "1.0.0",
+  "learner_id": "test_learner_001",
+  "generated_at": "2026-03-17T12:00:00Z",
+  "events": [
+    {
+      "event_id": "evt_001",
+      "event_type": "unit_completed",
+      "timestamp": "2026-03-17T10:00:00Z",
+      "concept_id": "select-basic",
+      "unit_id": "unit_select_basic_001",
+      "completion_score": 0.8,
+      "session_id": "session_001"
+    },
+    {
+      "event_id": "evt_002",
+      "event_type": "problem_attempt",
+      "timestamp": "2026-03-17T10:05:00Z",
+      "concept_id": "select-basic",
+      "problem_id": "prob_select_001",
+      "solved": true,
+      "confidence": 0.85,
+      "session_id": "session_001"
+    },
+    {
+      "event_id": "evt_003",
+      "event_type": "unit_completed",
+      "timestamp": "2026-03-17T10:15:00Z",
+      "concept_id": "where-clause",
+      "unit_id": "unit_where_001",
+      "completion_score": 0.6,
+      "session_id": "session_001"
+    },
+    {
+      "event_id": "evt_004",
+      "event_type": "problem_attempt",
+      "timestamp": "2026-03-17T10:20:00Z",
+      "concept_id": "where-clause",
+      "problem_id": "prob_where_001",
+      "solved": false,
+      "confidence": 0.4,
+      "error_subtype": "missing_comma_in_select",
+      "session_id": "session_001"
+    },
+    {
+      "event_id": "evt_005",
+      "event_type": "problem_attempt",
+      "timestamp": "2026-03-17T10:25:00Z",
+      "concept_id": "where-clause",
+      "problem_id": "prob_where_002",
+      "solved": true,
+      "confidence": 0.7,
+      "session_id": "session_001"
+    },
+    {
+      "event_id": "evt_006",
+      "event_type": "unit_saved",
+      "timestamp": "2026-03-17T11:00:00Z",
+      "concept_id": "select-basic",
+      "unit_id": "unit_select_basic_001",
+      "learner_notes": "Remember DISTINCT eliminates duplicates",
+      "session_id": "session_002"
+    }
+  ]
+}

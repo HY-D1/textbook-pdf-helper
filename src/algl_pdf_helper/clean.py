@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 
@@ -15,6 +16,183 @@ _MULTI_NL = re.compile(r"\n{2,}")
 def normalize_text(text: str) -> str:
     """Normalize whitespace and remove null bytes."""
     return _MULTI_NL.sub("\n", _SPACE_TABS.sub(" ", text.replace("\x00", " "))).strip()
+
+
+# ============================================================================
+# Duplicate Detection and Removal
+# ============================================================================
+
+
+def _paragraph_fingerprint(text: str) -> str:
+    """Generate a normalized fingerprint for a paragraph.
+    
+    Normalizes whitespace and lowercase for comparison.
+    """
+    # Normalize: lowercase, strip, collapse whitespace
+    normalized = re.sub(r'\s+', ' ', text.lower().strip())
+    return normalized
+
+
+def deduplicate_text(text: str, min_length: int = 20, similarity_threshold: float = 0.95) -> str:
+    """Remove duplicate paragraphs from text.
+    
+    Uses paragraph-level fingerprinting to detect and remove exact duplicates
+    and near-duplicates (e.g., same text with minor formatting differences).
+    
+    Args:
+        text: The text to deduplicate
+        min_length: Minimum paragraph length to consider for deduplication
+        similarity_threshold: Threshold for considering paragraphs as duplicates (0.0-1.0)
+        
+    Returns:
+        Text with duplicates removed, preserving original paragraph order
+    """
+    if not text or len(text) < min_length:
+        return text
+    
+    paragraphs = text.split('\n\n')
+    seen_fingerprints: set[str] = set()
+    unique_paragraphs: list[str] = []
+    
+    for para in paragraphs:
+        para_stripped = para.strip()
+        if len(para_stripped) < min_length:
+            # Keep short paragraphs as-is
+            unique_paragraphs.append(para)
+            continue
+        
+        # Generate fingerprint
+        fingerprint = _paragraph_fingerprint(para_stripped)
+        
+        # Check for exact match or near-duplicate
+        is_duplicate = False
+        for seen in seen_fingerprints:
+            # Simple containment check for near-duplicates
+            if fingerprint in seen or seen in fingerprint:
+                # Length ratio check to avoid false positives
+                len_ratio = min(len(fingerprint), len(seen)) / max(len(fingerprint), len(seen))
+                if len_ratio >= similarity_threshold:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            seen_fingerprints.add(fingerprint)
+            unique_paragraphs.append(para)
+    
+    return '\n\n'.join(unique_paragraphs)
+
+
+def deduplicate_repeated_lines(text: str, min_repeats: int = 3) -> str:
+    """Remove lines that appear repeatedly (common in headers/footers).
+    
+    Args:
+        text: Text to process
+        min_repeats: Minimum number of times a line must appear to be removed
+        
+    Returns:
+        Text with repeated lines removed
+    """
+    lines = text.split('\n')
+    line_counts: dict[str, int] = {}
+    
+    # Count normalized lines
+    for line in lines:
+        normalized = line.strip().lower()
+        if len(normalized) >= 2:  # Count lines with 2+ chars (catches page numbers)
+            line_counts[normalized] = line_counts.get(normalized, 0) + 1
+    
+    # Find lines that appear too often
+    repeated = {line for line, count in line_counts.items() if count >= min_repeats}
+    
+    # Filter out repeated lines
+    filtered = []
+    for line in lines:
+        normalized = line.strip().lower()
+        if normalized not in repeated or len(normalized) < 2:
+            filtered.append(line)
+    
+    return '\n'.join(filtered)
+
+
+# ============================================================================
+# Line Break Normalization
+# ============================================================================
+
+
+def normalize_line_breaks(text: str) -> str:
+    """Normalize broken lines from PDF extraction.
+    
+    Fixes:
+    - Hyphenated word breaks (e.g., "state-\nment" -> "statement")
+    - Orphaned sentence fragments
+    - Single newlines within paragraphs
+    
+    Args:
+        text: Text with potential line break issues
+        
+    Returns:
+        Text with normalized line breaks
+    """
+    # Pattern 1: Hyphenated word breaks at end of line
+    # Match: word-<newline> followed by continuation
+    text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
+    
+    # Pattern 2: Soft line breaks within paragraphs
+    # Join lines that don't end with sentence punctuation
+    lines = text.split('\n')
+    result: list[str] = []
+    current_para: list[str] = []
+    
+    sentence_enders = {'.', '!', '?', ':', ';'}
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            # Empty line ends paragraph
+            if current_para:
+                result.append(' '.join(current_para))
+                current_para = []
+            result.append('')  # Preserve empty line as paragraph break
+        elif current_para and not current_para[-1].rstrip()[-1:] in sentence_enders:
+            # Previous line doesn't end with sentence punctuation - join
+            current_para.append(stripped)
+        else:
+            # Start new paragraph
+            if current_para:
+                result.append(' '.join(current_para))
+            current_para = [stripped]
+    
+    # Don't forget the last paragraph
+    if current_para:
+        result.append(' '.join(current_para))
+    
+    return '\n'.join(result)
+
+
+def fix_broken_formatting(text: str) -> str:
+    """Fix common formatting breaks from PDF extraction.
+    
+    Fixes:
+    - Multiple spaces after punctuation
+    - Missing spaces after periods
+    - Inconsistent indentation
+    
+    Args:
+        text: Text with formatting issues
+        
+    Returns:
+        Text with fixed formatting
+    """
+    # Fix missing space after period (but not in decimals or abbreviations)
+    text = re.sub(r'(?<=[a-zA-Z])\.([A-Z])', r'. \1', text)
+    
+    # Fix multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
+    
+    # Fix space before punctuation
+    text = re.sub(r'\s+([.,;:!?)\]])', r'\1', text)
+    
+    return text
 
 
 # ============================================================================
@@ -201,18 +379,20 @@ def format_code_blocks(text: str) -> str:
     return '\n'.join(result)
 
 
-def clean_text_for_students(text: str) -> str:
+def clean_text_for_students(text: str, deduplicate: bool = True) -> str:
     """Main cleaning function optimized for student learning.
     
     This function:
     1. Removes headers, footers, and page numbers
     2. Cleans figure references
     3. Fixes OCR artifacts
-    4. Identifies code blocks
-    5. Normalizes whitespace
+    4. Normalizes broken line breaks
+    5. Removes duplicate paragraphs
+    6. Normalizes whitespace
     
     Args:
         text: Raw extracted text from PDF
+        deduplicate: Whether to apply deduplication (default: True)
         
     Returns:
         Cleaned text suitable for student consumption
@@ -229,7 +409,18 @@ def clean_text_for_students(text: str) -> str:
     # Step 4: Fix OCR artifacts
     text = fix_ocr_artifacts(text)
     
-    # Step 5: Final whitespace normalization
+    # Step 5: Normalize broken line breaks
+    text = normalize_line_breaks(text)
+    
+    # Step 6: Fix broken formatting
+    text = fix_broken_formatting(text)
+    
+    # Step 7: Remove duplicate paragraphs (if enabled)
+    if deduplicate:
+        text = deduplicate_text(text, min_length=30)
+        text = deduplicate_repeated_lines(text, min_repeats=3)
+    
+    # Step 8: Final whitespace normalization
     text = _MULTI_NL.sub('\n\n', text)  # Keep paragraph breaks
     text = _SPACE_TABS.sub(' ', text)
     

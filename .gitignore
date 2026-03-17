@@ -56,6 +56,7 @@ test_reports/*.json
 !test_reports/CLEANUP_FINAL_SUMMARY.md
 !test_reports/COMPREHENSIVE_TEST_SUMMARY.md
 !test_reports/FINAL_VALIDATION_REPORT.md
+!test_reports/week1_weak_slice_test_report.md
 
 # Temporary files
 *.tmp
@@ -104,6 +105,11 @@ smart_process.sh
 # Except root README.md
 !README.md
 
+# Week 1 v1.5 pipeline contract docs (source-of-truth)
+!docs/pipeline_contract_week1_v15.md
+!docs/fallback_decision_rules_week1.md
+!docs/week1_demo_runbook.md
+
 # Root-level markdown files (move to docs/ for archival)
 AGENTS.md
 FILE_STRUCTURE_ANALYSIS_REPORT.md
@@ -123,6 +129,9 @@ docs/QUALITY_IMPROVEMENTS_SUMMARY.md
 # Ensure no other markdown exceptions
 test_debug_output/
 test_exists_fix/
+
+# Large test PDFs (exceed GitHub 100MB limit)
+raw_pdf/*-weak-slice.pdf
 
 # Generated outputs - do not commit
 murach-v*/
