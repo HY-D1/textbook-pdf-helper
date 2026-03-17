@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "trace_id": "minimal_test",
+  "learner_id": "test_learner",
+  "session_id": "test_session",
+  "is_synthetic": true,
+  "synthetic_profile": "minimal",
+  "source_system": "pdf_helper_fixture",
+  "created_at": "2026-03-17T22:00:44.902198+00:00",
+  "events": [
+    {
+      "event_id": "evt_0001",
+      "timestamp": "2025-01-01T10:00:00+00:00",
+      "learner_id": "test_learner",
+      "session_id": "test_session",
+      "problem_id": "test_problem",
+      "concept_id": "test_concept",
+      "event_type": "problem_attempt",
+      "error_subtype": null,
+      "error_message": null,
+      "attempt_index": 0,
+      "hint_count": 0,
+      "escalation_level": "L0",
+      "time_since_start": 0.0,
+      "time_since_last_action": 0.0,
+      "unit_id": null,
+      "note_text": null,
+      "metadata": {}
+    }
+  ],
+  "session_config": {},
+  "annotations": {}
+}
