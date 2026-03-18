@@ -1172,7 +1172,7 @@ try:
         llm_provider: str = typer.Option(
             os.getenv("ALGL_LLM_PROVIDER", "ollama"),
             "--llm-provider",
-            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER.",
+            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, openai, or claude_local. Falls back to env var ALGL_LLM_PROVIDER.",
         ),
         llm_model: str | None = typer.Option(
             None,
@@ -1232,6 +1232,21 @@ try:
             min=0.0,
             max=1.0,
             help="Quality threshold below which to trigger Ollama repair",
+        ),
+        claude_local_base_url: str | None = typer.Option(
+            None,
+            "--claude-base-url",
+            help="Base URL for Claude local endpoint (defaults to CLAUDE_LOCAL_BASE_URL env var or http://localhost:8080)",
+        ),
+        claude_local_model: str | None = typer.Option(
+            None,
+            "--claude-model",
+            help="Claude local model name (defaults to CLAUDE_LOCAL_MODEL env var)",
+        ),
+        claude_local_api_key: str | None = typer.Option(
+            None,
+            "--claude-api-key",
+            help="API key for Claude local endpoint (defaults to CLAUDE_LOCAL_API_KEY env var)",
         ),
         page_range: str | None = typer.Option(
             None,
@@ -1314,6 +1329,9 @@ try:
             use_ollama_repair=use_ollama_repair,
             ollama_model=ollama_model,
             ollama_repair_threshold=ollama_repair_threshold,
+            claude_local_base_url=claude_local_base_url,
+            claude_local_model=claude_local_model,
+            claude_local_api_key=claude_local_api_key,
             page_range=page_range,
             chapter_range=chapter_range,
             resume=resume,
