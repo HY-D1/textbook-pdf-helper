@@ -934,7 +934,7 @@ PREREQUISITE_DAG: list[dict[str, str]] = [
     ("create-table", "indexes", "hard_prereq"),
     ("select-basic", "views", "hard_prereq"),
     ("joins-intro", "views", "soft_prereq"),
-    ("dml-insert", "transactions", "soft_prereq"),  # Typo fix below
+    # ("dml-insert", "transactions", "soft_prereq"),  # REMOVED: dml-insert is not a valid concept ID, use insert-statement below
     ("insert-statement", "transactions", "soft_prereq"),
     ("update-statement", "transactions", "soft_prereq"),
     ("delete-statement", "transactions", "soft_prereq"),

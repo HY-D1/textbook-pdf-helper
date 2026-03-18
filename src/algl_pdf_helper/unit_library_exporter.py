@@ -611,7 +611,9 @@ class UnitLibraryExporter:
                     'used_default': metadata.get('used_default_example', False),
                     'is_conceptual': metadata.get('is_conceptual', False),
                     'source_sql_preview': source_sql_preview,
-                    'page': metadata.get('page')
+                    'page': metadata.get('page'),
+                    'rejection_reason': metadata.get('rejection_reason'),
+                    'fallback_reason': metadata.get('fallback_reason'),
                 }
                 f.write(json.dumps(audit_entry, ensure_ascii=False) + '\n')
         

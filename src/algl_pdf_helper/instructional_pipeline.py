@@ -1497,6 +1497,7 @@ class InstructionalPipeline:
         success: bool,
         duration_seconds: float | None = None,
         metadata: dict[str, Any] | None = None,
+        llm_model: str | None = None,
     ) -> None:
         """
         Record an LLM intervention for the interventions report.
@@ -1518,7 +1519,7 @@ class InstructionalPipeline:
             "target_type": target_type,
             "reason": reason,
             "llm_provider": self.config.llm_provider,
-            "llm_model": self.config.llm_model or "unknown",
+            "llm_model": llm_model or self.config.llm_model or "unknown",
             "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
             "outcome": outcome,
             "success": success,
@@ -1560,9 +1561,26 @@ class InstructionalPipeline:
             chunk_count = len(self._content_blocks) if hasattr(self, '_content_blocks') else 0
             section_count = len(self._teaching_blocks) if hasattr(self, '_teaching_blocks') else 0
 
-            # Get text coverage
+            # Calculate text coverage from actual content blocks
             text_coverage = 0.0
-            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+            average_page_density = 0.0
+            total_characters = 0
+            pages_with_text = 0
+
+            if hasattr(self, '_content_blocks') and self._content_blocks and page_count > 0:
+                # Count pages with text and total characters
+                pages_with_content = set()
+                for block in self._content_blocks:
+                    if block.text_content and len(block.text_content.strip()) > 0:
+                        total_characters += len(block.text_content)
+                        if hasattr(block, 'page_number') and block.page_number:
+                            pages_with_content.add(block.page_number)
+
+                pages_with_text = len(pages_with_content)
+                text_coverage = pages_with_text / page_count if page_count > 0 else 0.0
+                average_page_density = total_characters / page_count if page_count > 0 else 0.0
+            elif hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                # Fallback to metadata if blocks not available
                 text_coverage = self._extraction_metadata.get('text_coverage_score', 0.0)
 
             report = ExtractionReport(
@@ -1575,6 +1593,7 @@ class InstructionalPipeline:
                 use_pymupdf=use_pymupdf,
                 ocr_fallback_used=ocr_fallback_used,
                 text_coverage_score=text_coverage,
+                average_page_density=average_page_density,
                 warnings=self._extraction_metadata.get('warnings', []) if hasattr(self, '_extraction_metadata') else [],
                 errors=self._extraction_metadata.get('errors', []) if hasattr(self, '_extraction_metadata') else [],
                 repair_applied=self._extraction_metadata.get('repair_applied', {}) if hasattr(self, '_extraction_metadata') else {},
@@ -1617,10 +1636,17 @@ class InstructionalPipeline:
 
             successful = sum(1 for i in self._llm_interventions if i["success"])
 
+            # Use actual model from interventions if available, fallback to config
+            actual_model = self.config.llm_model
+            if not actual_model and self._llm_interventions:
+                # Try to get model from first intervention's metadata
+                first_intv = self._llm_interventions[0]
+                actual_model = first_intv.get("llm_model") or first_intv.get("metadata", {}).get("model_used")
+
             report_data = {
                 "schema_version": "1.0.0",
                 "llm_provider": self.config.llm_provider,
-                "llm_model": self.config.llm_model or "unknown",
+                "llm_model": actual_model or "unknown",
                 "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
                 "total_interventions": len(self._llm_interventions),
                 "successful_interventions": successful,
@@ -2315,13 +2341,14 @@ class InstructionalPipeline:
             )
             
             # Attempt repair
+            repair_start_time = time.time()
             try:
                 repaired = ollama_repair.repair_l3_content(
                     concept_id=concept_id,
                     weak_content=weak_content,
                     source_evidence=source_evidence,
                 )
-                
+
                 if repaired:
                     # Update unit content with repaired fields
                     new_content = dict(content)
@@ -2331,29 +2358,80 @@ class InstructionalPipeline:
                         new_content["why_it_matters"] = repaired["why_it_matters"]
                     if "explanation" in repaired and repaired["explanation"]:
                         new_content["explanation"] = repaired["explanation"]
-                    
+
                     # Add repair metadata
                     if "_metadata" not in new_content:
                         new_content["_metadata"] = {}
                     new_content["_metadata"].update({
                         "_repaired_by_ollama": True,
-                        "_repair_model": repaired.get("_repair_model", "unknown"),
+                        "_repair_model": repaired.get("_repair_model", ollama_repair.model),
                         "_repair_reason": metadata.get("review_reason", "quality_below_threshold"),
                         "content_quality": "repaired",
                         "review_needed": False,  # Clear review flag after repair
                     })
-                    
+
                     # Create updated unit
                     from dataclasses import replace
                     unit = replace(unit, content=new_content)
-                    # Don't log per-unit success - only log summary at end
+
+                    # Record successful intervention with actual model used
+                    actual_model = repaired.get("_repair_model", ollama_repair.model)
+                    self._record_llm_intervention(
+                        phase="L3_repair",
+                        target_id=unit.unit_id,
+                        target_type="unit",
+                        reason="quality_below_threshold",
+                        outcome="repair_applied",
+                        success=True,
+                        duration_seconds=time.time() - repair_start_time,
+                        metadata={
+                            "concept_id": concept_id,
+                            "model_used": actual_model,
+                            "quality_score_before": quality_score if not needs_repair else None,
+                        },
+                        llm_model=actual_model,
+                    )
+                    self._repair_status["repaired_units"].append(concept_id)
                 else:
                     # Track failed repair
                     self._repair_status["failed_repairs"].append(concept_id)
-                    
+                    # Record failed intervention
+                    self._record_llm_intervention(
+                        phase="L3_repair",
+                        target_id=unit.unit_id,
+                        target_type="unit",
+                        reason="quality_below_threshold",
+                        outcome="repair_rejected",
+                        success=False,
+                        duration_seconds=time.time() - repair_start_time,
+                        metadata={
+                            "concept_id": concept_id,
+                            "model_used": ollama_repair.model,
+                            "error": "repair_returned_none",
+                        },
+                        llm_model=ollama_repair.model,
+                    )
+
             except Exception as e:
                 # Track failed repair but don't log (summary logged at end)
                 self._repair_status["failed_repairs"].append(concept_id)
+                # Record failed intervention with error
+                self._record_llm_intervention(
+                    phase="L3_repair",
+                    target_id=unit.unit_id,
+                    target_type="unit",
+                    reason="quality_below_threshold",
+                    outcome="repair_exception",
+                    success=False,
+                    duration_seconds=time.time() - repair_start_time,
+                    metadata={
+                        "concept_id": concept_id,
+                        "model_used": ollama_repair.model,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                    llm_model=ollama_repair.model,
+                )
         
         return unit
     

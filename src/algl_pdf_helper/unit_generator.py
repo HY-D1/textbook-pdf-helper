@@ -176,6 +176,9 @@ class ExampleMetadata(BaseModel):
     # SQL CLEANING AUDIT FIELDS:
     raw_sql_preview: str = Field(default="", description="Preview of raw SQL before cleaning (first 100 chars)")
     cleaning_changes: bool = Field(default=False, description="Whether cleaning modified the SQL")
+    # REJECTION/FALLBACK AUDIT FIELDS:
+    rejection_reason: str | None = Field(default=None, description="Reason for rejecting extracted candidates")
+    fallback_reason: str | None = Field(default=None, description="Reason for falling back to default example")
 
 
 class L2Content(BaseModel):
@@ -6227,6 +6230,7 @@ class UnitGenerator:
         # fail concept-fit validation. This prevents INNER JOIN examples from
         # being selected for outer-join concept.
         filtered_candidates = []
+        rejection_reasons = []  # Track why candidates were rejected
         for c in candidates:
             # Only validate extracted candidates (curated and default are assumed valid)
             if c['source_type'] == 'extracted':
@@ -6235,11 +6239,12 @@ class UnitGenerator:
                     filtered_candidates.append(c)
                     print(f"[L2 BUILD]   EXTRACTED PASSED concept-fit: {c['sql'][:50]}...")
                 else:
+                    rejection_reasons.append(f"concept_mismatch: {reason}")
                     print(f"[L2 BUILD]   EXTRACTED REJECTED concept-fit: {reason} - {c['sql'][:50]}...")
             else:
                 # Curated and default always pass (they're designed for this concept)
                 filtered_candidates.append(c)
-        
+
         # Update candidates to filtered list
         candidates = filtered_candidates
         print(f"[L2 BUILD] After concept-fit filtering: {len(candidates)} candidates remain")
@@ -6322,6 +6327,16 @@ class UnitGenerator:
         print(f"[L2 BUILD] SQL: {best_candidate['sql'][:80]}...")
         print(f"{'='*60}\n")
         
+        # Determine fallback reason if using default
+        fallback_reason = None
+        if best_candidate['source_type'] == 'default':
+            if rejection_reasons:
+                fallback_reason = f"all_extracted_rejected; first_reason: {rejection_reasons[0]}"
+            elif not sql_examples:
+                fallback_reason = "no_sql_candidates_found"
+            else:
+                fallback_reason = "no_candidate_met_threshold"
+
         # Determine source and practice SQL with validation
         source_sql_raw = best_candidate['sql']
         page = best_candidate.get('page', 0)
@@ -6408,6 +6423,9 @@ class UnitGenerator:
             # NEW: SQL cleaning audit fields
             raw_sql_preview=raw_sql[:100] if len(raw_sql) > 100 else raw_sql,
             cleaning_changes=cleaning_applied,
+            # NEW: Rejection/fallback audit fields
+            rejection_reason=rejection_reasons[0] if rejection_reasons else None,
+            fallback_reason=fallback_reason,
         )
         
         return L2Content(
