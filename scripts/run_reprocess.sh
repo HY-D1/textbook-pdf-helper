@@ -3,11 +3,24 @@
 
 set -e
 
-cd "/Users/harrydai/Desktop/Personal Portfolio/algl-pdf-helper"
-source .venv/bin/activate
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+# Activate virtualenv if present
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+fi
+
+# Resolve output directory from env var or fail
+if [ -z "$SQL_ADAPT_PUBLIC_DIR" ]; then
+    echo "Error: SQL_ADAPT_PUBLIC_DIR is not set."
+    echo "Set it to the adaptive app's public directory, e.g.:"
+    echo "  export SQL_ADAPT_PUBLIC_DIR=/path/to/adaptive-app/apps/web/public"
+    exit 1
+fi
 
 LOG_FILE="reprocess_$(date +%Y%m%d_%H%M%S).log"
-OUTPUT_DIR="/Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static"
+OUTPUT_DIR="${SQL_ADAPT_PUBLIC_DIR}/textbook-static"
 
 echo "=========================================="
 echo "PDF Re-processing with Quality Fixes"
@@ -20,12 +33,12 @@ echo ""
 process_pdf() {
     local pdf_path=$1
     local pdf_name=$(basename "$pdf_path")
-    
+
     echo "==========================================" | tee -a "$LOG_FILE"
     echo "Processing: $pdf_name" | tee -a "$LOG_FILE"
     echo "Started: $(date)" | tee -a "$LOG_FILE"
     echo "==========================================" | tee -a "$LOG_FILE"
-    
+
     python3 -c "
 import sys
 sys.path.insert(0, 'src')
@@ -67,7 +80,7 @@ if result['success']:
     print(f'  Pages: {stats.get(\"pages_extracted\", \"N/A\")}', flush=True)
     print(f'  Concepts: {stats.get(\"concepts_generated\", \"N/A\")}', flush=True)
     print(f'  Method: {stats.get(\"extraction_method\", \"N/A\")}', flush=True)
-    
+
     validation = result.get('content_validation', {}).get('summary', {})
     if validation:
         print(f'  Validation: {validation.get(\"relevant\", 0)}/{validation.get(\"total\", 0)} relevant', flush=True)
@@ -78,7 +91,7 @@ else:
 with open(output_dir / f'{pdf_path.stem}-reprocess-result.json', 'w') as f:
     json.dump(result, f, indent=2, default=str)
 " 2>&1 | tee -a "$LOG_FILE"
-    
+
     echo "" | tee -a "$LOG_FILE"
     echo "Completed: $(date)" | tee -a "$LOG_FILE"
     echo "" | tee -a "$LOG_FILE"

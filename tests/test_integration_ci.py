@@ -2167,6 +2167,230 @@ class TestAdaptiveHandoffExport:
             for rel_id in related:
                 assert "/" in rel_id, f"Related concept '{rel_id}' referenced from '{concept_id}' is not namespaced"
 
+    def test_no_missing_concept_markdown_pages(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Every concept-map entry must have a corresponding .md file (zero missing pages)."""
+        import subprocess
+        import json
+        from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+
+        index_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert index_result.returncode == 0, f"Index failed: {index_result.stderr}"
+
+        export_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert export_result.returncode == 0, f"Export failed: {export_result.stderr}"
+
+        integrity = validate_handoff_integrity(export_output)
+        assert integrity["missing_pages"] == [], (
+            f"Missing concept markdown pages: {integrity['missing_pages']}"
+        )
+        assert integrity["concept_map_entries"] > 0, "concept-map has no entries"
+        assert integrity["concept_map_entries"] == integrity["markdown_files"], (
+            f"concept-map entries ({integrity['concept_map_entries']}) != "
+            f"markdown files ({integrity['markdown_files']})"
+        )
+
+    def test_textbook_manifest_has_real_metadata(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """textbook-manifest.json must not contain placeholder sha256/pageCount when index artifacts are available."""
+        import subprocess
+        import json
+
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+
+        index_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert index_result.returncode == 0, f"Index failed: {index_result.stderr}"
+
+        export_result = subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert export_result.returncode == 0, f"Export failed: {export_result.stderr}"
+
+        textbook_manifest_file = export_output / "textbook-manifest.json"
+        assert textbook_manifest_file.exists(), "textbook-manifest.json not created"
+
+        textbook_manifest = json.loads(textbook_manifest_file.read_text())
+        source_docs = textbook_manifest.get("sourceDocs", [])
+        assert len(source_docs) > 0, "textbook-manifest.json has no sourceDocs"
+
+        for doc in source_docs:
+            assert doc.get("sha256") not in ("unknown", None, ""), (
+                f"sourceDocs entry for {doc.get('docId')} has placeholder sha256: "
+                f"{doc.get('sha256')!r}"
+            )
+            assert isinstance(doc.get("pageCount"), int) and doc["pageCount"] > 0, (
+                f"sourceDocs entry for {doc.get('docId')} has invalid pageCount: "
+                f"{doc.get('pageCount')!r}"
+            )
+
+    def test_merge_export_preserves_both_docs(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """Two sequential exports into the same output dir must preserve both docs."""
+        import subprocess
+        import json
+        import shutil
+        from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+        export_output = tmp_path / "export_output"
+
+        # Create two distinct index outputs (same PDF, different doc IDs via different aliases)
+        for alias_suffix, doc_alias in enumerate(["sql-textbook-a", "sql-textbook-b"]):
+            index_output = tmp_path / f"index_{doc_alias}"
+
+            # Build a tiny concepts config stub for this alias
+            concepts_stub = tmp_path / f"concepts_{alias_suffix}.yaml"
+            # Use the same config but just need an index; concept content is shared
+            concepts_stub.write_text(
+                (concepts_config_path).read_text()
+            )
+
+            # Index with a custom alias injected via a renamed pdf copy
+            renamed_pdf = tmp_path / f"{doc_alias}.pdf"
+            shutil.copy(str(golden_pdf_path), str(renamed_pdf))
+
+            idx_result = subprocess.run(
+                [
+                    sys.executable, "-m", "algl_pdf_helper",
+                    "index",
+                    str(renamed_pdf),
+                    "--output-dir", str(index_output),
+                    "--concepts-config", str(concepts_stub),
+                    "--use-aliases",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert idx_result.returncode == 0, (
+                f"Index {alias_suffix} failed: {idx_result.stderr}"
+            )
+
+            # Export into shared export_output (merge mode is default)
+            exp_result = subprocess.run(
+                [
+                    sys.executable, "-m", "algl_pdf_helper",
+                    "export",
+                    str(index_output),
+                    "--output-dir", str(export_output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert exp_result.returncode == 0, (
+                f"Export {alias_suffix} failed: {exp_result.stderr}"
+            )
+
+        # Both docs must appear in concept-map.json sourceDocIds
+        concept_map = json.loads((export_output / "concept-map.json").read_text())
+        source_doc_ids = concept_map.get("sourceDocIds", [])
+        assert len(source_doc_ids) >= 2, (
+            f"Expected at least 2 sourceDocIds after merge, got: {source_doc_ids}"
+        )
+
+        # Both docs must appear in textbook-manifest.json sourceDocs
+        textbook_manifest = json.loads((export_output / "textbook-manifest.json").read_text())
+        manifest_doc_ids = {d["docId"] for d in textbook_manifest.get("sourceDocs", [])}
+        assert len(manifest_doc_ids) >= 2, (
+            f"Expected at least 2 sourceDocs in textbook-manifest after merge, got: {manifest_doc_ids}"
+        )
+
+        # Integrity check must pass
+        integrity = validate_handoff_integrity(export_output)
+        assert integrity["valid"], (
+            f"Handoff integrity failed after merge: {integrity['errors']}"
+        )
+        assert integrity["missing_pages"] == [], (
+            f"Missing pages after merge: {integrity['missing_pages']}"
+        )
+
+    def test_handoff_integrity_passes_end_to_end(self, tmp_path, golden_pdf_path, concepts_config_path):
+        """validate_handoff_integrity must return valid=True after a clean index+export."""
+        import subprocess
+        from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+        index_output = tmp_path / "index_output"
+        export_output = tmp_path / "export_output"
+
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "index",
+                str(golden_pdf_path),
+                "--output-dir", str(index_output),
+                "--concepts-config", str(concepts_config_path),
+                "--use-aliases",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=True,
+        )
+
+        subprocess.run(
+            [
+                sys.executable, "-m", "algl_pdf_helper",
+                "export",
+                str(index_output),
+                "--output-dir", str(export_output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+
+        integrity = validate_handoff_integrity(export_output)
+        assert integrity["valid"], (
+            f"Handoff integrity check failed.\n"
+            f"Errors: {integrity['errors']}\n"
+            f"Warnings: {integrity['warnings']}\n"
+            f"Missing pages: {integrity['missing_pages']}"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

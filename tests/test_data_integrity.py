@@ -1552,6 +1552,90 @@ def main():
         print(f"✗ {total_failed} tests failed. See report for details.")
 
 
+# ---------------------------------------------------------------------------
+# Handoff integrity helpers (reusable)
+# ---------------------------------------------------------------------------
+
+def _build_minimal_export(tmp_path: Path, num_docs: int = 1) -> Path:
+    """
+    Build a minimal textbook-static directory in *tmp_path* without invoking
+    the full pipeline.  Useful for unit-level integrity tests.
+    """
+    import hashlib
+
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    concepts_dir = export_dir / "concepts"
+    concepts_dir.mkdir()
+
+    source_doc_ids = []
+    concept_map_concepts: dict = {}
+    source_docs_list = []
+    chunks_meta: dict = {}
+
+    for i in range(num_docs):
+        doc_id = f"test-doc-{i}"
+        source_doc_ids.append(doc_id)
+        doc_dir = concepts_dir / doc_id
+        doc_dir.mkdir()
+
+        # Write two concept markdown files
+        for j in range(2):
+            cid = f"concept-{i}-{j}"
+            namespaced = f"{doc_id}/{cid}"
+            concept_map_concepts[namespaced] = {
+                "title": f"Concept {i}-{j}",
+                "definition": "A test concept.",
+                "difficulty": "beginner",
+                "pageNumbers": [1],
+                "chunkIds": {},
+                "relatedConcepts": [],
+                "practiceProblemIds": [],
+                "sourceDocId": doc_id,
+                "provenance": {},
+            }
+            (doc_dir / f"{cid}.md").write_text(
+                f"---\nid: {cid}\ntitle: Concept {i}-{j}\n---\n\n# Concept {i}-{j}\n"
+            )
+
+        source_docs_list.append({
+            "docId": doc_id,
+            "filename": f"{doc_id}.pdf",
+            "sha256": hashlib.sha256(doc_id.encode()).hexdigest(),
+            "pageCount": 8,
+        })
+        chunks_meta[doc_id] = {
+            "totalChunks": 10,
+            "sourceFile": doc_id,
+            "exportedAt": "2026-01-01T00:00:00+00:00",
+        }
+
+    # concept-map.json
+    (export_dir / "concept-map.json").write_text(json.dumps({
+        "version": "1.0.0",
+        "generatedAt": "2026-01-01T00:00:00+00:00",
+        "sourceDocIds": source_doc_ids,
+        "concepts": concept_map_concepts,
+    }, indent=2))
+
+    # textbook-manifest.json
+    (export_dir / "textbook-manifest.json").write_text(json.dumps({
+        "schemaVersion": "1.0.0",
+        "schemaId": "textbook-static-v1",
+        "indexId": "idx-test-001",
+        "createdAt": "2026-01-01T00:00:00+00:00",
+        "sourceName": "Test Doc",
+        "sourceDocs": source_docs_list,
+        "docCount": len(source_docs_list),
+        "chunkCount": 10 * num_docs,
+    }, indent=2))
+
+    # chunks-metadata.json
+    (export_dir / "chunks-metadata.json").write_text(json.dumps(chunks_meta, indent=2))
+
+    return export_dir
+
+
 # Pytest test functions for CI/CD integration
 def test_schema_validation():
     """Test that all JSON files validate against schemas."""
@@ -1591,3 +1675,101 @@ def test_round_trip_preservation():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# Handoff integrity pytest suite
+# ---------------------------------------------------------------------------
+
+def test_handoff_integrity_valid_single_doc(tmp_path):
+    """A well-formed single-doc export must pass validate_handoff_integrity."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+    from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+    export_dir = _build_minimal_export(tmp_path, num_docs=1)
+    result = validate_handoff_integrity(export_dir)
+
+    assert result["valid"], f"Expected valid=True. Errors: {result['errors']}"
+    assert result["missing_pages"] == [], f"Unexpected missing pages: {result['missing_pages']}"
+    assert result["concept_map_entries"] == result["markdown_files"], (
+        f"concept_map_entries ({result['concept_map_entries']}) != "
+        f"markdown_files ({result['markdown_files']})"
+    )
+
+
+def test_handoff_integrity_valid_two_docs(tmp_path):
+    """A well-formed two-doc merged export must pass validate_handoff_integrity."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+    from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+    export_dir = _build_minimal_export(tmp_path, num_docs=2)
+    result = validate_handoff_integrity(export_dir)
+
+    assert result["valid"], f"Expected valid=True. Errors: {result['errors']}"
+    assert result["source_docs_count"] == 2
+    assert result["doc_dirs_count"] == 2
+    assert result["missing_pages"] == []
+
+
+def test_handoff_integrity_detects_missing_markdown(tmp_path):
+    """validate_handoff_integrity must flag a concept-map entry with no .md file."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+    from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+    export_dir = _build_minimal_export(tmp_path, num_docs=1)
+
+    # Remove one of the markdown files to create a missing-page condition
+    concepts_dir = export_dir / "concepts"
+    first_doc_dir = next(d for d in concepts_dir.iterdir() if d.is_dir())
+    first_md = next(f for f in first_doc_dir.glob("*.md"))
+    first_md.unlink()
+
+    result = validate_handoff_integrity(export_dir)
+
+    assert not result["valid"], "Expected valid=False when a markdown file is missing"
+    assert len(result["missing_pages"]) >= 1, "Expected at least one missing_pages entry"
+
+
+def test_handoff_integrity_detects_manifest_inconsistency(tmp_path):
+    """validate_handoff_integrity must flag when textbook-manifest sourceDocs disagrees with concept-map."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+    from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+    export_dir = _build_minimal_export(tmp_path, num_docs=1)
+
+    # Corrupt textbook-manifest.json by removing the sourceDocs entry
+    tm_path = export_dir / "textbook-manifest.json"
+    tm_data = json.loads(tm_path.read_text())
+    tm_data["sourceDocs"] = []  # Remove all source docs
+    tm_data["docCount"] = 0
+    tm_path.write_text(json.dumps(tm_data, indent=2))
+
+    result = validate_handoff_integrity(export_dir)
+
+    assert not result["valid"], "Expected valid=False when sourceDocs is inconsistent"
+
+
+def test_handoff_integrity_detects_missing_chunks_meta_doc(tmp_path):
+    """validate_handoff_integrity must flag when a docId is absent from chunks-metadata.json."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+    from algl_pdf_helper.export_sqladapt import validate_handoff_integrity
+
+    export_dir = _build_minimal_export(tmp_path, num_docs=1)
+
+    # Remove the docId from chunks-metadata.json
+    cm_path = export_dir / "chunks-metadata.json"
+    cm_path.write_text("{}")  # empty
+
+    result = validate_handoff_integrity(export_dir)
+
+    assert not result["valid"], "Expected valid=False when chunks-metadata is missing a docId"

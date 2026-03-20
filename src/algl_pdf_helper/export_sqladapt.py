@@ -26,6 +26,55 @@ from .models import (
 )
 
 
+def load_source_metadata(input_dir: Path, source_doc_id: str) -> dict:
+    """
+    Load real source document metadata (sha256, pageCount, filename) from the
+    index artifacts produced by the indexer.
+
+    Tries manifest.json first (PdfIndexManifest), then index.json
+    (PdfIndexDocument).  Returns a dict with keys sha256, pageCount, filename,
+    sourceName.  Falls back to sentinel values if the files are absent so that
+    callers can detect missing metadata explicitly.
+    """
+    sentinel = {
+        "sha256": None,
+        "pageCount": None,
+        "filename": f"{source_doc_id}.pdf",
+        "sourceName": source_doc_id,
+    }
+
+    for candidate in ("manifest.json", "index.json"):
+        candidate_path = input_dir / candidate
+        if not candidate_path.exists():
+            continue
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            source_docs = data.get("sourceDocs", [])
+            for doc in source_docs:
+                if doc.get("docId") == source_doc_id:
+                    return {
+                        "sha256": doc.get("sha256"),
+                        "pageCount": doc.get("pageCount"),
+                        "filename": doc.get("filename", f"{source_doc_id}.pdf"),
+                        "sourceName": doc.get("filename", source_doc_id),
+                    }
+            # If we found the file but the specific docId isn't present, use
+            # the first entry if there is exactly one (single-doc export).
+            if len(source_docs) == 1:
+                doc = source_docs[0]
+                return {
+                    "sha256": doc.get("sha256"),
+                    "pageCount": doc.get("pageCount"),
+                    "filename": doc.get("filename", f"{source_doc_id}.pdf"),
+                    "sourceName": doc.get("filename", source_doc_id),
+                }
+        except Exception:
+            continue
+
+    return sentinel
+
+
 def load_chunks(chunks_file: Path) -> list[dict]:
     """Load chunks from JSON file."""
     with open(chunks_file, "r", encoding="utf-8") as f:
@@ -408,31 +457,22 @@ def export_to_sqladapt(
     
     manifest = load_concept_manifest(manifest_file)
     chunks = load_chunks(chunks_file)
-    
+
+    # Load real source metadata from the indexer artifacts
+    source_meta = load_source_metadata(input_dir, manifest.sourceDocId)
+
     # Generate concept map for this PDF
     concept_map = convert_to_concept_map(manifest)
-    
-    # Create textbook manifest (schema v1)
-    # Note: We don't have access to the original PDF file here, so we use placeholder values
-    # In production, these should be passed from the indexer
-    textbook_manifest = create_textbook_manifest(
-        source_doc_id=manifest.sourceDocId,
-        filename=f"{manifest.sourceDocId}.pdf",
-        sha256="unknown",  # Should be provided by caller
-        page_count=0,  # Should be provided by caller
-        chunk_count=len(chunks),
-        source_name=manifest.sourceDocId,
-    )
-    
+
     # Load or create merged concept map
     concept_map_file = output_dir / "concept-map.json"
     textbook_manifest_file = output_dir / "textbook-manifest.json"
-    
+
     if merge and concept_map_file.exists():
         # Load existing and merge
         with open(concept_map_file, "r", encoding="utf-8") as f:
             existing_map = json.load(f)
-        
+
         merged_map = merge_concept_maps(existing_map, concept_map, manifest.sourceDocId)
         final_concept_count = len(merged_map["concepts"])
         is_new_pdf = manifest.sourceDocId not in existing_map.get("sourceDocIds", [])
@@ -461,18 +501,64 @@ def export_to_sqladapt(
             }
         final_concept_count = len(merged_map["concepts"])
         is_new_pdf = True
-    
+
     # Save merged concept map
     with open(concept_map_file, "w", encoding="utf-8") as f:
         json.dump(merged_map, f, indent=2)
-    
-    # Save textbook manifest
-    with open(textbook_manifest_file, "w", encoding="utf-8") as f:
-        json.dump(
-            json.loads(textbook_manifest.model_dump_json()),
-            f,
-            indent=2
+
+    # Build merge-safe textbook manifest:
+    # Preserve all existing sourceDocs entries and only add/update the current doc.
+    existing_textbook_manifest: dict = {}
+    if merge and textbook_manifest_file.exists():
+        try:
+            with open(textbook_manifest_file, "r", encoding="utf-8") as f:
+                existing_textbook_manifest = json.load(f)
+        except Exception:
+            existing_textbook_manifest = {}
+
+    # Build the PdfSourceDoc for this document with real metadata
+    new_source_doc = PdfSourceDoc(
+        docId=manifest.sourceDocId,
+        filename=source_meta["filename"],
+        sha256=source_meta["sha256"] if source_meta["sha256"] is not None else "unavailable",
+        pageCount=source_meta["pageCount"] if source_meta["pageCount"] is not None else 0,
+    )
+
+    if existing_textbook_manifest:
+        # Merge: preserve existing sourceDocs, replace or append the current doc
+        existing_docs: list[dict] = existing_textbook_manifest.get("sourceDocs", [])
+        merged_docs = [d for d in existing_docs if d.get("docId") != manifest.sourceDocId]
+        merged_docs.append(json.loads(new_source_doc.model_dump_json()))
+        # Recount chunks across all docs (approximate: existing stored count + this doc)
+        existing_chunk_count = existing_textbook_manifest.get("chunkCount", 0)
+        if is_new_pdf:
+            total_chunk_count = existing_chunk_count + len(chunks)
+        else:
+            total_chunk_count = existing_chunk_count  # updated doc, not adding new chunks
+        textbook_manifest_data = {
+            **existing_textbook_manifest,
+            "sourceDocs": merged_docs,
+            "docCount": len(merged_docs),
+            "chunkCount": total_chunk_count,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        # Fresh manifest using real metadata
+        textbook_manifest = create_textbook_manifest(
+            source_doc_id=manifest.sourceDocId,
+            filename=source_meta["filename"],
+            sha256=source_meta["sha256"] if source_meta["sha256"] is not None else "unavailable",
+            page_count=source_meta["pageCount"] if source_meta["pageCount"] is not None else 0,
+            chunk_count=len(chunks),
+            source_name=source_meta["sourceName"],
         )
+        textbook_manifest_data = json.loads(textbook_manifest.model_dump_json())
+
+    # Ensure docCount is consistent with concept-map sourceDocIds
+    textbook_manifest_data["docCount"] = len(merged_map.get("sourceDocIds", [manifest.sourceDocId]))
+
+    with open(textbook_manifest_file, "w", encoding="utf-8") as f:
+        json.dump(textbook_manifest_data, f, indent=2)
     
     # Generate markdown files (namespaced by docId)
     generated_files = []
@@ -532,7 +618,13 @@ This directory contains concept documentation for **{manifest.sourceDocId}**.
     
     with open(chunks_meta_file, "w", encoding="utf-8") as f:
         json.dump(chunks_metadata, f, indent=2)
-    
+
+    # Surface whether source metadata was real or fell back to sentinel values
+
+    metadata_is_real = (
+        source_meta["sha256"] is not None and source_meta["pageCount"] is not None
+    )
+
     return {
         "concept_map": str(concept_map_file),
         "textbook_manifest": str(textbook_manifest_file),
@@ -545,4 +637,179 @@ This directory contains concept documentation for **{manifest.sourceDocId}**.
         "source_doc_id": manifest.sourceDocId,
         "schema_id": TEXTBOOK_STATIC_SCHEMA_ID,
         "schema_version": TEXTBOOK_STATIC_VERSION,
+        "source_metadata_real": metadata_is_real,
+        "source_sha256": source_meta["sha256"],
+        "source_page_count": source_meta["pageCount"],
+    }
+
+
+def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
+    """
+    Validate the textbook-static export directory for adaptive app handoff integrity.
+
+    Checks enforced:
+    1. Every concept ID in concept-map.json has a corresponding .md file under
+       concepts/{docId}/{bareConceptId}.md
+    2. Every .md file (excluding README.md) maps back to a concept-map entry.
+    3. textbook-manifest.json sourceDocs count and docCount agree with the
+       exported document directories under concepts/.
+    4. chunks-metadata.json contains all exported docIds found in concept-map.json.
+
+    Returns a dict with:
+        valid (bool): True if all checks pass.
+        errors (list[str]): Fatal integrity violations.
+        warnings (list[str]): Non-fatal anomalies.
+        concept_map_entries (int): Number of entries in concept-map.json.
+        markdown_files (int): Number of .md concept files found.
+        missing_pages (list[str]): concept-map IDs without a matching .md file.
+        orphan_pages (list[str]): .md files without a matching concept-map entry.
+        source_docs_count (int): sourceDocs count from textbook-manifest.json.
+        doc_dirs_count (int): Number of docId directories under concepts/.
+        chunks_meta_doc_ids (list[str]): docIds in chunks-metadata.json.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    concept_map_file = output_dir / "concept-map.json"
+    textbook_manifest_file = output_dir / "textbook-manifest.json"
+    chunks_meta_file = output_dir / "chunks-metadata.json"
+    concepts_dir = output_dir / "concepts"
+
+    # -- Load concept-map.json --
+    if not concept_map_file.exists():
+        errors.append("concept-map.json is missing")
+        return {
+            "valid": False,
+            "errors": errors,
+            "warnings": warnings,
+            "concept_map_entries": 0,
+            "markdown_files": 0,
+            "missing_pages": [],
+            "orphan_pages": [],
+            "source_docs_count": 0,
+            "doc_dirs_count": 0,
+            "chunks_meta_doc_ids": [],
+        }
+
+    with open(concept_map_file, "r", encoding="utf-8") as f:
+        concept_map_data = json.load(f)
+
+    all_concepts: dict[str, dict] = concept_map_data.get("concepts", {})
+    map_source_doc_ids: list[str] = concept_map_data.get("sourceDocIds", [])
+
+    # -- Check 1 & 2: concept-map <-> markdown file correspondence --
+    # Build expected set: for each namespaced ID "docId/bareId", expect
+    # concepts/docId/bareId.md
+    missing_pages: list[str] = []
+    for namespaced_id in all_concepts:
+        if "/" in namespaced_id:
+            doc_id, bare_id = namespaced_id.split("/", 1)
+        else:
+            doc_id = namespaced_id
+            bare_id = namespaced_id
+        md_file = concepts_dir / doc_id / f"{bare_id}.md"
+        if not md_file.exists():
+            missing_pages.append(namespaced_id)
+
+    if missing_pages:
+        errors.append(
+            f"{len(missing_pages)} concept-map entries missing markdown files: "
+            + ", ".join(missing_pages[:5])
+            + ("..." if len(missing_pages) > 5 else "")
+        )
+
+    # Build set of concept IDs expected from existing .md files
+    orphan_pages: list[str] = []
+    markdown_file_count = 0
+    if concepts_dir.exists():
+        for doc_dir in concepts_dir.iterdir():
+            if not doc_dir.is_dir():
+                continue
+            for md_file in doc_dir.glob("*.md"):
+                if md_file.name == "README.md":
+                    continue
+                markdown_file_count += 1
+                bare_id = md_file.stem
+                doc_id = doc_dir.name
+                namespaced_id = f"{doc_id}/{bare_id}"
+                if namespaced_id not in all_concepts:
+                    # Also check non-namespaced fallback
+                    if bare_id not in all_concepts:
+                        orphan_pages.append(namespaced_id)
+
+    if orphan_pages:
+        warnings.append(
+            f"{len(orphan_pages)} markdown files have no concept-map entry: "
+            + ", ".join(orphan_pages[:5])
+            + ("..." if len(orphan_pages) > 5 else "")
+        )
+
+    # -- Check 3: textbook-manifest.json consistency --
+    source_docs_count = 0
+    if not textbook_manifest_file.exists():
+        errors.append("textbook-manifest.json is missing")
+    else:
+        with open(textbook_manifest_file, "r", encoding="utf-8") as f:
+            tm_data = json.load(f)
+        source_docs_count = len(tm_data.get("sourceDocs", []))
+        manifest_doc_count = tm_data.get("docCount", source_docs_count)
+
+        if manifest_doc_count != source_docs_count:
+            errors.append(
+                f"textbook-manifest.json docCount={manifest_doc_count} "
+                f"does not match len(sourceDocs)={source_docs_count}"
+            )
+
+        # Check that every sourceDocs docId is also in concept-map sourceDocIds
+        manifest_doc_ids = {d.get("docId") for d in tm_data.get("sourceDocs", [])}
+        map_doc_ids_set = set(map_source_doc_ids)
+        extra_in_manifest = manifest_doc_ids - map_doc_ids_set
+        missing_from_manifest = map_doc_ids_set - manifest_doc_ids
+        if extra_in_manifest:
+            warnings.append(
+                f"textbook-manifest.json has docIds not in concept-map: {extra_in_manifest}"
+            )
+        if missing_from_manifest:
+            errors.append(
+                f"concept-map sourceDocIds missing from textbook-manifest: {missing_from_manifest}"
+            )
+
+    # Count doc directories
+    doc_dirs_count = 0
+    if concepts_dir.exists():
+        doc_dirs_count = sum(1 for d in concepts_dir.iterdir() if d.is_dir())
+
+    if doc_dirs_count != len(map_source_doc_ids):
+        warnings.append(
+            f"concepts/ has {doc_dirs_count} doc directories but concept-map lists "
+            f"{len(map_source_doc_ids)} sourceDocIds"
+        )
+
+    # -- Check 4: chunks-metadata.json has all exported docIds --
+    chunks_meta_doc_ids: list[str] = []
+    if not chunks_meta_file.exists():
+        errors.append("chunks-metadata.json is missing")
+    else:
+        with open(chunks_meta_file, "r", encoding="utf-8") as f:
+            chunks_meta = json.load(f)
+        chunks_meta_doc_ids = list(chunks_meta.keys())
+        missing_from_chunks_meta = set(map_source_doc_ids) - set(chunks_meta_doc_ids)
+        if missing_from_chunks_meta:
+            errors.append(
+                f"chunks-metadata.json missing docIds: {missing_from_chunks_meta}"
+            )
+
+    valid = len(errors) == 0
+
+    return {
+        "valid": valid,
+        "errors": errors,
+        "warnings": warnings,
+        "concept_map_entries": len(all_concepts),
+        "markdown_files": markdown_file_count,
+        "missing_pages": missing_pages,
+        "orphan_pages": orphan_pages,
+        "source_docs_count": source_docs_count,
+        "doc_dirs_count": doc_dirs_count,
+        "chunks_meta_doc_ids": chunks_meta_doc_ids,
     }
