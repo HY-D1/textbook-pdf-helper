@@ -2,6 +2,37 @@
 
 A CLI tool that transforms SQL textbooks from PDFs into structured instructional units (L1-L4 hints, explanations, worked examples) for adaptive learning systems, using local Ollama LLMs and grounded extraction pipelines.
 
+## Adaptive Integration (Primary Path)
+
+The canonical output for the adaptive app is a **textbook-static corpus** built
+from both raw PDFs.  One command handles indexing, merging, and validation:
+
+```bash
+# Build merged textbook-static corpus for both PDFs
+./scripts/build_textbook_static.sh [OUTPUT_DIR]
+# default output: ./output/textbook-static/
+```
+
+This produces:
+
+```text
+output/textbook-static/
+├── textbook-manifest.json   ← schema-v1, both sourceDocIds
+├── concept-map.json         ← merged, namespaced by docId
+├── chunks-metadata.json
+└── concepts/
+    ├── <murach-docId>/      ← one .md per concept
+    └── <ramakrishnan-docId>/
+```
+
+Verify at any time with:
+
+```bash
+python -m algl_pdf_helper validate-handoff output/textbook-static/
+```
+
+---
+
 ## Demo
 
 ```bash

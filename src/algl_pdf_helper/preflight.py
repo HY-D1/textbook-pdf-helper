@@ -9,6 +9,9 @@ import fitz  # PyMuPDF
 
 from .quality_metrics import TextCoverageAnalyzer, QualityThresholds
 
+# Alias for the per-embedded-text OCR floor (kept local to avoid long dot-path)
+_EMBEDDED_TEXT_OCR_FLOOR = QualityThresholds.EMBEDDED_TEXT_OCR_FLOOR
+
 
 ExtractionStrategy = Literal["direct", "ocrmypdf", "marker"]
 
@@ -60,12 +63,17 @@ class PreflightReport:
     @property
     def is_extractable(self) -> bool:
         """Check if PDF is extractable with current strategy."""
-        # If we have a valid extraction strategy, it's extractable
+        # OCR / Marker strategies are always considered extractable (the tool
+        # handles the heavy lifting).
         if self.recommended_strategy in ("ocrmypdf", "marker"):
             return True
-        # For direct strategy, need good coverage
+        # For the direct strategy, extractability is determined by whether OCR
+        # is genuinely needed.  A digital PDF whose coverage heuristic lands
+        # between EMBEDDED_TEXT_OCR_FLOOR (0.30) and MIN_TEXT_COVERAGE (0.70)
+        # is still perfectly fine for direct extraction; ocr_needed will be
+        # False for it, so this correctly returns True.
         if self.recommended_strategy == "direct":
-            return self.text_coverage_score >= QualityThresholds.MIN_TEXT_COVERAGE
+            return not self.ocr_needed
         return False
     
     @property
@@ -423,30 +431,42 @@ def determine_strategy(
     ocr_available: bool = True,
 ) -> ExtractionStrategy:
     """Determine the best extraction strategy based on analysis.
-    
+
+    For PDFs with embedded text (digital born-digital documents), OCR is only
+    triggered when coverage falls below EMBEDDED_TEXT_OCR_FLOOR (0.30) —
+    indicating severely corrupted or heavily-encoded content.  The old
+    MIN_TEXT_COVERAGE (0.70) threshold applies only to documents without any
+    detected embedded text (scanned images).
+
+    This distinction is critical: SQL textbooks and other technical PDFs
+    frequently contain code blocks, tables, and figures that push the
+    readable-character heuristic into the 0.30–0.70 range even though the
+    embedded text itself is perfectly clean and extractable directly.
+
     Args:
         has_embedded_text: Whether PDF has embedded text
-        text_coverage: Text coverage score
+        text_coverage: Text coverage score from the readable-char heuristic
         table_count: Estimated table count
         warning_flags: List of warning flags
         ocr_available: Whether OCR tools are available
-        
+
     Returns:
         Recommended extraction strategy
     """
-    # If no embedded text, must use OCR
+    # No embedded text at all → must use OCR (scanned / image-only PDF)
     if not has_embedded_text:
         return "ocrmypdf" if ocr_available else "marker"
-    
-    # If coverage is too low, need OCR
-    if text_coverage < QualityThresholds.MIN_TEXT_COVERAGE:
+
+    # Embedded text exists but coverage is extremely low → content is likely
+    # corrupted or character-encoded in an unreadable way.
+    if text_coverage < _EMBEDDED_TEXT_OCR_FLOOR:
         return "ocrmypdf" if ocr_available else "marker"
-    
-    # If many tables with column bleed, marker might be better
+
+    # Complex multi-column layout that may produce garbled extraction
     if table_count > 10 and "2-column bleed detected" in warning_flags:
         return "marker"
-    
-    # Default to direct extraction for good embedded text
+
+    # Born-digital PDF with usable embedded text — use direct extraction
     return "direct"
 
 
@@ -506,8 +526,11 @@ def run_preflight(
                 continue
         avg_density = total_text / len(sample_pages) if sample_pages else 0
         
-        # Determine if OCR is needed
-        ocr_needed = not has_embedded_text or text_coverage < QualityThresholds.MIN_TEXT_COVERAGE
+        # OCR is needed when there is no embedded text at all, OR when embedded
+        # text exists but the coverage score is below the per-embedded-text
+        # floor (indicating corrupted content rather than a digital PDF with
+        # code / tables scoring in the 0.30–0.70 range).
+        ocr_needed = not has_embedded_text or text_coverage < _EMBEDDED_TEXT_OCR_FLOOR
         
         # Determine strategy
         strategy = determine_strategy(

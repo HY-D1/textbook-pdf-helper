@@ -84,13 +84,18 @@ class TestPreflightReport:
         assert report.is_extractable is True
     
     def test_is_extractable_poor_coverage(self):
-        """Test that poor coverage with direct strategy is not extractable."""
+        """Test that a report flagged ocr_needed=True with direct strategy is not extractable.
+
+        This tests an edge case where someone constructs a contradictory report
+        (direct strategy but ocr_needed=True).  is_extractable defers to
+        ocr_needed so the result is False.
+        """
         report = PreflightReport(
             text_coverage_score=0.50,
             ocr_needed=True,
             recommended_strategy="direct",
         )
-        
+
         assert report.is_extractable is False
     
     def test_is_extractable_poor_coverage_with_ocr(self):
@@ -417,16 +422,42 @@ class TestDetermineStrategy:
         
         assert strategy == "ocrmypdf"
     
-    def test_ocr_for_low_coverage(self):
-        """Test that low coverage triggers OCR."""
+    def test_ocr_for_very_low_coverage(self):
+        """Coverage below EMBEDDED_TEXT_OCR_FLOOR (0.30) triggers OCR even with embedded text.
+
+        Values in the range 0.30–0.70 are common for digital PDFs containing SQL
+        code, tables, and figures; those must NOT be pushed to OCR (see
+        test_no_ocr_for_digital_pdf_moderate_coverage).  Only truly corrupted
+        content (< 0.30) warrants OCR.
+        """
         strategy = determine_strategy(
             has_embedded_text=True,
-            text_coverage=0.50,
+            text_coverage=0.20,
             table_count=5,
             warning_flags=[],
         )
-        
+
         assert strategy == "ocrmypdf"
+
+    def test_no_ocr_for_digital_pdf_moderate_coverage(self):
+        """Digital born-digital PDFs with coverage 0.30–0.70 must stay on direct path.
+
+        Regression test: before the EMBEDDED_TEXT_OCR_FLOOR fix, SQL textbooks
+        were being recommended for OCR because their readable-character score
+        fell in the 0.40–0.65 range (code snippets, special chars in SQL, figures
+        lowering the heuristic).  The correct strategy is 'direct'.
+        """
+        for coverage in (0.35, 0.45, 0.55, 0.65):
+            strategy = determine_strategy(
+                has_embedded_text=True,
+                text_coverage=coverage,
+                table_count=5,
+                warning_flags=[],
+            )
+            assert strategy == "direct", (
+                f"Expected 'direct' for coverage={coverage} on a digital PDF "
+                f"but got '{strategy}'"
+            )
     
     def test_marker_for_complex_layout(self):
         """Test that complex layouts suggest Marker."""
@@ -518,20 +549,35 @@ class TestQualityIntegration:
     """Integration tests with quality_metrics module."""
     
     def test_coverage_thresholds_used(self):
-        """Test that quality thresholds are properly used."""
-        # Verify thresholds are defined
+        """Test that quality thresholds are properly used.
+
+        MIN_TEXT_COVERAGE (0.70) is the full-text coverage floor for scanned
+        documents without any detected embedded text.  For PDFs that *do* have
+        embedded text, the lower EMBEDDED_TEXT_OCR_FLOOR (0.30) applies so that
+        digital textbooks with code/tables are not misrouted to OCR.
+        """
         assert hasattr(QualityThresholds, "MIN_TEXT_COVERAGE")
         assert QualityThresholds.MIN_TEXT_COVERAGE == 0.70
-        
-        # Test strategy determination uses thresholds
+        assert hasattr(QualityThresholds, "EMBEDDED_TEXT_OCR_FLOOR")
+        assert QualityThresholds.EMBEDDED_TEXT_OCR_FLOOR == 0.30
+
+        # Below EMBEDDED_TEXT_OCR_FLOOR → OCR even with embedded text
         strategy = determine_strategy(
             has_embedded_text=True,
-            text_coverage=QualityThresholds.MIN_TEXT_COVERAGE - 0.05,
+            text_coverage=0.20,   # well below 0.30 floor
             table_count=0,
             warning_flags=[],
         )
-        
         assert strategy == "ocrmypdf"
+
+        # Between floor and MIN_TEXT_COVERAGE → direct (digital PDF with code)
+        strategy = determine_strategy(
+            has_embedded_text=True,
+            text_coverage=QualityThresholds.MIN_TEXT_COVERAGE - 0.05,  # 0.65
+            table_count=0,
+            warning_flags=[],
+        )
+        assert strategy == "direct"
     
     def test_report_coverage_check(self):
         """Test that report uses coverage thresholds correctly."""

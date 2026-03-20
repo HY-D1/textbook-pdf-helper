@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from .export_sqladapt import export_to_sqladapt
+from .export_sqladapt import export_to_sqladapt, validate_handoff_integrity
 from .extract import (
     check_extraction_quality,
     check_text_coverage,
@@ -285,6 +285,44 @@ def export(
     except Exception as e:
         typer.echo(f"❌ Export failed: {e}")
         raise typer.Exit(1)
+
+
+@app.command(name="validate-handoff")
+def validate_handoff(
+    output_dir: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="textbook-static export directory to validate",
+    ),
+):
+    """Validate a textbook-static export directory for adaptive app handoff.
+
+    Checks that concept-map.json, textbook-manifest.json, chunks-metadata.json,
+    and all concept .md files are internally consistent.  Exits with code 1 if
+    any fatal integrity violation is found.
+    """
+    result = validate_handoff_integrity(output_dir)
+
+    typer.echo(f"Validating: {output_dir}")
+    typer.echo(f"  Concept-map entries : {result['concept_map_entries']}")
+    typer.echo(f"  Markdown files       : {result['markdown_files']}")
+    typer.echo(f"  Source docs (manifest): {result['source_docs_count']}")
+    typer.echo(f"  Doc directories      : {result['doc_dirs_count']}")
+    typer.echo(f"  chunks-metadata docIds: {result['chunks_meta_doc_ids']}")
+
+    if result["warnings"]:
+        for w in result["warnings"]:
+            typer.echo(f"  ⚠️  {w}")
+
+    if result["errors"]:
+        for e in result["errors"]:
+            typer.echo(f"  ❌ {e}")
+        typer.echo("")
+        typer.echo("Handoff integrity: INVALID")
+        raise typer.Exit(1)
+
+    typer.echo("")
+    typer.echo("✅ Handoff integrity: VALID")
 
 
 @app.command()
