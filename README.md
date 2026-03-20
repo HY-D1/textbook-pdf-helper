@@ -25,12 +25,14 @@ python -m algl_pdf_helper replay tests/fixtures/traces --output-dir outputs/repl
 - **Educational Commands**: `edu status`, `edu generate`, `edu cost`
 - **Replay System**: Replay learner traces under 3 escalation policies (fast/slow/adaptive)
 - **SQL-Engage Backbone**: 50 SQL concepts, 59 prerequisite edges, 29 error subtypes
-- **HintWise Adapter**: Contract for hint eligibility payloads
+- **HintWise Adapter**: Contract for hint eligibility payloads (`hintwise_adapter.py`)
+- **HintWise HTTP Client**: Live endpoint integration with env-var config, auth header, timeout, and one-retry policy (`hintwise_client.py`)
+- **HintWise Service Layer**: Full roundtrip — payload → HTTP call → normalized result → `hintwise-results.jsonl` with provenance (`hintwise_service.py`)
+- **HintWise CLI**: `hintwise` subcommand for offline dry-runs and live endpoint calls
 - **Learner Textbook Assembly**: Personal textbooks from concept units + learner events
 
 ### Planned (v2.0)
 
-- Live HintWise HTTP integration
 - Real learner trace ingestion (not synthetic)
 - Online bandit policy adaptation
 - Marker PDF extraction backend
@@ -101,6 +103,10 @@ pytest -q
 | `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama model name | `qwen3.5:9b-q8_0` |
 | `ALGL_LLM_PROVIDER` | Override default provider | `ollama` |
+| `HINTWISE_BASE_URL` | HintWise service base URL (unset = offline mode) | _(unset)_ |
+| `HINTWISE_ENDPOINT` | HintWise endpoint path | `/api/hint` |
+| `HINTWISE_API_KEY` | Bearer token for HintWise auth (optional) | _(unset)_ |
+| `HINTWISE_TIMEOUT` | Request timeout in seconds | `10` |
 
 ## API Reference
 
@@ -115,6 +121,7 @@ pytest -q
 | `validate` | Validate an existing unit library |
 | `inspect` | Inspect units for a specific concept |
 | `cache` | Manage Ollama repair cache |
+| `hintwise` | Build HintWise payload from artifact; call live endpoint if configured |
 
 ### Key Options for `process`
 
@@ -178,9 +185,39 @@ See [docs/schema-reference.md](docs/schema-reference.md) for detailed field docu
 
 See [docs/final-verification.md](docs/final-verification.md) for current test status.
 
+## HintWise Quick Start
+
+### Offline inspection (no endpoint needed)
+
+```bash
+# Inspect payload for a concept — no HTTP call
+python -m algl_pdf_helper hintwise ./output/concept_units.json \
+    --concept select-basic --dry-run
+```
+
+### Live endpoint call
+
+```bash
+export HINTWISE_BASE_URL=http://localhost:8080
+export HINTWISE_API_KEY=my-token   # optional
+
+python -m algl_pdf_helper hintwise ./output/concept_units.json \
+    --concept select-basic \
+    --learner-id learner_001 \
+    --problem-id prob_01 \
+    --escalation-level L2 \
+    --output-dir ./outputs/hints/
+# → appends one record to ./outputs/hints/hintwise-results.jsonl
+```
+
+### Smoke test (mocked, offline)
+
+```bash
+PYTHONPATH=src pytest tests/test_hintwise_client.py tests/test_hintwise_integration.py -q
+```
+
 ## Next Steps
 
-- [ ] Add HTTP client for live HintWise integration
 - [ ] Implement real learner trace ingestion endpoint
 - [ ] Add online bandit update loop for policy learning
 - [ ] Expand SQL concept ontology beyond 50 core concepts

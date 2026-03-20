@@ -1684,3 +1684,149 @@ def replay(
         typer.echo(f"❌ Unexpected error: {e}", err=True)
         raise typer.Exit(1)
 
+
+# =============================================================================
+# HINTWISE COMMAND
+# =============================================================================
+
+
+@app.command(name="hintwise")
+def hintwise_command(
+    concept_units_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Path to concept_units.json (or any JSON with concept/unit dicts)",
+    ),
+    concept_id: str = typer.Option(
+        ...,
+        "--concept", "-c",
+        help="Concept ID to build the payload for",
+    ),
+    learner_id: str | None = typer.Option(
+        None,
+        "--learner-id",
+        help="Learner identifier (optional)",
+    ),
+    problem_id: str | None = typer.Option(
+        None,
+        "--problem-id",
+        help="Problem identifier (optional)",
+    ),
+    escalation_level: str = typer.Option(
+        "L1",
+        "--escalation-level",
+        help="Escalation level: L1 (default), L2, L3, or L4",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir", "-o",
+        help="Directory to save hintwise-results.jsonl (skipped if omitted)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Build payload and show eligibility, but do not call the endpoint",
+    ),
+):
+    """
+    Build a HintWise payload from an existing artifact and optionally call the live endpoint.
+
+    Reads concept_units.json, finds the specified concept, builds a HintwisePayload,
+    and calls the configured HintWise HTTP endpoint (HINTWISE_BASE_URL env var).
+    When HINTWISE_BASE_URL is not set the command runs in offline mode (payload
+    inspection only, no network call is made).
+
+    Results are appended to hintwise-results.jsonl in --output-dir (if specified).
+
+    Environment variables
+    ---------------------
+    HINTWISE_BASE_URL    Base URL of the HintWise service (optional)
+    HINTWISE_ENDPOINT    Endpoint path (default: /api/hint)
+    HINTWISE_API_KEY     Bearer token for the endpoint (optional)
+    HINTWISE_TIMEOUT     Request timeout in seconds (default: 10)
+
+    Examples
+    --------
+    # Inspect payload only (offline, no HTTP call)
+    algl-pdf hintwise ./output/concept_units.json --concept select-basic --dry-run
+
+    # Call live endpoint and save result
+    algl-pdf hintwise ./output/concept_units.json -c join-operations \\
+        --learner-id abc --problem-id p01 --output-dir ./outputs/hints/
+    """
+    import json as _json
+
+    from .hintwise_adapter import make_hintwise_payload
+    from .hintwise_client import HintwiseClient
+    from .hintwise_service import HintwiseService
+
+    # --- load units file ---
+    try:
+        raw = _json.loads(concept_units_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Error reading {concept_units_path}: {exc}", err=True)
+        raise typer.Exit(1)
+
+    units: list[dict] = raw if isinstance(raw, list) else raw.get("units", [])
+    unit_data = next((u for u in units if u.get("concept_id") == concept_id), None)
+    if unit_data is None:
+        typer.echo(f"Concept '{concept_id}' not found in {concept_units_path}.", err=True)
+        available = sorted({u.get("concept_id", "") for u in units})[:10]
+        if available:
+            typer.echo(f"Available (first 10): {', '.join(available)}", err=True)
+        raise typer.Exit(1)
+
+    learner_ctx = {
+        "escalation_level": escalation_level,
+        "learner_id": learner_id,
+        "problem_id": problem_id,
+    }
+    payload = make_hintwise_payload(unit_data, learner_context=learner_ctx)
+
+    # --- show payload summary ---
+    typer.echo(f"Concept: {payload.concept_context.concept_id}")
+    typer.echo(f"Unit ID: {payload.concept_context.unit_id or '(none)'}")
+    typer.echo(f"Escalation: {payload.learner_context.escalation_level}")
+    typer.echo(f"Supports HintWise: {payload.supports_hintwise}")
+    elig = payload.get_hint_eligibility()
+    typer.echo(f"Eligibility: eligible_for_hints={elig['eligible_for_hints']}")
+
+    if dry_run:
+        typer.echo("\n[dry-run] Payload built. No HTTP call made.")
+        typer.echo(_json.dumps(payload.to_dict(), indent=2))
+        return
+
+    # --- call endpoint ---
+    client = HintwiseClient.from_env()
+    if not client.is_configured:
+        typer.echo(
+            "\n[offline] HINTWISE_BASE_URL is not set — no HTTP call made.\n"
+            "Set HINTWISE_BASE_URL to enable live endpoint calls."
+        )
+        return
+
+    typer.echo(f"\nCalling {client._build_url()} ...")
+
+    out_path: Path | None = None
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / "hintwise-results.jsonl"
+
+    svc = HintwiseService(client=client, output_path=out_path)
+    result = svc.request(unit_data, learner_context=learner_ctx)
+
+    if result.succeeded():
+        typer.echo(f"Status: {result.status_code} OK")
+        if result.hint_id:
+            typer.echo(f"Hint ID: {result.hint_id}")
+        if result.hint_content:
+            typer.echo(f"Hint: {result.hint_content}")
+    elif result.error:
+        typer.echo(f"Error: {result.error}", err=True)
+        raise typer.Exit(1)
+    else:
+        typer.echo(f"Status: {result.status_code}")
+
+    if out_path:
+        typer.echo(f"Result saved to: {out_path}")
