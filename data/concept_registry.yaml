@@ -807,3 +807,201 @@ concepts:
     prerequisites: []
     difficulty: intermediate
     category: dcl
+
+  # Advanced Query Features
+  - id: cte
+    name: Common Table Expressions (CTEs)
+    definition: Named temporary result sets defined with WITH clause, usable within a single query; includes recursive CTEs for hierarchical data
+    keywords:
+      - cte
+      - with
+      - common table expression
+      - recursive
+      - recursive cte
+      - named query
+      - with clause
+      - anchor member
+      - recursive member
+    related_concepts:
+      - subquery
+      - view
+    prerequisites:
+      - subquery
+    difficulty: advanced
+    category: dql
+
+  - id: window-functions
+    name: Window Functions
+    definition: Functions that compute values across a set of table rows related to the current row without collapsing them (RANK, ROW_NUMBER, LAG, LEAD, SUM OVER)
+    keywords:
+      - window function
+      - over
+      - partition by
+      - order by
+      - rank
+      - row_number
+      - lag
+      - lead
+      - ntile
+      - dense_rank
+      - running total
+      - frame
+    related_concepts:
+      - aggregate-functions
+      - group-by
+    prerequisites:
+      - aggregate-functions
+    difficulty: advanced
+    category: dql
+
+  - id: case-expressions
+    name: CASE Expressions
+    definition: Conditional logic in SQL that evaluates conditions and returns different values (CASE WHEN ... THEN ... ELSE ... END)
+    keywords:
+      - case
+      - case when
+      - then
+      - else
+      - end
+      - conditional
+      - searched case
+      - simple case
+      - if-then-else
+    related_concepts:
+      - null-handling
+      - select-basic
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: dql
+
+  - id: limit-offset
+    name: LIMIT and OFFSET
+    definition: Restricts the number of rows returned (LIMIT) and skips a number of rows (OFFSET); used for pagination
+    keywords:
+      - limit
+      - offset
+      - pagination
+      - top
+      - fetch first
+      - rownum
+      - page
+    related_concepts:
+      - order-by
+      - select-basic
+    prerequisites:
+      - select-basic
+    difficulty: beginner
+    category: dql
+
+  - id: cross-join
+    name: CROSS JOIN
+    definition: Produces a Cartesian product of two tables; every row from the first table is paired with every row from the second
+    keywords:
+      - cross join
+      - cartesian product
+      - cartesian join
+    related_concepts:
+      - join
+      - inner-join
+    prerequisites:
+      - join
+    difficulty: intermediate
+    category: dql
+
+  # Data and Schema Concepts
+  - id: data-types
+    name: SQL Data Types
+    definition: Categories of values a column can hold (INTEGER, VARCHAR, DATE, BOOLEAN, DECIMAL, etc.) and how they affect storage and comparison
+    keywords:
+      - data type
+      - integer
+      - varchar
+      - char
+      - date
+      - timestamp
+      - boolean
+      - decimal
+      - numeric
+      - float
+      - text
+      - blob
+      - type casting
+      - cast
+    related_concepts:
+      - create-table
+      - constraints
+    prerequisites:
+      - create-table
+    difficulty: beginner
+    category: ddl
+
+  - id: string-functions
+    name: String Functions
+    definition: Built-in functions for manipulating text values (UPPER, LOWER, TRIM, SUBSTRING, CONCAT, LENGTH, REPLACE, etc.)
+    keywords:
+      - string function
+      - upper
+      - lower
+      - trim
+      - substring
+      - substr
+      - concat
+      - length
+      - replace
+      - left
+      - right
+      - char_length
+      - string manipulation
+    related_concepts:
+      - select-basic
+      - pattern-matching
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: dql
+
+  - id: date-functions
+    name: Date and Time Functions
+    definition: Built-in functions for manipulating date and time values (NOW, DATEADD, DATEDIFF, EXTRACT, DATE_TRUNC, etc.)
+    keywords:
+      - date function
+      - now
+      - current_date
+      - dateadd
+      - datediff
+      - extract
+      - date_part
+      - date_trunc
+      - interval
+      - timestamp
+      - age
+      - strftime
+    related_concepts:
+      - select-basic
+      - data-types
+    prerequisites:
+      - select-basic
+    difficulty: intermediate
+    category: dql
+
+  - id: database-design
+    name: Database Design
+    definition: Principles and methods for structuring relational databases including ER modeling, normalization, and schema design
+    keywords:
+      - database design
+      - erd
+      - entity relationship
+      - entity-relationship diagram
+      - schema design
+      - relational model
+      - cardinality
+      - attributes
+      - entities
+    related_concepts:
+      - normalization
+      - constraints
+      - table-relationships
+    prerequisites: []
+    difficulty: intermediate
+    category: advanced

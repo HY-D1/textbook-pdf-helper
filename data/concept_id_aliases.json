@@ -1,0 +1,27 @@
+{
+  "version": "1.1.0",
+  "description": "Canonical concept ID alias mappings. Each alias maps a non-canonical curated-file key to its canonical ID in concept_registry.yaml. All canonical IDs were verified against the registry before adding.",
+  "aliases": {
+    "stored-procedures": "stored-procedure",
+    "transactions": "transaction",
+    "having-clause": "having",
+    "insert-statement": "insert",
+    "update-statement": "update",
+    "delete-statement": "delete",
+    "views": "view",
+    "indexes": "index",
+    "triggers": "trigger",
+    "functions": "function",
+    "subqueries-intro": "subquery",
+    "joins-intro": "join",
+    "union": "set-operations",
+    "exists-operator": "correlated-subquery",
+    "exists-subqueries": "correlated-subquery",
+    "subquery-in-select": "subquery",
+    "subquery-in-where": "subquery",
+    "coalesce-nullif": "null-handling",
+    "cte-common-table-expressions": "cte",
+    "recursive-cte": "cte",
+    "erd-basics": "database-design"
+  }
+}
