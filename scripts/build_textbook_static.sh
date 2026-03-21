@@ -32,6 +32,7 @@ OUTPUT_DIR="${1:-${OUTPUT_DIR:-./output/textbook-static}}"
 INDEX_DIR="${OUTPUT_DIR}/index"   # intermediate per-PDF index trees
 MURACH_PDF="raw_pdf/murachs-mysql-3rd-edition.pdf"
 RAMI_PDF="raw_pdf/dbms-ramakrishnan-3rd-edition.pdf"
+CONCEPTS_CONFIG="$REPO_ROOT/concepts.yaml"
 
 # Activate virtualenv if present
 if [ -f ".venv/bin/activate" ]; then
@@ -65,6 +66,13 @@ if [ "$missing" -ne 0 ]; then
     exit 1
 fi
 
+if [ ! -f "$CONCEPTS_CONFIG" ]; then
+    echo "❌  Concepts config not found: $CONCEPTS_CONFIG"
+    echo "    Expected: concepts.yaml in repo root"
+    exit 1
+fi
+echo " Concepts   : $CONCEPTS_CONFIG"
+
 mkdir -p "$OUTPUT_DIR" "$INDEX_DIR"
 
 # ---------------------------------------------------------------------------
@@ -85,7 +93,8 @@ index_pdf() {
         "$pdf_path" \
         --output-dir "$idx_dir" \
         --use-aliases \
-        --strip-headers
+        --strip-headers \
+        --concepts-config "$CONCEPTS_CONFIG"
 
     echo " ✅ Indexed: $(basename "$pdf_path")"
 }
