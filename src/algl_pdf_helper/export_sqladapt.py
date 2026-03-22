@@ -142,6 +142,7 @@ def convert_to_concept_map(manifest: ConceptManifest) -> ConceptMap:
             relatedConcepts=concept.relatedConcepts,
             practiceProblemIds=concept.practiceProblemIds,
             sourceDocId=manifest.sourceDocId,
+            tags=concept.tags,
             provenance=provenance,
         )
     
@@ -393,6 +394,7 @@ def merge_concept_maps(
             ],
             "practiceProblemIds": concept_entry.practiceProblemIds,
             "sourceDocId": source_doc_id,
+            "tags": concept_entry.tags,
             "provenance": concept_entry.provenance,
         }
     
@@ -419,6 +421,18 @@ def build_textbook_units(merged_concept_map: dict) -> list[dict]:
     the same source content because it is derived solely from the logical
     identity of the concept, not from timestamps or random state.
 
+    New fields added for adaptive orchestration:
+        canonicalConceptKey  -- stable join key (= namespacedId)
+        unitType             -- "explanation" | "example" | "summary" | "reference"
+                               derived deterministically from chunkIds section names
+        keywords             -- tags list propagated from the source concept manifest
+        aliases              -- title-derived alternate identifiers (stable)
+        shortExcerpt         -- first 200 chars of definition
+        sourceSectionTitles  -- sorted list of section names present in chunkIds
+        prerequisiteConceptIds -- reserved for future enrichment; always []
+        sourceOrder          -- 0-based stable position in the sorted unit list
+        unitOrderWithinConcept -- always 1 (one unit per concept in current schema)
+
     Args:
         merged_concept_map: The full merged concept-map dict produced by
             ``merge_concept_maps()`` or built in-memory during export.
@@ -427,8 +441,13 @@ def build_textbook_units(merged_concept_map: dict) -> list[dict]:
 
     Returns:
         Stable-sorted (sourceDocId, conceptId) list of unit record dicts,
-        one record per concept entry.
+        one record per concept entry, with sourceOrder set after sorting.
     """
+    # Section-name sets for deterministic unitType classification
+    _REFERENCE_SECTIONS: frozenset[str] = frozenset({"reference", "api", "syntax"})
+    _SUMMARY_SECTIONS: frozenset[str] = frozenset({"summary", "review", "overview"})
+    _EXAMPLE_SECTIONS: frozenset[str] = frozenset({"examples", "example", "worked-examples"})
+
     units: list[dict] = []
 
     for namespaced_id, concept_data in merged_concept_map.get("concepts", {}).items():
@@ -466,24 +485,78 @@ def build_textbook_units(merged_concept_map: dict) -> list[dict]:
             )
         )
 
+        # --- New enrichment fields (all deterministic) ---
+
+        # Canonical join key: stable primary lookup identifier for adaptive
+        canonical_concept_key: str = namespaced_id
+
+        # Section names present in this concept (sorted for stability)
+        section_names: set[str] = set(concept_data.get("chunkIds", {}).keys())
+        source_section_titles: list[str] = sorted(section_names)
+
+        # unitType: derived from section presence, checked in priority order
+        if section_names & _REFERENCE_SECTIONS:
+            unit_type: str = "reference"
+        elif section_names & _SUMMARY_SECTIONS:
+            unit_type = "summary"
+        elif section_names & _EXAMPLE_SECTIONS:
+            unit_type = "example"
+        else:
+            unit_type = "explanation"
+
+        # Keywords: tags propagated from the concept manifest
+        keywords: list[str] = list(concept_data.get("tags", []))
+
+        # Short excerpt: first 200 chars of the definition
+        definition: str = concept_data.get("definition", "")
+        short_excerpt: str = definition[:200] if definition else ""
+
+        # Aliases: stable alternate identifiers derived from title
+        # Rule: slugify title → kebab-case lowercase; include if different from bare_id
+        title_str: str = concept_data.get("title", "") or bare_id
+        title_slug: str = re.sub(r"[^a-z0-9]+", "-", title_str.lower()).strip("-")
+        aliases: list[str] = list(
+            dict.fromkeys(a for a in [title_slug] if a and a != bare_id)
+        )
+
+        # prerequisiteConceptIds: not derivable from current data; reserved field
+        prerequisite_concept_ids: list[str] = []
+
+        # unitOrderWithinConcept: always 1 (one unit per concept in v1 schema)
+        unit_order_within_concept: int = 1
+
         units.append(
             {
                 "unitId": unit_id,
                 "sourceDocId": source_doc_id,
                 "conceptId": bare_id,
                 "namespacedId": namespaced_id,
+                "canonicalConceptKey": canonical_concept_key,
                 "title": concept_data.get("title", ""),
                 "difficulty": concept_data.get("difficulty", "beginner"),
+                "unitType": unit_type,
+                "keywords": keywords,
+                "aliases": aliases,
+                "shortExcerpt": short_excerpt,
                 "markdownPath": markdown_path,
                 "pageNumbers": page_numbers,
                 "pageSpan": page_span,
                 "sourceChunkIds": source_chunk_ids,
+                "sourceSectionTitles": source_section_titles,
                 "relatedConcepts": concept_data.get("relatedConcepts", []),
+                "prerequisiteConceptIds": prerequisite_concept_ids,
+                "unitOrderWithinConcept": unit_order_within_concept,
+                # sourceOrder is assigned after sorting (see below)
             }
         )
 
     # Deterministic ordering: sort by (sourceDocId, conceptId)
     units.sort(key=lambda u: (u["sourceDocId"], u["conceptId"]))
+
+    # Assign stable 0-based position after sort so sourceOrder is consistent
+    for i, u in enumerate(units):
+        u["sourceOrder"] = i
+
     return units
 
 
@@ -575,6 +648,7 @@ def export_to_sqladapt(
                 ],
                 "practiceProblemIds": concept_entry.practiceProblemIds,
                 "sourceDocId": manifest.sourceDocId,
+                "tags": concept_entry.tags,
                 "provenance": concept_entry.provenance,
             }
         final_concept_count = len(merged_map["concepts"])
@@ -944,6 +1018,52 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                 "concept-map: "
                 + ", ".join(sorted(extra_in_units)[:5])
             )
+
+        # sourceOrder: must be a contiguous 0..N-1 sequence (no gaps, no dups)
+        source_orders = [u.get("sourceOrder") for u in units_list]
+        if any(o is None for o in source_orders):
+            errors.append(
+                "textbook-units.json: some units are missing the sourceOrder field"
+            )
+        elif sorted(source_orders) != list(range(len(units_list))):
+            errors.append(
+                "textbook-units.json: sourceOrder values are not a contiguous "
+                "0..N-1 sequence"
+            )
+
+        # unitType: must be one of the recognised values
+        _valid_unit_types = {"explanation", "example", "summary", "reference"}
+        bad_types = [
+            u.get("unitType")
+            for u in units_list
+            if u.get("unitType") not in _valid_unit_types
+        ]
+        if bad_types:
+            errors.append(
+                f"textbook-units.json: {len(bad_types)} units have invalid unitType "
+                "values: " + ", ".join(str(t) for t in sorted(set(str(b) for b in bad_types)))
+            )
+
+        # Required enrichment fields must be present on every unit
+        _required_enrichment = {
+            "canonicalConceptKey",
+            "unitType",
+            "keywords",
+            "aliases",
+            "shortExcerpt",
+            "sourceSectionTitles",
+            "prerequisiteConceptIds",
+            "sourceOrder",
+            "unitOrderWithinConcept",
+        }
+        for u in units_list:
+            missing_fields = _required_enrichment - set(u.keys())
+            if missing_fields:
+                errors.append(
+                    f"textbook-units.json unit '{u.get('unitId', '?')}' missing "
+                    "enrichment fields: " + ", ".join(sorted(missing_fields))
+                )
+                break  # report once to avoid log noise
 
     valid = len(errors) == 0
 

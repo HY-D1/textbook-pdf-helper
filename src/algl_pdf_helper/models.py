@@ -140,6 +140,7 @@ class ConceptMapEntry(BaseModel):
     relatedConcepts: list[str] = Field(default_factory=list)
     practiceProblemIds: list[str] = Field(default_factory=list)
     sourceDocId: str = ""
+    tags: list[str] = Field(default_factory=list, description="Keyword tags for this concept")
     provenance: dict[str, Any] = Field(default_factory=dict, description="Provenance information including chunks, pages, blocks, and extraction method")
 
 
