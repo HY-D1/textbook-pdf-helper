@@ -31,6 +31,47 @@ Verify at any time with:
 python -m algl_pdf_helper validate-handoff output/textbook-static/
 ```
 
+### Learner-facing content quality gate
+
+Exported concept files are automatically audited for learner-facing quality
+during every export.  Each unit in `textbook-units.json` carries four quality
+fields:
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `readabilityStatus` | `ok` \| `fallback_only` | `ok` — safe to show; `fallback_only` — explanation is too corrupted to display as-is |
+| `readabilityWarnings` | `list[str]` | Diagnostic reasons for the verdict (empty when `ok`) |
+| `exampleQuality` | `valid` \| `filtered` \| `hidden` | `valid` — SQL examples usable; `filtered` — examples have prose debris; `hidden` — no usable examples |
+| `learnerSafeSummary` | `str` | Always-safe fallback: `"{title}: {definition}"` — present even when status is `fallback_only` |
+
+**Detection rules (deterministic, no LLM):**
+
+| Check | Trigger | Outcome |
+|-------|---------|---------|
+| `garble_density` | > 0.8 % of explanation chars are OCR artefacts (`&c;`, `h&c;h`, …) | `fallback_only` |
+| `semantic_drift` | < 15 % of title keywords appear in explanation body | `fallback_only` |
+| `toc_pollution` | ≥ 3 TOC-like patterns (`Chapter N`, `page NN`, …) in explanation | `fallback_only` |
+| `marketing_boilerplate` | ≥ 2 publisher phrases (`ISBN`, `All rights reserved`, …) | `fallback_only` |
+| `duplication` | > 40 % of explanation sentences are repeated | warning only |
+| `sql_contamination` | > 50 % of SQL code blocks contain embedded English prose | `exampleQuality: filtered` |
+| `thin_explanation` | < 40 words in explanation | warning only |
+| No SQL blocks present | — | `exampleQuality: hidden` |
+
+`validate-handoff` reports the quality distribution:
+
+```text
+  Learner quality      : 52 ok, 18 fallback_only (26% fallback)
+```
+
+If quality fields are absent from an older export, `validate-handoff` prints a
+warning and asks you to re-run the build.
+
+Run the dedicated tests:
+
+```bash
+PYTHONPATH=src python -m pytest tests/test_learner_quality_audit.py -v
+```
+
 ### Smoke gate (CI verification)
 
 A single pytest command proves the entire producer path — static structure,

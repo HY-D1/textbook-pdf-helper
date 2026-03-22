@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .learner_quality_audit import audit_concept_markdown
 from .markdown_generator import generate_concept_markdown
 from .models import (
     TEXTBOOK_STATIC_SCHEMA_ID,
@@ -560,6 +561,54 @@ def build_textbook_units(merged_concept_map: dict) -> list[dict]:
     return units
 
 
+def enrich_units_with_learner_quality(
+    units: list[dict],
+    concepts_root_dir: Path,
+) -> list[dict]:
+    """Add learner-facing quality metadata to each unit in-place.
+
+    Reads the exported markdown file for each unit (via ``markdownPath``
+    relative to ``concepts_root_dir``'s parent, i.e. the textbook-static
+    output dir) and runs :func:`audit_concept_markdown`.
+
+    Quality fields added to every unit:
+        readabilityStatus   -- "ok" | "fallback_only"
+        readabilityWarnings -- list[str]  (empty when status is "ok")
+        exampleQuality      -- "valid" | "filtered" | "hidden"
+        learnerSafeSummary  -- always-safe fallback text
+
+    Args:
+        units: List of unit dicts produced by ``build_textbook_units()``.
+            Modified **in place** and returned for convenience.
+        concepts_root_dir: The ``concepts/`` directory inside the
+            textbook-static output directory. The parent of this dir is
+            used as the base for resolving ``markdownPath`` values.
+
+    Returns:
+        The same list, with quality fields added to each unit.
+    """
+    textbook_static_dir = concepts_root_dir.parent
+    for unit in units:
+        md_path = textbook_static_dir / unit.get("markdownPath", "")
+        if md_path.exists():
+            md_text = md_path.read_text(encoding="utf-8")
+        else:
+            md_text = ""
+
+        result = audit_concept_markdown(
+            md_text=md_text,
+            concept_id=unit.get("conceptId", ""),
+            title=unit.get("title", ""),
+            definition=unit.get("shortExcerpt", ""),
+        )
+        unit["readabilityStatus"] = result.readabilityStatus
+        unit["readabilityWarnings"] = result.readabilityWarnings
+        unit["exampleQuality"] = result.exampleQuality
+        unit["learnerSafeSummary"] = result.learnerSafeSummary
+
+    return units
+
+
 def export_to_sqladapt(
     input_dir: Path,
     output_dir: Path | None = None,
@@ -663,6 +712,12 @@ def export_to_sqladapt(
     # complete, consistent snapshot regardless of which doc was processed last.
     units_catalog_file = output_dir / "textbook-units.json"
     all_units = build_textbook_units(merged_map)
+    # Enrich with learner-facing quality metadata.  This pass reads the
+    # already-written markdown files (from a prior export of either doc) so
+    # concepts whose markdown doesn't exist yet will get empty-text audits.
+    # The second export (which writes the second doc's files) re-runs the full
+    # enrich pass so both docs end up with quality fields in the final catalog.
+    enrich_units_with_learner_quality(all_units, concepts_dir)
     units_catalog: dict = {
         "schemaVersion": "textbook-units-v1",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1065,6 +1120,80 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                 )
                 break  # report once to avoid log noise
 
+        # -- Check 6: Learner-facing quality metadata --
+        # All units must have the quality fields (readabilityStatus etc.).
+        _required_quality_fields = {
+            "readabilityStatus",
+            "readabilityWarnings",
+            "exampleQuality",
+            "learnerSafeSummary",
+        }
+        _valid_readability_statuses = {"ok", "fallback_only"}
+        _valid_example_qualities = {"valid", "filtered", "hidden"}
+
+        missing_quality_fields_sample: list[str] = []
+        fallback_only_count = 0
+        invalid_status_sample: list[str] = []
+
+        for u in units_list:
+            missing_qf = _required_quality_fields - set(u.keys())
+            if missing_qf:
+                missing_quality_fields_sample.append(u.get("unitId", "?"))
+                if len(missing_quality_fields_sample) >= 5:
+                    break
+
+        if missing_quality_fields_sample:
+            warnings.append(
+                f"textbook-units.json: {len(missing_quality_fields_sample)}+ units "
+                "are missing learner quality fields (readabilityStatus, "
+                "readabilityWarnings, exampleQuality, learnerSafeSummary). "
+                "Re-run the export to populate these fields."
+            )
+        else:
+            # All quality fields present; check values are valid
+            for u in units_list:
+                rs = u.get("readabilityStatus")
+                eq = u.get("exampleQuality")
+                if rs not in _valid_readability_statuses:
+                    invalid_status_sample.append(
+                        f"{u.get('unitId', '?')}:readabilityStatus={rs!r}"
+                    )
+                if eq not in _valid_example_qualities:
+                    invalid_status_sample.append(
+                        f"{u.get('unitId', '?')}:exampleQuality={eq!r}"
+                    )
+                if rs == "fallback_only":
+                    fallback_only_count += 1
+
+            if invalid_status_sample:
+                errors.append(
+                    "textbook-units.json: invalid quality field values: "
+                    + "; ".join(invalid_status_sample[:5])
+                )
+
+            # Warn (not error) when a large fraction of concepts are fallback-only
+            if units_count > 0:
+                fallback_ratio = fallback_only_count / units_count
+                if fallback_ratio > 0.50:
+                    warnings.append(
+                        f"learner_quality: {fallback_only_count}/{units_count} "
+                        f"({fallback_ratio:.0%}) concepts have "
+                        "readabilityStatus=fallback_only — extraction quality "
+                        "may be too low for learner-facing use"
+                    )
+
+    # Aggregate quality counts for return payload
+    fallback_only_total = 0
+    if units_catalog_file.exists():
+        try:
+            with open(units_catalog_file, "r", encoding="utf-8") as _fq:
+                _qdata = json.load(_fq)
+            for _u in _qdata.get("units", []):
+                if _u.get("readabilityStatus") == "fallback_only":
+                    fallback_only_total += 1
+        except Exception:
+            pass
+
     valid = len(errors) == 0
 
     return {
@@ -1079,4 +1208,5 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "doc_dirs_count": doc_dirs_count,
         "chunks_meta_doc_ids": chunks_meta_doc_ids,
         "units_count": units_count,
+        "fallback_only_count": fallback_only_total,
     }

@@ -310,6 +310,16 @@ def validate_handoff(
     typer.echo(f"  Source docs (manifest): {result['source_docs_count']}")
     typer.echo(f"  Doc directories      : {result['doc_dirs_count']}")
     typer.echo(f"  chunks-metadata docIds: {result['chunks_meta_doc_ids']}")
+    # Learner quality summary
+    fallback_count = result.get("fallback_only_count", 0)
+    total_units = result.get("units_count", 0)
+    if total_units > 0:
+        ok_count = total_units - fallback_count
+        typer.echo(
+            f"  Learner quality      : {ok_count} ok, "
+            f"{fallback_count} fallback_only"
+            f" ({fallback_count / total_units:.0%} fallback)"
+        )
 
     if result["warnings"]:
         for w in result["warnings"]:
