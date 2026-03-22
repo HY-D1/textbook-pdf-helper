@@ -31,6 +31,26 @@ Verify at any time with:
 python -m algl_pdf_helper validate-handoff output/textbook-static/
 ```
 
+### Smoke gate (CI verification)
+
+A single pytest command proves the entire producer path — static structure,
+preflight routing, merge behaviour, and artifact integrity — in one shot:
+
+```bash
+PYTHONPATH=src python -m pytest tests/test_adaptive_handoff_smoke.py -v
+```
+
+The gate is split into three tiers:
+
+| Tier | What it checks | Requires |
+| --- | --- | --- |
+| **Static** | `build_textbook_static.sh` exists, no `/Users/…` hard-codes, `validate-handoff` CLI registered, `determine_strategy()` uses EMBEDDED_TEXT_OCR_FLOOR, merge logic present | nothing (always runs) |
+| **Preflight** | Both real PDFs route to `direct` (not OCR) | `raw_pdf/` present |
+| **Artifact** | All 4 output files exist, `docCount==2`, both `sourceDocs`, concept `.md` files resolve, `validate-handoff` exits 0 | `output/textbook-static/` present |
+
+The static tier would **fail** on the old uploaded-zip state (missing script,
+wrong routing, absent merge code) and **pass** only on the corrected snapshot.
+
 ---
 
 ## Demo
