@@ -148,6 +148,17 @@ class TestStaticProducerPath:
                 f"instead of 'direct' — EMBEDDED_TEXT_OCR_FLOOR fix missing."
             )
 
+    def test_build_concept_quality_index_function_exists(self):
+        """build_concept_quality_index() must be importable from export_sqladapt."""
+        src = str(REPO_ROOT / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        from algl_pdf_helper import export_sqladapt  # noqa: PLC0415
+
+        assert hasattr(export_sqladapt, "build_concept_quality_index"), (
+            "build_concept_quality_index function missing from export_sqladapt"
+        )
+
     def test_export_sqladapt_has_merge_logic(self):
         """export_sqladapt.py must contain the merge-safe textbook-manifest code."""
         export_file = REPO_ROOT / "src" / "algl_pdf_helper" / "export_sqladapt.py"
@@ -309,6 +320,56 @@ class TestOutputArtifacts:
             + "\n".join(missing[:10])
             + ("\n  ..." if len(missing) > 10 else "")
         )
+
+    def test_concept_quality_exists(self):
+        assert (OUTPUT_DIR / "concept-quality.json").exists(), (
+            "concept-quality.json missing — re-run export to generate the quality index"
+        )
+
+    def test_concept_quality_schema_version(self):
+        data = json.loads((OUTPUT_DIR / "concept-quality.json").read_text())
+        assert data.get("schemaVersion") == "concept-quality-v1", (
+            f"Unexpected schemaVersion in concept-quality.json: {data.get('schemaVersion')!r}"
+        )
+
+    def test_concept_quality_keys_align_with_concept_map(self):
+        """Every key in concept-quality.json must be in concept-map.json."""
+        concept_map = json.loads((OUTPUT_DIR / "concept-map.json").read_text())
+        concept_quality = json.loads((OUTPUT_DIR / "concept-quality.json").read_text())
+        map_keys = set(concept_map.get("concepts", {}).keys())
+        quality_keys = set(concept_quality.get("qualityByConcept", {}).keys())
+        extra = quality_keys - map_keys
+        assert not extra, (
+            f"concept-quality.json has {len(extra)} keys not in concept-map: "
+            + ", ".join(sorted(extra)[:5])
+        )
+
+    def test_concept_quality_covers_all_concept_map_entries(self):
+        """Every concept-map key must appear in concept-quality.json."""
+        concept_map = json.loads((OUTPUT_DIR / "concept-map.json").read_text())
+        concept_quality = json.loads((OUTPUT_DIR / "concept-quality.json").read_text())
+        map_keys = set(concept_map.get("concepts", {}).keys())
+        quality_keys = set(concept_quality.get("qualityByConcept", {}).keys())
+        missing = map_keys - quality_keys
+        assert not missing, (
+            f"concept-quality.json missing {len(missing)} concept-map entries: "
+            + ", ".join(sorted(missing)[:5])
+        )
+
+    def test_concept_quality_field_values_valid(self):
+        """readabilityStatus and exampleQuality values must be from allowed sets."""
+        data = json.loads((OUTPUT_DIR / "concept-quality.json").read_text())
+        _valid_rs = {"ok", "fallback_only"}
+        _valid_eq = {"valid", "filtered", "hidden"}
+        bad = []
+        for key, entry in data.get("qualityByConcept", {}).items():
+            rs = entry.get("readabilityStatus")
+            eq = entry.get("exampleQuality")
+            if rs not in _valid_rs:
+                bad.append(f"{key}: readabilityStatus={rs!r}")
+            if eq not in _valid_eq:
+                bad.append(f"{key}: exampleQuality={eq!r}")
+        assert not bad, "Invalid quality field values: " + "; ".join(bad[:5])
 
     def test_textbook_units_has_units(self):
         data = json.loads((OUTPUT_DIR / "textbook-units.json").read_text())

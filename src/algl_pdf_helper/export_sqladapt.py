@@ -609,6 +609,63 @@ def enrich_units_with_learner_quality(
     return units
 
 
+def build_concept_quality_index(
+    units: list[dict],
+    source_doc_ids: list[str],
+) -> dict:
+    """Build a concept-quality lookup index from enriched unit records.
+
+    Produces the ``concept-quality.json`` artifact that the adaptive app can
+    load once at startup and use for O(1) concept-quality lookups without
+    scanning ``textbook-units.json`` at render time.
+
+    Args:
+        units: Enriched unit dicts from ``build_textbook_units()`` +
+               ``enrich_units_with_learner_quality()``.  Each unit must carry
+               the four quality fields (readabilityStatus, readabilityWarnings,
+               exampleQuality, learnerSafeSummary).
+        source_doc_ids: Ordered list of source document IDs, propagated to the
+               index header for provenance.
+
+    Returns:
+        Dict with schema:
+          {
+            "schemaVersion": "concept-quality-v1",
+            "generatedAt": "<ISO-8601>",
+            "sourceDocIds": [...],
+            "totalConcepts": N,
+            "qualityByConcept": {
+              "<docId>/<bareId>": {
+                "readabilityStatus": "ok" | "fallback_only",
+                "readabilityWarnings": [...],
+                "exampleQuality": "valid" | "filtered" | "hidden",
+                "learnerSafeSummary": "..."
+              },
+              ...
+            }
+          }
+    """
+    quality_by_concept: dict[str, dict] = {}
+    for unit in units:
+        namespaced_id: str = unit.get("namespacedId", "")
+        if not namespaced_id:
+            continue
+        quality_by_concept[namespaced_id] = {
+            "readabilityStatus": unit.get("readabilityStatus", "ok"),
+            "readabilityWarnings": unit.get("readabilityWarnings", []),
+            "exampleQuality": unit.get("exampleQuality", "hidden"),
+            "learnerSafeSummary": unit.get("learnerSafeSummary", ""),
+        }
+
+    return {
+        "schemaVersion": "concept-quality-v1",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "sourceDocIds": source_doc_ids,
+        "totalConcepts": len(quality_by_concept),
+        "qualityByConcept": quality_by_concept,
+    }
+
+
 def export_to_sqladapt(
     input_dir: Path,
     output_dir: Path | None = None,
@@ -727,6 +784,16 @@ def export_to_sqladapt(
     }
     with open(units_catalog_file, "w", encoding="utf-8") as f:
         json.dump(units_catalog, f, indent=2)
+
+    # Build and write concept-quality.json — concept-level quality index for
+    # direct lookup by the adaptive app without scanning textbook-units.json.
+    concept_quality_index = build_concept_quality_index(
+        all_units,
+        merged_map.get("sourceDocIds", [manifest.sourceDocId]),
+    )
+    concept_quality_file = output_dir / "concept-quality.json"
+    with open(concept_quality_file, "w", encoding="utf-8") as f:
+        json.dump(concept_quality_index, f, indent=2)
 
     # Build merge-safe textbook manifest:
     # Preserve all existing sourceDocs entries and only add/update the current doc.
@@ -1182,6 +1249,66 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                         "may be too low for learner-facing use"
                     )
 
+    # -- Check 7: concept-quality.json --
+    concept_quality_file = output_dir / "concept-quality.json"
+    concept_quality_key_count = 0
+    if not concept_quality_file.exists():
+        errors.append("concept-quality.json is missing")
+    else:
+        try:
+            with open(concept_quality_file, "r", encoding="utf-8") as _cqf:
+                cq_data = json.load(_cqf)
+
+            cq_schema = cq_data.get("schemaVersion", "")
+            if cq_schema != "concept-quality-v1":
+                errors.append(
+                    f"concept-quality.json has unexpected schemaVersion={cq_schema!r}; "
+                    "expected 'concept-quality-v1'"
+                )
+
+            quality_by_concept: dict = cq_data.get("qualityByConcept", {})
+            concept_quality_key_count = len(quality_by_concept)
+
+            # Keys must be a subset of concept-map namespaced IDs
+            cq_keys = set(quality_by_concept.keys())
+            map_keys = set(all_concepts.keys())
+            extra_cq_keys = cq_keys - map_keys
+            if extra_cq_keys:
+                warnings.append(
+                    f"concept-quality.json has {len(extra_cq_keys)} keys not in "
+                    "concept-map: " + ", ".join(sorted(extra_cq_keys)[:5])
+                )
+
+            missing_cq_keys = map_keys - cq_keys
+            if missing_cq_keys:
+                warnings.append(
+                    f"concept-quality.json missing {len(missing_cq_keys)} concept-map "
+                    "keys — re-run export to populate: "
+                    + ", ".join(sorted(missing_cq_keys)[:5])
+                    + ("..." if len(missing_cq_keys) > 5 else "")
+                )
+
+            # Validate field values for each concept entry
+            _valid_rs = {"ok", "fallback_only"}
+            _valid_eq = {"valid", "filtered", "hidden"}
+            bad_cq_values: list[str] = []
+            for cq_key, cq_entry in quality_by_concept.items():
+                rs = cq_entry.get("readabilityStatus")
+                eq = cq_entry.get("exampleQuality")
+                if rs not in _valid_rs:
+                    bad_cq_values.append(f"{cq_key}:readabilityStatus={rs!r}")
+                if eq not in _valid_eq:
+                    bad_cq_values.append(f"{cq_key}:exampleQuality={eq!r}")
+                if len(bad_cq_values) >= 5:
+                    break
+            if bad_cq_values:
+                errors.append(
+                    "concept-quality.json: invalid field values: "
+                    + "; ".join(bad_cq_values)
+                )
+        except Exception as _cqe:
+            errors.append(f"concept-quality.json: failed to parse — {_cqe}")
+
     # Aggregate quality counts for return payload
     fallback_only_total = 0
     if units_catalog_file.exists():
@@ -1209,4 +1336,5 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "chunks_meta_doc_ids": chunks_meta_doc_ids,
         "units_count": units_count,
         "fallback_only_count": fallback_only_total,
+        "concept_quality_key_count": concept_quality_key_count,
     }

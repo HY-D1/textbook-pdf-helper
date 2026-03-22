@@ -66,6 +66,66 @@ fields:
 If quality fields are absent from an older export, `validate-handoff` prints a
 warning and asks you to re-run the build.
 
+### Concept-level quality index (`concept-quality.json`)
+
+The export pipeline also writes a standalone **`concept-quality.json`** keyed
+by namespaced concept ID.  The adaptive app loads this file once at startup
+and performs O(1) quality lookups without scanning `textbook-units.json`.
+
+```text
+output/textbook-static/
+└── concept-quality.json   ← NEW: concept-level quality lookup index
+```
+
+**Schema (`concept-quality-v1`):**
+
+```json
+{
+  "schemaVersion": "concept-quality-v1",
+  "generatedAt": "2025-…",
+  "sourceDocIds": ["murachs-mysql-3rd-edition", "dbms-ramakrishnan-3rd-edition"],
+  "totalConcepts": 70,
+  "qualityByConcept": {
+    "dbms-ramakrishnan-3rd-edition/1nf": {
+      "readabilityStatus": "fallback_only",
+      "readabilityWarnings": ["garble_density=0.021 …"],
+      "exampleQuality": "filtered",
+      "learnerSafeSummary": "First Normal Form (1NF): Eliminating repeating groups…"
+    },
+    "murachs-mysql-3rd-edition/select-basic": {
+      "readabilityStatus": "ok",
+      "readabilityWarnings": [],
+      "exampleQuality": "valid",
+      "learnerSafeSummary": "Select Statement: Retrieve rows from a table"
+    }
+  }
+}
+```
+
+**How the adaptive app should consume this:**
+
+```ts
+// Load once at startup
+const conceptQuality = await fetch('/textbook-static/concept-quality.json').then(r => r.json());
+
+// On concept page render
+const quality = conceptQuality.qualityByConcept[namespacedConceptId];
+if (quality?.readabilityStatus === 'fallback_only') {
+  renderFallback(quality.learnerSafeSummary);
+} else {
+  renderFullExplanation(concept.markdownPath, quality?.exampleQuality);
+}
+```
+
+Keys in `qualityByConcept` are identical to the namespaced IDs in
+`concept-map.json`, so no transformation is required.
+
+`validate-handoff` checks that:
+- `concept-quality.json` exists and parses
+- every key in it appears in `concept-map.json` (no orphans)
+- every `concept-map.json` key is covered (no gaps)
+- field values are from the allowed sets
+
 Run the dedicated tests:
 
 ```bash

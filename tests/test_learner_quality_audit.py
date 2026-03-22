@@ -21,6 +21,7 @@ from algl_pdf_helper.learner_quality_audit import (
     LearnerQualityResult,
     audit_concept_markdown,
 )
+from algl_pdf_helper.export_sqladapt import build_concept_quality_index
 
 
 # ---------------------------------------------------------------------------
@@ -461,3 +462,105 @@ condition. vVhat fraction of the employees are older than 40?
         assert result.exampleQuality != "valid", (
             "Contaminated SQL examples should not be marked 'valid'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Concept-quality index (build_concept_quality_index)
+# ---------------------------------------------------------------------------
+
+
+def _make_unit(
+    namespaced_id: str,
+    readability_status: str = "ok",
+    example_quality: str = "valid",
+    warnings: list | None = None,
+    safe_summary: str = "Summary text",
+) -> dict:
+    """Build a minimal enriched unit dict suitable for the quality index builder."""
+    doc_id, bare_id = namespaced_id.split("/", 1) if "/" in namespaced_id else ("doc", namespaced_id)
+    return {
+        "unitId": f"unit-{bare_id}",
+        "sourceDocId": doc_id,
+        "conceptId": bare_id,
+        "namespacedId": namespaced_id,
+        "title": bare_id.replace("-", " ").title(),
+        "readabilityStatus": readability_status,
+        "readabilityWarnings": warnings or [],
+        "exampleQuality": example_quality,
+        "learnerSafeSummary": safe_summary,
+    }
+
+
+class TestConceptQualityIndex:
+    """Tests for build_concept_quality_index()."""
+
+    def test_schema_version_header(self):
+        index = build_concept_quality_index([], [])
+        assert index["schemaVersion"] == "concept-quality-v1"
+
+    def test_empty_units_produces_empty_index(self):
+        index = build_concept_quality_index([], ["doc-a"])
+        assert index["totalConcepts"] == 0
+        assert index["qualityByConcept"] == {}
+
+    def test_source_doc_ids_propagated(self):
+        index = build_concept_quality_index([], ["murach", "ramakrishnan"])
+        assert set(index["sourceDocIds"]) == {"murach", "ramakrishnan"}
+
+    def test_bad_concept_gets_fallback_only(self):
+        units = [
+            _make_unit(
+                "doc-a/1nf",
+                readability_status="fallback_only",
+                example_quality="filtered",
+                warnings=["garble_density=0.02"],
+                safe_summary="1NF: Eliminating repeating groups",
+            )
+        ]
+        index = build_concept_quality_index(units, ["doc-a"])
+        entry = index["qualityByConcept"]["doc-a/1nf"]
+        assert entry["readabilityStatus"] == "fallback_only"
+        assert entry["exampleQuality"] == "filtered"
+        assert "garble_density" in entry["readabilityWarnings"][0]
+        assert "1NF" in entry["learnerSafeSummary"]
+
+    def test_clean_concept_is_ok(self):
+        units = [
+            _make_unit(
+                "doc-a/select-basic",
+                readability_status="ok",
+                example_quality="valid",
+                safe_summary="Select Statement: Retrieve rows from a table",
+            )
+        ]
+        index = build_concept_quality_index(units, ["doc-a"])
+        entry = index["qualityByConcept"]["doc-a/select-basic"]
+        assert entry["readabilityStatus"] == "ok"
+        assert entry["exampleQuality"] == "valid"
+        assert entry["readabilityWarnings"] == []
+
+    def test_keys_align_with_namespaced_ids(self):
+        """Keys in qualityByConcept must exactly equal the namespacedId values."""
+        units = [
+            _make_unit("doc-a/join-inner"),
+            _make_unit("doc-b/group-by"),
+        ]
+        index = build_concept_quality_index(units, ["doc-a", "doc-b"])
+        assert set(index["qualityByConcept"].keys()) == {"doc-a/join-inner", "doc-b/group-by"}
+        assert index["totalConcepts"] == 2
+
+    def test_unit_without_namespaced_id_is_skipped(self):
+        """Units with empty namespacedId must not appear in the index."""
+        units = [
+            {"unitId": "unit-x", "readabilityStatus": "ok", "exampleQuality": "valid",
+             "readabilityWarnings": [], "learnerSafeSummary": "x", "namespacedId": ""},
+            _make_unit("doc-a/select-basic"),
+        ]
+        index = build_concept_quality_index(units, ["doc-a"])
+        assert set(index["qualityByConcept"].keys()) == {"doc-a/select-basic"}
+
+    def test_total_concepts_matches_populated_entries(self):
+        units = [_make_unit(f"doc-a/concept-{i}") for i in range(5)]
+        index = build_concept_quality_index(units, ["doc-a"])
+        assert index["totalConcepts"] == 5
+        assert len(index["qualityByConcept"]) == 5
