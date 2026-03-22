@@ -764,37 +764,6 @@ def export_to_sqladapt(
     with open(concept_map_file, "w", encoding="utf-8") as f:
         json.dump(merged_map, f, indent=2)
 
-    # Build and write textbook-units.json.
-    # Always regenerate from the full merged_map so every export produces a
-    # complete, consistent snapshot regardless of which doc was processed last.
-    units_catalog_file = output_dir / "textbook-units.json"
-    all_units = build_textbook_units(merged_map)
-    # Enrich with learner-facing quality metadata.  This pass reads the
-    # already-written markdown files (from a prior export of either doc) so
-    # concepts whose markdown doesn't exist yet will get empty-text audits.
-    # The second export (which writes the second doc's files) re-runs the full
-    # enrich pass so both docs end up with quality fields in the final catalog.
-    enrich_units_with_learner_quality(all_units, concepts_dir)
-    units_catalog: dict = {
-        "schemaVersion": "textbook-units-v1",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "sourceDocIds": merged_map.get("sourceDocIds", [manifest.sourceDocId]),
-        "totalUnits": len(all_units),
-        "units": all_units,
-    }
-    with open(units_catalog_file, "w", encoding="utf-8") as f:
-        json.dump(units_catalog, f, indent=2)
-
-    # Build and write concept-quality.json — concept-level quality index for
-    # direct lookup by the adaptive app without scanning textbook-units.json.
-    concept_quality_index = build_concept_quality_index(
-        all_units,
-        merged_map.get("sourceDocIds", [manifest.sourceDocId]),
-    )
-    concept_quality_file = output_dir / "concept-quality.json"
-    with open(concept_quality_file, "w", encoding="utf-8") as f:
-        json.dump(concept_quality_index, f, indent=2)
-
     # Build merge-safe textbook manifest:
     # Preserve all existing sourceDocs entries and only add/update the current doc.
     existing_textbook_manifest: dict = {}
@@ -889,7 +858,33 @@ This directory contains concept documentation for **{manifest.sourceDocId}**.
     readme_file = doc_concepts_dir / "README.md"
     with open(readme_file, "w", encoding="utf-8") as f:
         f.write(readme_content)
-    
+
+    # Build and write textbook-units.json.
+    # Markdown files for this doc are now on disk, so the quality audit reads
+    # real text instead of empty strings.
+    units_catalog_file = output_dir / "textbook-units.json"
+    all_units = build_textbook_units(merged_map)
+    enrich_units_with_learner_quality(all_units, concepts_dir)
+    units_catalog: dict = {
+        "schemaVersion": "textbook-units-v1",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "sourceDocIds": merged_map.get("sourceDocIds", [manifest.sourceDocId]),
+        "totalUnits": len(all_units),
+        "units": all_units,
+    }
+    with open(units_catalog_file, "w", encoding="utf-8") as f:
+        json.dump(units_catalog, f, indent=2)
+
+    # Build and write concept-quality.json — concept-level quality index for
+    # direct lookup by the adaptive app without scanning textbook-units.json.
+    concept_quality_index = build_concept_quality_index(
+        all_units,
+        merged_map.get("sourceDocIds", [manifest.sourceDocId]),
+    )
+    concept_quality_file = output_dir / "concept-quality.json"
+    with open(concept_quality_file, "w", encoding="utf-8") as f:
+        json.dump(concept_quality_index, f, indent=2)
+
     # Save chunks metadata (for reference)
     chunks_meta_file = output_dir / "chunks-metadata.json"
     chunks_metadata = {}
