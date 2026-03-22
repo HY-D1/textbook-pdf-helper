@@ -7,6 +7,7 @@ the SQL-Adapt main application using the textbook-static-v1 schema.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -409,6 +410,83 @@ def merge_concept_maps(
     }
 
 
+def build_textbook_units(merged_concept_map: dict) -> list[dict]:
+    """Build the textbook-units catalog from a merged concept map.
+
+    Each unit has a *deterministic* unitId derived from sha256 of
+    ``"{sourceDocId}:{bareConceptId}"``, truncated to 16 hex characters and
+    prefixed with ``"unit-"``.  The ID is stable across repeated exports from
+    the same source content because it is derived solely from the logical
+    identity of the concept, not from timestamps or random state.
+
+    Args:
+        merged_concept_map: The full merged concept-map dict produced by
+            ``merge_concept_maps()`` or built in-memory during export.
+            Expected keys: ``concepts`` (dict of namespaced_id → entry),
+            ``sourceDocIds`` (list[str]).
+
+    Returns:
+        Stable-sorted (sourceDocId, conceptId) list of unit record dicts,
+        one record per concept entry.
+    """
+    units: list[dict] = []
+
+    for namespaced_id, concept_data in merged_concept_map.get("concepts", {}).items():
+        source_doc_id: str = concept_data.get("sourceDocId", "")
+
+        # Bare concept ID — the part after the namespace prefix
+        if "/" in namespaced_id:
+            _, bare_id = namespaced_id.split("/", 1)
+        else:
+            bare_id = namespaced_id
+
+        # Deterministic unit ID: sha256 of canonical identity string
+        unit_id = (
+            "unit-"
+            + hashlib.sha256(f"{source_doc_id}:{bare_id}".encode()).hexdigest()[:16]
+        )
+
+        # Relative markdown path from the textbook-static root
+        markdown_path = f"concepts/{source_doc_id}/{bare_id}.md"
+
+        # Sorted page list and a compact span object
+        page_numbers: list[int] = sorted(concept_data.get("pageNumbers", []))
+        page_span: dict | None = (
+            {"start": page_numbers[0], "end": page_numbers[-1]}
+            if page_numbers
+            else None
+        )
+
+        # Flat deduplicated chunk IDs, preserving section order
+        source_chunk_ids: list[str] = list(
+            dict.fromkeys(
+                cid
+                for section_chunks in concept_data.get("chunkIds", {}).values()
+                for cid in section_chunks
+            )
+        )
+
+        units.append(
+            {
+                "unitId": unit_id,
+                "sourceDocId": source_doc_id,
+                "conceptId": bare_id,
+                "namespacedId": namespaced_id,
+                "title": concept_data.get("title", ""),
+                "difficulty": concept_data.get("difficulty", "beginner"),
+                "markdownPath": markdown_path,
+                "pageNumbers": page_numbers,
+                "pageSpan": page_span,
+                "sourceChunkIds": source_chunk_ids,
+                "relatedConcepts": concept_data.get("relatedConcepts", []),
+            }
+        )
+
+    # Deterministic ordering: sort by (sourceDocId, conceptId)
+    units.sort(key=lambda u: (u["sourceDocId"], u["conceptId"]))
+    return units
+
+
 def export_to_sqladapt(
     input_dir: Path,
     output_dir: Path | None = None,
@@ -505,6 +583,21 @@ def export_to_sqladapt(
     # Save merged concept map
     with open(concept_map_file, "w", encoding="utf-8") as f:
         json.dump(merged_map, f, indent=2)
+
+    # Build and write textbook-units.json.
+    # Always regenerate from the full merged_map so every export produces a
+    # complete, consistent snapshot regardless of which doc was processed last.
+    units_catalog_file = output_dir / "textbook-units.json"
+    all_units = build_textbook_units(merged_map)
+    units_catalog: dict = {
+        "schemaVersion": "textbook-units-v1",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "sourceDocIds": merged_map.get("sourceDocIds", [manifest.sourceDocId]),
+        "totalUnits": len(all_units),
+        "units": all_units,
+    }
+    with open(units_catalog_file, "w", encoding="utf-8") as f:
+        json.dump(units_catalog, f, indent=2)
 
     # Build merge-safe textbook manifest:
     # Preserve all existing sourceDocs entries and only add/update the current doc.
@@ -673,6 +766,7 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
     concept_map_file = output_dir / "concept-map.json"
     textbook_manifest_file = output_dir / "textbook-manifest.json"
     chunks_meta_file = output_dir / "chunks-metadata.json"
+    units_catalog_file = output_dir / "textbook-units.json"
     concepts_dir = output_dir / "concepts"
 
     # -- Load concept-map.json --
@@ -689,6 +783,7 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
             "source_docs_count": 0,
             "doc_dirs_count": 0,
             "chunks_meta_doc_ids": [],
+            "units_count": 0,
         }
 
     with open(concept_map_file, "r", encoding="utf-8") as f:
@@ -799,6 +894,57 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                 f"chunks-metadata.json missing docIds: {missing_from_chunks_meta}"
             )
 
+    # -- Check 5: textbook-units.json --
+    units_count = 0
+    if not units_catalog_file.exists():
+        errors.append("textbook-units.json is missing")
+    else:
+        with open(units_catalog_file, "r", encoding="utf-8") as f:
+            units_data = json.load(f)
+
+        units_list: list[dict] = units_data.get("units", [])
+        units_count = len(units_list)
+
+        # unitId uniqueness
+        unit_ids = [u.get("unitId", "") for u in units_list]
+        if len(unit_ids) != len(set(unit_ids)):
+            errors.append("textbook-units.json contains duplicate unitIds")
+
+        # markdownPath resolution (all must point to existing files)
+        missing_md_paths = [
+            u["markdownPath"]
+            for u in units_list
+            if not (output_dir / u.get("markdownPath", "__missing__")).exists()
+        ]
+        if missing_md_paths:
+            errors.append(
+                f"textbook-units.json: {len(missing_md_paths)} markdownPath values "
+                "don't resolve: "
+                + ", ".join(missing_md_paths[:5])
+                + ("..." if len(missing_md_paths) > 5 else "")
+            )
+
+        # Coverage: every concept-map entry must have a unit, and vice-versa
+        units_namespaced_ids = {u.get("namespacedId", "") for u in units_list}
+        map_namespaced_ids = set(all_concepts.keys())
+
+        missing_from_units = map_namespaced_ids - units_namespaced_ids
+        if missing_from_units:
+            errors.append(
+                f"textbook-units.json missing {len(missing_from_units)} concept-map "
+                "entries: "
+                + ", ".join(sorted(missing_from_units)[:5])
+                + ("..." if len(missing_from_units) > 5 else "")
+            )
+
+        extra_in_units = units_namespaced_ids - map_namespaced_ids
+        if extra_in_units:
+            warnings.append(
+                f"textbook-units.json has {len(extra_in_units)} entries not in "
+                "concept-map: "
+                + ", ".join(sorted(extra_in_units)[:5])
+            )
+
     valid = len(errors) == 0
 
     return {
@@ -812,4 +958,5 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "source_docs_count": source_docs_count,
         "doc_dirs_count": doc_dirs_count,
         "chunks_meta_doc_ids": chunks_meta_doc_ids,
+        "units_count": units_count,
     }

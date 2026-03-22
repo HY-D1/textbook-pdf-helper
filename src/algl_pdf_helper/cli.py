@@ -306,6 +306,7 @@ def validate_handoff(
     typer.echo(f"Validating: {output_dir}")
     typer.echo(f"  Concept-map entries : {result['concept_map_entries']}")
     typer.echo(f"  Markdown files       : {result['markdown_files']}")
+    typer.echo(f"  Textbook units        : {result['units_count']}")
     typer.echo(f"  Source docs (manifest): {result['source_docs_count']}")
     typer.echo(f"  Doc directories      : {result['doc_dirs_count']}")
     typer.echo(f"  chunks-metadata docIds: {result['chunks_meta_doc_ids']}")
