@@ -1316,6 +1316,26 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         except Exception:
             pass
 
+    # Per-sourceDoc counts for richer CLI output
+    per_doc_concept_counts: dict[str, int] = {}
+    for doc_id in map_source_doc_ids:
+        per_doc_concept_counts[doc_id] = sum(
+            1 for k in all_concepts if k.startswith(f"{doc_id}/")
+        )
+
+    per_doc_unit_counts: dict[str, int] = {}
+    if units_catalog_file.exists():
+        try:
+            with open(units_catalog_file, "r", encoding="utf-8") as _fu:
+                _udata = json.load(_fu)
+            for _u in _udata.get("units", []):
+                _nid = _u.get("namespacedId", "")
+                if "/" in _nid:
+                    _did = _nid.split("/", 1)[0]
+                    per_doc_unit_counts[_did] = per_doc_unit_counts.get(_did, 0) + 1
+        except Exception:
+            pass
+
     valid = len(errors) == 0
 
     return {
@@ -1332,4 +1352,6 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "units_count": units_count,
         "fallback_only_count": fallback_only_total,
         "concept_quality_key_count": concept_quality_key_count,
+        "per_doc_concept_counts": per_doc_concept_counts,
+        "per_doc_unit_counts": per_doc_unit_counts,
     }

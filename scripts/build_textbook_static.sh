@@ -181,6 +181,18 @@ fi
 if [ -f "$OUTPUT_DIR/chunks-metadata.json" ]; then
     echo " ✅ chunks-metadata.json"
 fi
+if [ -f "$OUTPUT_DIR/textbook-units.json" ]; then
+    unit_count=$($PYTHON -c "import json; d=json.load(open('$OUTPUT_DIR/textbook-units.json')); print(len(d.get('units',[])))" 2>/dev/null || echo "?")
+    echo " ✅ textbook-units.json  ($unit_count units)"
+else
+    echo " ❌ textbook-units.json  MISSING"
+fi
+if [ -f "$OUTPUT_DIR/concept-quality.json" ]; then
+    quality_count=$($PYTHON -c "import json; d=json.load(open('$OUTPUT_DIR/concept-quality.json')); print(len(d.get('qualityByConcept',{})))" 2>/dev/null || echo "?")
+    echo " ✅ concept-quality.json ($quality_count concepts)"
+else
+    echo " ❌ concept-quality.json MISSING"
+fi
 
 echo ""
 if [ "$VALID" -eq 1 ]; then

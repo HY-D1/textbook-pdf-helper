@@ -132,6 +132,63 @@ Run the dedicated tests:
 PYTHONPATH=src python -m pytest tests/test_learner_quality_audit.py -v
 ```
 
+### Build → Validate → Sync runbook
+
+Complete sequence to produce a sync-ready bundle and hand it off to the adaptive app:
+
+```bash
+# 1. Build — index both PDFs and produce the merged corpus
+PYTHONPATH=src ./scripts/build_textbook_static.sh ./output/textbook-static
+
+# 2. Validate — confirm the bundle is complete and internally consistent
+PYTHONPATH=src python -m algl_pdf_helper validate-handoff ./output/textbook-static
+```
+
+Expected `validate-handoff` output:
+
+```text
+Validating: ./output/textbook-static
+  Concept-map entries  : 70
+  Markdown files        : 70
+  Textbook units         : 70
+  Concept-quality keys   : 70
+  Source docs (manifest) : 2
+  Doc directories        : 2
+  chunks-metadata docIds : ['dbms-ramakrishnan-3rd-edition', 'murachs-mysql-3rd-edition']
+  Per-source-doc summary:
+    dbms-ramakrishnan-3rd-edition: 35 concepts, 35 units
+    murachs-mysql-3rd-edition: 35 concepts, 35 units
+  Learner quality        : 28 ok, 42 fallback_only (60% fallback)
+
+✅ Handoff integrity: VALID
+```
+
+The bundle is ready for direct sync when `validate-handoff` exits 0 and prints `VALID`.
+
+```bash
+# 3. Sync — copy the bundle into the adaptive app's public directory
+#    (adjust DST to your adaptive app's static asset path)
+DST=../adaptive-app/public/textbook-static
+rsync -av --delete ./output/textbook-static/ "$DST/"
+```
+
+The adaptive app consumes the bundle as-is — no transformation required.
+Files that must be present before the sync script is run:
+
+| File | Consumed by |
+| ---- | ----------- |
+| `concept-map.json` | concept browser, navigation |
+| `textbook-manifest.json` | startup: verifies bundle version |
+| `chunks-metadata.json` | search / chunk lookup |
+| `textbook-units.json` | unit renderer, sequencing |
+| `concept-quality.json` | quality gate before rendering |
+| `concepts/<docId>/*.md` | individual concept pages |
+
+```bash
+# 4. Smoke-test the bundle (no PDFs required once output/ exists)
+PYTHONPATH=src python -m pytest tests/test_adaptive_handoff_smoke.py -v
+```
+
 ### Smoke gate (CI verification)
 
 A single pytest command proves the entire producer path — static structure,

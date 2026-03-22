@@ -1633,6 +1633,48 @@ def _build_minimal_export(tmp_path: Path, num_docs: int = 1) -> Path:
     # chunks-metadata.json
     (export_dir / "chunks-metadata.json").write_text(json.dumps(chunks_meta, indent=2))
 
+    # textbook-units.json — one unit per concept, with all required fields
+    units_list = []
+    for source_order, (namespaced_id, concept_entry) in enumerate(concept_map_concepts.items()):
+        doc_id, bare_id = namespaced_id.split("/", 1)
+        units_list.append({
+            "unitId": f"unit-{namespaced_id.replace('/', '-')}",
+            "namespacedId": namespaced_id,
+            "canonicalConceptKey": namespaced_id,
+            "unitType": "explanation",
+            "keywords": [bare_id],
+            "aliases": [],
+            "shortExcerpt": f"A test concept excerpt for {bare_id}.",
+            "sourceSectionTitles": ["Section 1"],
+            "prerequisiteConceptIds": [],
+            "sourceOrder": source_order,
+            "unitOrderWithinConcept": 0,
+            "markdownPath": f"concepts/{doc_id}/{bare_id}.md",
+            "readabilityStatus": "ok",
+            "readabilityWarnings": [],
+            "exampleQuality": "valid",
+            "learnerSafeSummary": f"{concept_entry['title']}: {concept_entry['definition']}",
+        })
+    (export_dir / "textbook-units.json").write_text(json.dumps({"units": units_list}, indent=2))
+
+    # concept-quality.json — one entry per concept
+    quality_by_concept = {
+        namespaced_id: {
+            "readabilityStatus": "ok",
+            "readabilityWarnings": [],
+            "exampleQuality": "valid",
+            "learnerSafeSummary": f"{entry['title']}: {entry['definition']}",
+        }
+        for namespaced_id, entry in concept_map_concepts.items()
+    }
+    (export_dir / "concept-quality.json").write_text(json.dumps({
+        "schemaVersion": "concept-quality-v1",
+        "generatedAt": "2026-01-01T00:00:00+00:00",
+        "sourceDocIds": source_doc_ids,
+        "totalConcepts": len(quality_by_concept),
+        "qualityByConcept": quality_by_concept,
+    }, indent=2))
+
     return export_dir
 
 

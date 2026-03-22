@@ -304,20 +304,32 @@ def validate_handoff(
     result = validate_handoff_integrity(output_dir)
 
     typer.echo(f"Validating: {output_dir}")
-    typer.echo(f"  Concept-map entries : {result['concept_map_entries']}")
-    typer.echo(f"  Markdown files       : {result['markdown_files']}")
-    typer.echo(f"  Textbook units        : {result['units_count']}")
-    typer.echo(f"  Concept-quality keys  : {result.get('concept_quality_key_count', 0)}")
-    typer.echo(f"  Source docs (manifest): {result['source_docs_count']}")
-    typer.echo(f"  Doc directories      : {result['doc_dirs_count']}")
-    typer.echo(f"  chunks-metadata docIds: {result['chunks_meta_doc_ids']}")
+    typer.echo(f"  Concept-map entries  : {result['concept_map_entries']}")
+    typer.echo(f"  Markdown files        : {result['markdown_files']}")
+    typer.echo(f"  Textbook units         : {result['units_count']}")
+    typer.echo(f"  Concept-quality keys   : {result.get('concept_quality_key_count', 0)}")
+    typer.echo(f"  Source docs (manifest) : {result['source_docs_count']}")
+    typer.echo(f"  Doc directories        : {result['doc_dirs_count']}")
+    typer.echo(f"  chunks-metadata docIds : {result['chunks_meta_doc_ids']}")
+
+    # Per-sourceDoc breakdown
+    per_doc_concepts = result.get("per_doc_concept_counts", {})
+    per_doc_units = result.get("per_doc_unit_counts", {})
+    all_doc_ids = sorted(set(list(per_doc_concepts.keys()) + list(per_doc_units.keys())))
+    if all_doc_ids:
+        typer.echo("  Per-source-doc summary:")
+        for doc_id in all_doc_ids:
+            concepts = per_doc_concepts.get(doc_id, 0)
+            units = per_doc_units.get(doc_id, 0)
+            typer.echo(f"    {doc_id}: {concepts} concepts, {units} units")
+
     # Learner quality summary
     fallback_count = result.get("fallback_only_count", 0)
     total_units = result.get("units_count", 0)
     if total_units > 0:
         ok_count = total_units - fallback_count
         typer.echo(
-            f"  Learner quality      : {ok_count} ok, "
+            f"  Learner quality        : {ok_count} ok, "
             f"{fallback_count} fallback_only"
             f" ({fallback_count / total_units:.0%} fallback)"
         )
