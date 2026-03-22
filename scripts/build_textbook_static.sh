@@ -42,6 +42,11 @@ fi
 
 PYTHON="${PYTHON:-python}"
 
+# Ensure the src package is importable for subprocess calls.
+# On macOS the .pth files in .venv/site-packages can get the UF_HIDDEN flag and
+# be silently skipped by Python's site module, so we set PYTHONPATH explicitly.
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
 echo "============================================================"
 echo " build_textbook_static — dual-PDF textbook-static export"
 echo "============================================================"
