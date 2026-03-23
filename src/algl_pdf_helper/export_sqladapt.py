@@ -1341,7 +1341,10 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
     # Aggregate quality counts (and enrichment coverage) for return payload
     fallback_only_total = 0
     fallback_enriched_total = 0   # fallback_only units that have learnerSafeKeyPoints
+    fallback_with_examples_total = 0  # fallback_only units that have learnerSafeExamples
     per_doc_fallback_counts: dict[str, int] = {}
+    per_doc_fallback_enriched: dict[str, int] = {}  # per-doc enrichment counts
+    per_doc_fallback_examples: dict[str, int] = {}  # per-doc examples counts
     if units_catalog_file.exists():
         try:
             with open(units_catalog_file, "r", encoding="utf-8") as _fq:
@@ -1354,8 +1357,20 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                         _did = _nid.split("/", 1)[0]
                         per_doc_fallback_counts[_did] = per_doc_fallback_counts.get(_did, 0) + 1
                     # Count units that have the enriched learner-safe fields
-                    if _u.get("learnerSafeKeyPoints"):
+                    _key_points = _u.get("learnerSafeKeyPoints", [])
+                    if _key_points and len(_key_points) > 0:
                         fallback_enriched_total += 1
+                        if "/" in _nid:
+                            _did = _nid.split("/", 1)[0]
+                            per_doc_fallback_enriched[_did] = per_doc_fallback_enriched.get(_did, 0) + 1
+                    # Count fallback units with learnerSafeExamples (when exampleQuality != hidden)
+                    _example_quality = _u.get("exampleQuality", "hidden")
+                    _examples = _u.get("learnerSafeExamples", [])
+                    if _example_quality != "hidden" and _examples and len(_examples) > 0:
+                        fallback_with_examples_total += 1
+                        if "/" in _nid:
+                            _did = _nid.split("/", 1)[0]
+                            per_doc_fallback_examples[_did] = per_doc_fallback_examples.get(_did, 0) + 1
         except Exception:
             pass
 
@@ -1395,8 +1410,11 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "units_count": units_count,
         "fallback_only_count": fallback_only_total,
         "fallback_enriched_count": fallback_enriched_total,
+        "fallback_with_examples_count": fallback_with_examples_total,
         "concept_quality_key_count": concept_quality_key_count,
         "per_doc_concept_counts": per_doc_concept_counts,
         "per_doc_unit_counts": per_doc_unit_counts,
         "per_doc_fallback_counts": per_doc_fallback_counts,
+        "per_doc_fallback_enriched": per_doc_fallback_enriched,
+        "per_doc_fallback_examples": per_doc_fallback_examples,
     }

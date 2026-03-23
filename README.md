@@ -166,6 +166,21 @@ Keys in `qualityByConcept` are identical to the namespaced IDs in
 | `exampleQuality: filtered` | SQL code blocks contain embedded prose. Either skip examples entirely or show them with a caveat banner ("Examples may contain formatting issues"). |
 | `exampleQuality: hidden` | No SQL examples were extracted. Do not show an empty examples section. |
 
+### Fallback enrichment coverage guarantees
+
+When concepts are marked `fallback_only`, the pipeline extracts structured metadata
+to ensure learners still receive useful context. `validate-handoff` enforces
+coverage thresholds:
+
+| Metric                    | Threshold | Meaning                                                                                                      |
+|---------------------------|-----------|--------------------------------------------------------------------------------------------------------------|
+| **Key points coverage**   | ≥ 80%     | Fallback concepts with `learnerSafeKeyPoints` array present                                                  |
+| **Examples coverage**     | ≥ 50%     | Fallback concepts with `learnerSafeExamples` array present (only counted when `exampleQuality` is `valid` or `filtered`) |
+
+If coverage falls below these thresholds, `validate-handoff` prints a warning
+but still exits 0 (the bundle is valid but may provide a degraded learner
+experience). CI can treat the warning as a failure if desired.
+
 `validate-handoff` checks that:
 - `concept-quality.json` exists and parses
 - every key in it appears in `concept-map.json` (no orphans)
@@ -205,6 +220,10 @@ Validating: ./output/textbook-static
     dbms-ramakrishnan-3rd-edition: 35 concepts, 35 units
     murachs-mysql-3rd-edition: 35 concepts, 35 units
   Learner quality        : 28 ok, 42 fallback_only (60% fallback)
+  Fallback enrichment    : 38 / 42 have learnerSafeKeyPoints (90%)
+  Fallback examples      : 25 / 35 have learnerSafeExamples (71%)
+  Key points coverage    : 90% (threshold: 80%)
+  Examples coverage      : 71% (threshold: 50%)
 
 ✅ Handoff integrity: VALID
 ```

@@ -412,3 +412,138 @@ class TestValidateHandoffCLI:
         assert "VALID" in result.stdout, (
             f"Expected 'VALID' in validate-handoff output:\n{result.stdout}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tier 3c — Fallback enrichment coverage regression checks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _OUTPUT_EXISTS, reason="output/textbook-static not present — run build first")
+class TestFallbackEnrichmentCoverage:
+    """Regression checks for fallback enrichment coverage.
+
+    These tests verify that the build-time coverage guarantees are met:
+    - ≥80% of fallback_only concepts must have learnerSafeKeyPoints
+    - ≥50% of fallback_only concepts (where exampleQuality != hidden) must have learnerSafeExamples
+    """
+
+    KEY_POINTS_THRESHOLD = 0.80
+    EXAMPLES_THRESHOLD = 0.50
+
+    def _load_units(self) -> list[dict]:
+        """Load textbook units from output."""
+        data = json.loads((OUTPUT_DIR / "textbook-units.json").read_text())
+        return data.get("units", [])
+
+    def test_key_points_coverage_threshold(self):
+        """≥80% of fallback_only concepts must have learnerSafeKeyPoints."""
+        units = self._load_units()
+        fallback_units = [u for u in units if u.get("readabilityStatus") == "fallback_only"]
+
+        if not fallback_units:
+            pytest.skip("No fallback_only concepts found — coverage check not applicable")
+
+        enriched = [u for u in fallback_units if u.get("learnerSafeKeyPoints")]
+        coverage = len(enriched) / len(fallback_units)
+
+        assert coverage >= self.KEY_POINTS_THRESHOLD, (
+            f"Key points coverage {coverage:.1%} is below threshold {self.KEY_POINTS_THRESHOLD:.0%}. "
+            f"Only {len(enriched)}/{len(fallback_units)} fallback_only concepts have learnerSafeKeyPoints. "
+            "This is a build-quality regression — enrichment pipeline may be broken."
+        )
+
+    def test_examples_coverage_threshold(self):
+        """≥50% of fallback_only concepts (where exampleQuality != hidden) must have learnerSafeExamples."""
+        units = self._load_units()
+        fallback_units = [u for u in units if u.get("readabilityStatus") == "fallback_only"]
+
+        if not fallback_units:
+            pytest.skip("No fallback_only concepts found — coverage check not applicable")
+
+        # Only count fallback units where examples are expected (exampleQuality != hidden)
+        fallback_with_examples_expected = [
+            u for u in fallback_units
+            if u.get("exampleQuality") != "hidden"
+        ]
+
+        if not fallback_with_examples_expected:
+            pytest.skip("No fallback_only concepts with expected examples — coverage check not applicable")
+
+        with_examples = [
+            u for u in fallback_with_examples_expected
+            if u.get("learnerSafeExamples")
+        ]
+        coverage = len(with_examples) / len(fallback_with_examples_expected)
+
+        assert coverage >= self.EXAMPLES_THRESHOLD, (
+            f"Examples coverage {coverage:.1%} is below threshold {self.EXAMPLES_THRESHOLD:.0%}. "
+            f"Only {len(with_examples)}/{len(fallback_with_examples_expected)} fallback_only concepts "
+            f"with exampleQuality != hidden have learnerSafeExamples. "
+            "This is a build-quality regression — SQL extraction pipeline may be broken."
+        )
+
+    def test_all_fallback_have_learner_safe_summary(self):
+        """Every fallback_only concept must have a learnerSafeSummary."""
+        units = self._load_units()
+        fallback_units = [u for u in units if u.get("readabilityStatus") == "fallback_only"]
+
+        missing_summary = [u.get("unitId", "?") for u in fallback_units if not u.get("learnerSafeSummary")]
+
+        assert not missing_summary, (
+            f"{len(missing_summary)} fallback_only concepts missing learnerSafeSummary: "
+            + ", ".join(missing_summary[:5])
+        )
+
+    def test_key_points_structure(self):
+        """learnerSafeKeyPoints must be a non-empty list of strings when present."""
+        units = self._load_units()
+        fallback_units = [u for u in units if u.get("readabilityStatus") == "fallback_only"]
+
+        bad_structure = []
+        for u in fallback_units:
+            kp = u.get("learnerSafeKeyPoints")
+            if kp is not None:
+                if not isinstance(kp, list) or not all(isinstance(item, str) for item in kp):
+                    bad_structure.append(u.get("unitId", "?"))
+
+        assert not bad_structure, (
+            f"learnerSafeKeyPoints has invalid structure in units: " + ", ".join(bad_structure)
+        )
+
+    def test_examples_structure(self):
+        """learnerSafeExamples must be a list of {title, sql} objects when present."""
+        units = self._load_units()
+        fallback_units = [u for u in units if u.get("readabilityStatus") == "fallback_only"]
+
+        bad_structure = []
+        for u in fallback_units:
+            ex = u.get("learnerSafeExamples")
+            if ex is not None:
+                if not isinstance(ex, list):
+                    bad_structure.append(f"{u.get('unitId', '?')}: not a list")
+                    continue
+                for item in ex:
+                    if not isinstance(item, dict) or "sql" not in item:
+                        bad_structure.append(f"{u.get('unitId', '?')}: missing 'sql' field")
+                        break
+
+        assert not bad_structure, (
+            f"learnerSafeExamples has invalid structure: " + "; ".join(bad_structure[:5])
+        )
+
+    def test_concept_quality_index_has_enrichment_fields(self):
+        """concept-quality.json must include enrichment fields for all entries."""
+        cq = json.loads((OUTPUT_DIR / "concept-quality.json").read_text())
+        quality_by_concept = cq.get("qualityByConcept", {})
+
+        missing_fields = []
+        for key, entry in quality_by_concept.items():
+            if "learnerSafeKeyPoints" not in entry:
+                missing_fields.append(f"{key}: missing learnerSafeKeyPoints")
+            if "learnerSafeExamples" not in entry:
+                missing_fields.append(f"{key}: missing learnerSafeExamples")
+
+        assert not missing_fields, (
+            f"concept-quality.json missing enrichment fields: " + "; ".join(missing_fields[:5])
+        )

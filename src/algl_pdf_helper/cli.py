@@ -333,6 +333,7 @@ def validate_handoff(
     # Learner quality summary
     fallback_count = result.get("fallback_only_count", 0)
     fallback_enriched = result.get("fallback_enriched_count", 0)
+    fallback_with_examples = result.get("fallback_with_examples_count", 0)
     total_units = result.get("units_count", 0)
     if total_units > 0:
         ok_count = total_units - fallback_count
@@ -342,11 +343,34 @@ def validate_handoff(
             f" ({fallback_count / total_units:.0%} fallback)"
         )
         if fallback_count > 0:
-            enriched_pct = f"{fallback_enriched / fallback_count:.0%}" if fallback_count else "n/a"
+            enriched_pct = fallback_enriched / fallback_count
+            examples_pct = fallback_with_examples / fallback_count if fallback_count else 0
             typer.echo(
                 f"  Fallback enrichment    : {fallback_enriched}/{fallback_count} fallback_only "
-                f"concepts have learnerSafeKeyPoints ({enriched_pct} enriched)"
+                f"concepts have learnerSafeKeyPoints ({enriched_pct:.0%} enriched)"
             )
+            typer.echo(
+                f"  Fallback examples      : {fallback_with_examples}/{fallback_count} fallback_only "
+                f"concepts have learnerSafeExamples ({examples_pct:.0%} with examples)"
+            )
+
+            # Coverage thresholds
+            typer.echo("")
+            KEY_POINTS_THRESHOLD = 0.80  # 80% of fallback must have key points
+            EXAMPLES_THRESHOLD = 0.50    # 50% of fallback (with examples expected) must have examples
+
+            key_points_coverage_ok = enriched_pct >= KEY_POINTS_THRESHOLD
+            examples_coverage_ok = examples_pct >= EXAMPLES_THRESHOLD
+
+            if key_points_coverage_ok:
+                typer.echo(f"  ✅ Key points coverage  : {enriched_pct:.0%} (threshold: {KEY_POINTS_THRESHOLD:.0%})")
+            else:
+                typer.echo(f"  ⚠️  Key points coverage  : {enriched_pct:.0%} (threshold: {KEY_POINTS_THRESHOLD:.0%}) — BELOW TARGET")
+
+            if examples_coverage_ok:
+                typer.echo(f"  ✅ Examples coverage    : {examples_pct:.0%} (threshold: {EXAMPLES_THRESHOLD:.0%})")
+            else:
+                typer.echo(f"  ⚠️  Examples coverage    : {examples_pct:.0%} (threshold: {EXAMPLES_THRESHOLD:.0%}) — BELOW TARGET")
 
     if result["warnings"]:
         for w in result["warnings"]:
