@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .learner_quality_audit import audit_concept_markdown
+from .learner_quality_audit import (
+    audit_concept_markdown,
+    build_learner_safe_key_points,
+    extract_learner_safe_sql_blocks,
+)
 from .markdown_generator import generate_concept_markdown
 from .models import (
     TEXTBOOK_STATIC_SCHEMA_ID,
@@ -606,6 +610,24 @@ def enrich_units_with_learner_quality(
         unit["exampleQuality"] = result.exampleQuality
         unit["learnerSafeSummary"] = result.learnerSafeSummary
 
+        # Richer learner-safe fallback fields — derived from safe structured
+        # metadata only (never raw extracted prose).
+        unit["learnerSafeKeyPoints"] = build_learner_safe_key_points(
+            title=unit.get("title", ""),
+            definition=unit.get("shortExcerpt", ""),
+            keywords=unit.get("keywords", []),
+            related_concepts=unit.get("relatedConcepts", []),
+            source_section_titles=unit.get("sourceSectionTitles", []),
+            page_span=unit.get("pageSpan") or {},
+        )
+
+        # Safe SQL examples: extract prose-free individual blocks.
+        # When exampleQuality is "hidden" there are no SQL blocks at all.
+        if result.exampleQuality != "hidden":
+            unit["learnerSafeExamples"] = extract_learner_safe_sql_blocks(md_text)
+        else:
+            unit["learnerSafeExamples"] = []
+
     return units
 
 
@@ -639,11 +661,21 @@ def build_concept_quality_index(
                 "readabilityStatus": "ok" | "fallback_only",
                 "readabilityWarnings": [...],
                 "exampleQuality": "valid" | "filtered" | "hidden",
-                "learnerSafeSummary": "..."
+                "learnerSafeSummary": "...",
+                "learnerSafeKeyPoints": ["...", ...],
+                "learnerSafeExamples": [{"title": "...", "sql": "..."}, ...]
               },
               ...
             }
           }
+
+        ``learnerSafeKeyPoints`` is always a list of plain-text bullets derived
+        from safe structured metadata (title, definition, keywords, section
+        titles, related concepts, page span).
+
+        ``learnerSafeExamples`` is a list of individual SQL code blocks that are
+        free of prose contamination, extracted from the concept markdown.  Empty
+        when ``exampleQuality == 'hidden'``.
     """
     quality_by_concept: dict[str, dict] = {}
     for unit in units:
@@ -655,6 +687,8 @@ def build_concept_quality_index(
             "readabilityWarnings": unit.get("readabilityWarnings", []),
             "exampleQuality": unit.get("exampleQuality", "hidden"),
             "learnerSafeSummary": unit.get("learnerSafeSummary", ""),
+            "learnerSafeKeyPoints": unit.get("learnerSafeKeyPoints", []),
+            "learnerSafeExamples": unit.get("learnerSafeExamples", []),
         }
 
     return {
@@ -1304,8 +1338,9 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         except Exception as _cqe:
             errors.append(f"concept-quality.json: failed to parse — {_cqe}")
 
-    # Aggregate quality counts for return payload
+    # Aggregate quality counts (and enrichment coverage) for return payload
     fallback_only_total = 0
+    fallback_enriched_total = 0   # fallback_only units that have learnerSafeKeyPoints
     per_doc_fallback_counts: dict[str, int] = {}
     if units_catalog_file.exists():
         try:
@@ -1318,6 +1353,9 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                     if "/" in _nid:
                         _did = _nid.split("/", 1)[0]
                         per_doc_fallback_counts[_did] = per_doc_fallback_counts.get(_did, 0) + 1
+                    # Count units that have the enriched learner-safe fields
+                    if _u.get("learnerSafeKeyPoints"):
+                        fallback_enriched_total += 1
         except Exception:
             pass
 
@@ -1356,6 +1394,7 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "chunks_meta_doc_ids": chunks_meta_doc_ids,
         "units_count": units_count,
         "fallback_only_count": fallback_only_total,
+        "fallback_enriched_count": fallback_enriched_total,
         "concept_quality_key_count": concept_quality_key_count,
         "per_doc_concept_counts": per_doc_concept_counts,
         "per_doc_unit_counts": per_doc_unit_counts,

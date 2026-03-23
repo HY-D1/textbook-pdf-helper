@@ -332,6 +332,7 @@ def validate_handoff(
 
     # Learner quality summary
     fallback_count = result.get("fallback_only_count", 0)
+    fallback_enriched = result.get("fallback_enriched_count", 0)
     total_units = result.get("units_count", 0)
     if total_units > 0:
         ok_count = total_units - fallback_count
@@ -340,6 +341,12 @@ def validate_handoff(
             f"{fallback_count} fallback_only"
             f" ({fallback_count / total_units:.0%} fallback)"
         )
+        if fallback_count > 0:
+            enriched_pct = f"{fallback_enriched / fallback_count:.0%}" if fallback_count else "n/a"
+            typer.echo(
+                f"  Fallback enrichment    : {fallback_enriched}/{fallback_count} fallback_only "
+                f"concepts have learnerSafeKeyPoints ({enriched_pct} enriched)"
+            )
 
     if result["warnings"]:
         for w in result["warnings"]:

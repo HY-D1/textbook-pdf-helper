@@ -20,6 +20,8 @@ import pytest
 from algl_pdf_helper.learner_quality_audit import (
     LearnerQualityResult,
     audit_concept_markdown,
+    build_learner_safe_key_points,
+    extract_learner_safe_sql_blocks,
 )
 from algl_pdf_helper.export_sqladapt import build_concept_quality_index
 
@@ -726,8 +728,268 @@ class TestRealConceptRegressions:
 
 
 # ---------------------------------------------------------------------------
-# Concept-quality index (build_concept_quality_index)
+# Learner-safe key points (build_learner_safe_key_points)
 # ---------------------------------------------------------------------------
+
+
+class TestBuildLearnerSafeKeyPoints:
+    """Tests for build_learner_safe_key_points()."""
+
+    def test_includes_title_and_definition(self):
+        """Key points must include the formatted title and definition."""
+        points = build_learner_safe_key_points(
+            title="SELECT Statement",
+            definition="Retrieve rows from a table",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=[],
+            page_span=None,
+        )
+        assert any("SELECT Statement" in p and "Retrieve rows" in p for p in points)
+
+    def test_includes_keywords(self):
+        """Key points should include formatted keywords."""
+        points = build_learner_safe_key_points(
+            title="JOIN",
+            definition="Combine tables",
+            keywords=["INNER", "OUTER", "LEFT"],
+            related_concepts=[],
+            source_section_titles=[],
+            page_span=None,
+        )
+        keyword_point = [p for p in points if "Key topics:" in p]
+        assert len(keyword_point) == 1
+        assert "INNER" in keyword_point[0]
+        assert "OUTER" in keyword_point[0]
+        assert "LEFT" in keyword_point[0]
+
+    def test_includes_related_concepts(self):
+        """Key points should include related concepts."""
+        points = build_learner_safe_key_points(
+            title="WHERE Clause",
+            definition="Filter rows",
+            keywords=[],
+            related_concepts=["comparison-operators", "null-values"],
+            source_section_titles=[],
+            page_span=None,
+        )
+        related_point = [p for p in points if "Related concepts:" in p]
+        assert len(related_point) == 1
+        # Function converts hyphens to spaces for readability
+        assert "comparison operators" in related_point[0]
+        assert "null values" in related_point[0]
+
+    def test_includes_section_titles(self):
+        """Key points should include source section titles."""
+        points = build_learner_safe_key_points(
+            title="GROUP BY",
+            definition="Aggregate data",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=["commonMistakes", "examples"],
+            page_span=None,
+        )
+        section_point = [p for p in points if "Textbook covers:" in p]
+        assert len(section_point) == 1
+        assert "common mistakes" in section_point[0]  # mapped via _SECTION_READABLE
+        assert "worked examples" in section_point[0]  # mapped via _SECTION_READABLE
+
+    def test_includes_page_span(self):
+        """Key points should include page range information."""
+        points = build_learner_safe_key_points(
+            title="Subquery",
+            definition="Query within a query",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=[],
+            page_span={"start": 150, "end": 165},
+        )
+        page_point = [p for p in points if "Source:" in p]
+        assert len(page_point) == 1
+        assert "150" in page_point[0]
+        assert "165" in page_point[0]
+
+    def test_includes_single_page_span(self):
+        """Key points should handle single page reference."""
+        points = build_learner_safe_key_points(
+            title="Subquery",
+            definition="Query within a query",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=[],
+            page_span={"start": 42, "end": 42},
+        )
+        page_point = [p for p in points if "Source:" in p]
+        assert len(page_point) == 1
+        assert "page 42" in page_point[0]
+
+    def test_empty_inputs_graceful(self):
+        """Should handle empty lists and None gracefully."""
+        points = build_learner_safe_key_points(
+            title="Test Concept",
+            definition="A test definition",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=[],
+            page_span=None,
+        )
+        # Should have just the title/definition point
+        assert len(points) == 1
+        assert "Test Concept" in points[0]
+        assert "refers to:" in points[0]
+
+    def test_section_readable_names_mapping(self):
+        """Should map internal section keys to human-readable names."""
+        points = build_learner_safe_key_points(
+            title="Test",
+            definition="Test definition",
+            keywords=[],
+            related_concepts=[],
+            source_section_titles=["commonMistakes", "practice"],
+            page_span=None,
+        )
+        section_point = [p for p in points if "Textbook covers:" in p][0]
+        # Should use readable names from _SECTION_READABLE mapping
+        assert "common mistakes" in section_point  # mapped from commonMistakes
+        assert "practice problems" in section_point  # mapped from practice
+
+
+# ---------------------------------------------------------------------------
+# Learner-safe SQL extraction (extract_learner_safe_sql_blocks)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractLearnerSafeSqlBlocks:
+    """Tests for extract_learner_safe_sql_blocks()."""
+
+    def test_extracts_clean_sql_block(self):
+        """Should extract a clean SQL code block."""
+        md = """# SELECT Statement
+
+```sql
+SELECT * FROM users WHERE id = 1;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        assert blocks[0]["sql"] == "SELECT * FROM users WHERE id = 1;"
+
+    def test_rejects_block_with_embedded_prose(self):
+        """Should reject SQL blocks containing English prose."""
+        md = """# SELECT Statement
+
+```sql
+SELECT * FROM users;
+This query retrieves all users from the table.
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 0  # Rejected due to prose contamination
+
+    def test_extracts_multiple_clean_blocks(self):
+        """Should extract multiple clean SQL blocks."""
+        md = """# Examples
+
+```sql
+SELECT * FROM users;
+```
+
+Some text.
+
+```sql
+INSERT INTO logs VALUES (1, 'test');
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 2
+        assert blocks[0]["sql"] == "SELECT * FROM users;"
+        assert blocks[1]["sql"] == "INSERT INTO logs VALUES (1, 'test');"
+
+    def test_generates_generic_title(self):
+        """Should generate generic SQL Example N titles (not from headings)."""
+        md = """# Query Examples
+
+### Get All Users
+
+```sql
+SELECT * FROM users;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        assert blocks[0]["title"] == "SQL Example 1"
+
+    def test_generates_generic_title_when_no_heading(self):
+        """Should generate a generic title when no preceding heading."""
+        md = """# Examples
+
+Some intro text.
+
+```sql
+SELECT * FROM users;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        assert "Example" in blocks[0]["title"]
+
+    def test_rejects_block_with_high_prose_contamination(self):
+        """Should reject SQL blocks with >40% prose lines (3+ function words per line)."""
+        # This block has SQL + prose line with "the", "from", "the" = 3 function words
+        md = """```sql
+SELECT * FROM users;
+This query retrieves all rows from the table
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        # 50% prose (1 of 2 lines has 3+ function words) → rejected
+        assert len(blocks) == 0
+
+    def test_accepts_block_with_low_prose_contamination(self):
+        """Should accept blocks with mostly SQL and minimal prose."""
+        md = """```sql
+SELECT * FROM users;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        assert "SELECT" in blocks[0]["sql"]
+
+    def test_sql_comment_stays_in_sql_field(self):
+        """SQL comments are kept in the sql field, not extracted separately."""
+        md = """```sql
+-- Retrieves all active users
+SELECT * FROM users WHERE active = 1;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        # Comment stays in the SQL block
+        assert "-- Retrieves all active users" in blocks[0]["sql"]
+        # No separate explanation field is created
+        assert "explanation" not in blocks[0]
+
+    def test_handles_empty_sql_gracefully(self):
+        """Should handle empty SQL blocks gracefully."""
+        md = """```sql
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 0
+
+    def test_preserves_sql_formatting(self):
+        """Should preserve SQL formatting while cleaning."""
+        md = """```sql
+SELECT u.name, o.order_id
+FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE u.active = 1;
+```
+"""
+        blocks = extract_learner_safe_sql_blocks(md)
+        assert len(blocks) == 1
+        assert "JOIN" in blocks[0]["sql"]
+        assert "WHERE" in blocks[0]["sql"]
 
 
 def _make_unit(

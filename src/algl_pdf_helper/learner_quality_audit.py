@@ -6,10 +6,14 @@ to learners as-is.
 
 Exported symbols
 ----------------
-LearnerQualityResult  -- dataclass with readabilityStatus, readabilityWarnings,
-                         exampleQuality, learnerSafeSummary
-audit_concept_markdown -- main entry point; analyses raw markdown text and
-                         returns a LearnerQualityResult
+LearnerQualityResult       -- dataclass with readabilityStatus, readabilityWarnings,
+                              exampleQuality, learnerSafeSummary
+audit_concept_markdown     -- main entry point; analyses raw markdown text and
+                              returns a LearnerQualityResult
+build_learner_safe_key_points  -- derive always-safe bullet points from structured
+                                  concept metadata (title, keywords, sections, pages)
+extract_learner_safe_sql_blocks -- extract prose-free SQL blocks from markdown for
+                                   use as learnerSafeExamples
 """
 
 from __future__ import annotations
@@ -432,3 +436,141 @@ def audit_concept_markdown(
         exampleQuality=example_quality,
         learnerSafeSummary=safe_summary,
     )
+
+
+# ---------------------------------------------------------------------------
+# Richer learner-safe fallback content helpers
+# ---------------------------------------------------------------------------
+
+# Human-readable names for section keys stored in concept-map chunkIds
+_SECTION_READABLE: dict[str, str] = {
+    "definition": "definition",
+    "explanation": "explanation",
+    "examples": "worked examples",
+    "commonMistakes": "common mistakes",
+    "syntax": "syntax reference",
+    "notes": "notes",
+    "tips": "tips",
+    "practice": "practice problems",
+    "summary": "summary",
+    "reference": "reference",
+    "overview": "overview",
+}
+
+
+def build_learner_safe_key_points(
+    title: str,
+    definition: str,
+    keywords: list[str],
+    related_concepts: list[str],
+    source_section_titles: list[str],
+    page_span: dict | None,
+) -> list[str]:
+    """Build a deterministic list of always-safe key points from structured metadata.
+
+    Safe because it uses only pre-validated fields (title, definition, keywords,
+    related concept IDs, section names, page numbers) — never raw extracted prose.
+    Useful as richer fallback content when ``readabilityStatus == 'fallback_only'``.
+
+    Parameters
+    ----------
+    title:
+        Human-readable concept title.
+    definition:
+        Short definition (shortExcerpt from the unit record).
+    keywords:
+        Tag/keyword list from the concept manifest (e.g. ``["normalization", "1nf"]``).
+    related_concepts:
+        Related concept IDs (bare IDs, e.g. ``["2nf", "3nf"]``).
+    source_section_titles:
+        Sorted list of section names present in the concept's chunkIds
+        (e.g. ``["commonMistakes", "definition", "examples"]``).
+    page_span:
+        Dict with ``"start"`` and ``"end"`` int keys, or ``None``.
+
+    Returns
+    -------
+    list[str]
+        Ordered list of plain-text bullets safe to render verbatim.
+        Empty list only when all inputs are empty.
+    """
+    points: list[str] = []
+
+    # 1. Concept identity — from pre-validated definition field
+    if definition:
+        points.append(f"{title} refers to: {definition}")
+
+    # 2. Key topic labels from structured tags
+    if keywords:
+        readable = ", ".join(kw.replace("-", " ") for kw in keywords)
+        points.append(f"Key topics: {readable}")
+
+    # 3. Sections available in source textbook
+    readable_sections = [
+        _SECTION_READABLE.get(s, s.replace("_", " ").replace("-", " "))
+        for s in sorted(source_section_titles)
+    ]
+    if readable_sections:
+        points.append(f"Textbook covers: {', '.join(readable_sections)}")
+
+    # 4. Related concept IDs (up to 3, converted to readable form)
+    if related_concepts:
+        readable_related = ", ".join(
+            c.replace("-", " ") for c in related_concepts[:3]
+        )
+        points.append(f"Related concepts: {readable_related}")
+
+    # 5. Page reference from page span
+    if page_span:
+        start = page_span.get("start")
+        end = page_span.get("end")
+        if start and end and start != end:
+            points.append(f"Source: pages {start}\u2013{end}")
+        elif start:
+            points.append(f"Source: page {start}")
+
+    return points
+
+
+def extract_learner_safe_sql_blocks(md_text: str) -> list[dict[str, str]]:
+    """Extract SQL code blocks that are free of prose contamination.
+
+    A block is "safe" if ≤ 40 % of its non-empty lines contain three or more
+    common English function words (the same threshold used by
+    :func:`_prose_contamination_ratio`).  Blocks above that threshold are
+    contaminated with embedded prose and are excluded.
+
+    Use this to build ``learnerSafeExamples`` for ``fallback_only`` concepts
+    whose ``exampleQuality`` is ``'filtered'``: even though the bulk of the
+    SQL section is dirty, individual blocks may still be clean enough to show.
+
+    Parameters
+    ----------
+    md_text:
+        Full raw markdown text of an exported concept file.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Up to 3 entries, each ``{"title": "SQL Example N", "sql": "<clean sql>"}``.
+        Empty list when no clean blocks are found.
+    """
+    safe: list[dict[str, str]] = []
+    for i, m in enumerate(_CODE_BLOCK_RE.finditer(md_text), 1):
+        block = m.group(1).strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        non_empty = [ln.strip() for ln in lines if ln.strip()]
+        if not non_empty:
+            continue
+        prose_lines = sum(
+            1
+            for ln in non_empty
+            if len(_ENGLISH_FUNCTION_WORDS_RE.findall(ln)) >= 3
+        )
+        if prose_lines / len(non_empty) <= 0.40:
+            safe.append({"title": f"SQL Example {i}", "sql": block})
+        if len(safe) >= 3:
+            break
+    return safe

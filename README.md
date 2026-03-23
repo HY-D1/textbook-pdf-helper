@@ -94,17 +94,44 @@ output/textbook-static/
       "readabilityStatus": "fallback_only",
       "readabilityWarnings": ["garble_density=0.021 …"],
       "exampleQuality": "filtered",
-      "learnerSafeSummary": "First Normal Form (1NF): Eliminating repeating groups…"
+      "learnerSafeSummary": "First Normal Form (1NF): Eliminating repeating groups…",
+      "learnerSafeKeyPoints": [
+        "First Normal Form (1NF) refers to: Eliminating repeating groups",
+        "Key topics: normalization, 1nf",
+        "Textbook covers: definition, worked examples",
+        "Related concepts: 2nf, 3nf",
+        "Source: pages 145–162"
+      ],
+      "learnerSafeExamples": [
+        {"title": "SQL Example 1", "sql": "CREATE TABLE employees (id INT PRIMARY KEY, …);"}
+      ]
     },
     "murachs-mysql-3rd-edition/select-basic": {
       "readabilityStatus": "ok",
       "readabilityWarnings": [],
       "exampleQuality": "valid",
-      "learnerSafeSummary": "Select Statement: Retrieve rows from a table"
+      "learnerSafeSummary": "Select Statement: Retrieve rows from a table",
+      "learnerSafeKeyPoints": [
+        "Select Statement refers to: Retrieve rows from a table",
+        "Key topics: select, query, dml",
+        "Source: page 89"
+      ],
+      "learnerSafeExamples": [
+        {"title": "SQL Example 1", "sql": "SELECT * FROM vendors;"}
+      ]
     }
   }
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `readabilityStatus` | `string` | `ok` or `fallback_only` — whether the raw explanation is safe to display |
+| `readabilityWarnings` | `string[]` | Diagnostic reasons when status is `fallback_only` |
+| `exampleQuality` | `string` | `valid`, `filtered`, or `hidden` — SQL example usability |
+| `learnerSafeSummary` | `string` | Always-safe fallback: `"{title}: {definition}"` |
+| `learnerSafeKeyPoints` | `string[]` | Structured bullet points from metadata (title, keywords, sections, related concepts, page span) |
+| `learnerSafeExamples` | `object[]` | Clean SQL code blocks extracted from markdown (up to 3), each with `title` and `sql` fields |
 
 **How the adaptive app should consume this:**
 
@@ -115,7 +142,12 @@ const conceptQuality = await fetch('/textbook-static/concept-quality.json').then
 // On concept page render
 const quality = conceptQuality.qualityByConcept[namespacedConceptId];
 if (quality?.readabilityStatus === 'fallback_only') {
-  renderFallback(quality.learnerSafeSummary);
+  // Use structured key points for richer fallback UI
+  renderFallback({
+    summary: quality.learnerSafeSummary,
+    keyPoints: quality.learnerSafeKeyPoints,      // bullet points from metadata
+    examples: quality.learnerSafeExamples,        // clean SQL code blocks (if any)
+  });
 } else {
   renderFullExplanation(concept.markdownPath, quality?.exampleQuality);
 }
