@@ -60,6 +60,29 @@ _GARBLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# UI/screenshot rendering artifacts: block elements and checkbox characters from
+# PDF screenshot pages (geometric shapes U+25A0-25FF, misc symbols U+2600-27BF),
+# plus "E2l"/"E2I" which are common OCR mis-reads of the ☑ checkbox character.
+_UI_ARTIFACT_RE = re.compile(
+    r"(?:"
+    r"[\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF]|"  # Unicode block/geometric chars
+    r"\bE2[lI]\b"                                    # OCR artefact for ☑ checkbox
+    r")",
+)
+
+# Structural corruption markers: words that are garbled versions of common
+# structural terms, indicating severe OCR mis-read of chapter/section headers.
+# "Cliapter" (garbled "Chapter"), comma-inside-word ("develop,nent"),
+# and "lnforma" (garbled "Informa…").
+_STRUCTURAL_CORRUPTION_RE = re.compile(
+    r"(?:"
+    r"\bC[li]i?apter\b|"            # garbled "Chapter" (e.g. "Cliapter")
+    r"\b[a-zA-Z]{3,},[a-zA-Z]{2,}\b|"  # OCR comma-inside-word ("develop,nent")
+    r"\blnforma[a-zA-Z]{2,}\b"      # garbled "Information/Informational"
+    r")",
+    re.IGNORECASE,
+)
+
 # Table-of-contents pollution signals in explanation prose
 _TOC_RE = re.compile(
     r"(?:"
@@ -178,6 +201,31 @@ def _duplication_ratio(text: str) -> float:
     return dups / len(fragments)
 
 
+def _ui_artifact_density(text: str) -> float:
+    """Fraction of text characters that are UI/screenshot rendering artifacts.
+
+    PDF pages containing screenshots or GUI form layouts get OCR'd as a mix
+    of real text and block/checkbox characters.  High density of these chars
+    (►, □, ■, E2I OCR artifacts for ☑, etc.) indicates the extracted text is
+    from a screenshot page rather than narrative prose.
+    """
+    if not text:
+        return 0.0
+    total = sum(len(m.group()) for m in _UI_ARTIFACT_RE.finditer(text))
+    return total / max(len(text), 1)
+
+
+def _structural_corruption_count(text: str) -> int:
+    """Count distinct structural corruption markers in text.
+
+    Markers include garbled chapter headers ("Cliapter"), comma-embedded OCR
+    artefacts ("develop,nent"), and garbled section labels ("lnformation").
+    Two or more such markers in an explanation strongly indicate the extraction
+    pulled content from a screenshot or navigation page, not learner prose.
+    """
+    return len(_STRUCTURAL_CORRUPTION_RE.findall(text))
+
+
 def _prose_contamination_ratio(sql_blocks: list[str]) -> float:
     """Fraction of SQL code blocks that contain embedded English prose.
 
@@ -216,6 +264,8 @@ _KEYWORD_OVERLAP_MIN = 0.15         # < 15% of title keywords in explanation →
 _DUPLICATION_RATIO_THRESHOLD = 0.40 # > 40% repeated windows → duplication
 _PROSE_IN_SQL_THRESHOLD = 0.50      # > 50% SQL blocks have prose → SQL contamination
 _EXPLANATION_MIN_WORDS = 40         # fewer words → too-thin explanation
+_UI_ARTIFACT_DENSITY_THRESHOLD = 0.010   # > 1% UI chars → screenshot page extracted
+_STRUCTURAL_CORRUPTION_THRESHOLD = 2     # 2+ structural corruption markers → garbled
 
 
 def audit_concept_markdown(
@@ -325,6 +375,36 @@ def audit_concept_markdown(
         warnings.append(
             f"thin_explanation: only {exp_words} words in explanation "
             f"(minimum {_EXPLANATION_MIN_WORDS})"
+        )
+
+    # ------------------------------------------------------------------
+    # Check 8: UI/screenshot rendering artifact density
+    # PDFs with embedded screenshots produce block characters (►, □, ■)
+    # and "E2I" OCR mis-reads when the screenshot is extracted as text.
+    # High density means the explanation was pulled from a screenshot page
+    # rather than from learner-readable prose.
+    # ------------------------------------------------------------------
+    ui_density = _ui_artifact_density(explanation)
+    if ui_density > _UI_ARTIFACT_DENSITY_THRESHOLD:
+        blocking_flags.append(
+            f"ui_artifact_density={ui_density:.3f} exceeds threshold "
+            f"({_UI_ARTIFACT_DENSITY_THRESHOLD}) — explanation contains "
+            f"screenshot/form rendering artefacts (block chars, checkbox OCR)"
+        )
+
+    # ------------------------------------------------------------------
+    # Check 9: Structural corruption markers
+    # Garbled structural words ("Cliapter", "develop,nent") signal that
+    # the OCR captured a chapter header or navigation page, not the
+    # actual concept explanation. Two or more such markers are a reliable
+    # signal of misaligned extraction.
+    # ------------------------------------------------------------------
+    struct_hits = _structural_corruption_count(explanation)
+    if struct_hits >= _STRUCTURAL_CORRUPTION_THRESHOLD:
+        blocking_flags.append(
+            f"structural_corruption: {struct_hits} garbled structural markers "
+            f"(threshold {_STRUCTURAL_CORRUPTION_THRESHOLD}) — explanation "
+            f"contains OCR artefacts of chapter/navigation text"
         )
 
     # ------------------------------------------------------------------

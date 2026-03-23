@@ -52,10 +52,14 @@ fields:
 | `semantic_drift` | < 15 % of title keywords appear in explanation body | `fallback_only` |
 | `toc_pollution` | ≥ 3 TOC-like patterns (`Chapter N`, `page NN`, …) in explanation | `fallback_only` |
 | `marketing_boilerplate` | ≥ 2 publisher phrases (`ISBN`, `All rights reserved`, …) | `fallback_only` |
+| `ui_artifact_density` | > 1 % of explanation chars are block/checkbox Unicode (`►`, `□`, `■`, `E2I`…) | `fallback_only` |
+| `structural_corruption` | ≥ 2 garbled structural markers (`Cliapter`, `develop,nent`, …) | `fallback_only` |
 | `duplication` | > 40 % of explanation sentences are repeated | warning only |
 | `sql_contamination` | > 50 % of SQL code blocks contain embedded English prose | `exampleQuality: filtered` |
 | `thin_explanation` | < 40 words in explanation | warning only |
 | No SQL blocks present | — | `exampleQuality: hidden` |
+
+The two newest rules (`ui_artifact_density`, `structural_corruption`) catch **borderline degraded** concepts that pass garble/drift/TOC checks because the OCR content shares some keywords with the concept title but was extracted from a screenshot page or chapter navigation page.
 
 `validate-handoff` reports the quality distribution:
 
@@ -119,6 +123,16 @@ if (quality?.readabilityStatus === 'fallback_only') {
 
 Keys in `qualityByConcept` are identical to the namespaced IDs in
 `concept-map.json`, so no transformation is required.
+
+**How adaptive should interpret each quality status:**
+
+| Status / Field | Adaptive behaviour |
+| -------------- | ------------------ |
+| `readabilityStatus: ok` | Show full markdown explanation and examples. Safe for learners. |
+| `readabilityStatus: fallback_only` | **Do not show the raw explanation.** Render `learnerSafeSummary` instead (always a clean `"Title: definition"` string). Optionally show a banner: "Full explanation unavailable for this concept." |
+| `exampleQuality: valid` | SQL examples are clean. Render them normally. |
+| `exampleQuality: filtered` | SQL code blocks contain embedded prose. Either skip examples entirely or show them with a caveat banner ("Examples may contain formatting issues"). |
+| `exampleQuality: hidden` | No SQL examples were extracted. Do not show an empty examples section. |
 
 `validate-handoff` checks that:
 - `concept-quality.json` exists and parses

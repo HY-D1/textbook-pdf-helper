@@ -465,6 +465,267 @@ condition. vVhat fraction of the employees are older than 40?
 
 
 # ---------------------------------------------------------------------------
+# UI/screenshot rendering artifact density (Check 8)
+# ---------------------------------------------------------------------------
+
+
+class TestUIArtifactDensity:
+    """Explanation bodies from PDF screenshot pages contain block/checkbox chars."""
+
+    # Simulates content extracted from a page full of form checkboxes and UI
+    # elements — as happens when a textbook screenshot page is OCR'd.
+    _SCREENSHOT_EXPLANATION = (
+        "Cliapter 2 How to use MySQL Workbench and other develop,nent tools "
+        "The column definitions for the Vendors table ► E2I □ □ D D D D D "
+        "E2I □ □ E2I □ D D □ □ D D □ □ □ □ □ □ E2I □ □ D □ □ E2I □ D D □ "
+        "Table: vendors Columns: vendor_id INT(11) AlPK vendor_name varcha "
+        "vendor_addressl varcha vendor_address2 varcha □ □ □ □ E2I E2I D "
+        "D D D □ □ □ D D D □ □ D □ □ D D □ D □ □ E2I □ □ D □ □ E2I □ D "
+        "► to view the column definitions for a table, right-click the table"
+    )
+
+    def test_ui_artifacts_make_status_fallback_only(self):
+        md = _make_md(
+            title="SELECT Statement",
+            definition="Retrieve rows from a table",
+            explanation=self._SCREENSHOT_EXPLANATION,
+        )
+        result = audit_concept_markdown(
+            md, "select-statement-murach",
+            "SELECT Statement", "Retrieve rows from a table",
+        )
+        assert result.readabilityStatus == "fallback_only", (
+            f"Screenshot-page content should be fallback_only. "
+            f"Warnings: {result.readabilityWarnings}"
+        )
+
+    def test_ui_artifact_warning_mentions_density(self):
+        md = _make_md(
+            title="SELECT Statement",
+            definition="Retrieve rows from a table",
+            explanation=self._SCREENSHOT_EXPLANATION,
+        )
+        result = audit_concept_markdown(
+            md, "select-statement-murach",
+            "SELECT Statement", "Retrieve rows from a table",
+        )
+        combined = " ".join(result.readabilityWarnings).lower()
+        assert "ui_artifact" in combined or "artifact" in combined, (
+            f"Warning should mention ui artifact. Got: {result.readabilityWarnings}"
+        )
+
+    def test_clean_explanation_not_flagged_by_ui_rule(self):
+        clean = (
+            "The SELECT statement retrieves rows from one or more tables. "
+            "Use the WHERE clause to filter which rows are returned. "
+            "The FROM clause names the table or tables to query. "
+            "You may join multiple tables using an explicit JOIN or a comma in FROM. "
+            "The ORDER BY clause sorts the result set by one or more columns."
+        )
+        md = _make_md(
+            title="SELECT Statement",
+            definition="Retrieve rows from a table",
+            explanation=clean,
+        )
+        result = audit_concept_markdown(
+            md, "select-basic",
+            "SELECT Statement", "Retrieve rows from a table",
+        )
+        ui_warnings = [w for w in result.readabilityWarnings if "ui_artifact" in w.lower()]
+        assert ui_warnings == [], f"Clean text should not trigger ui_artifact: {ui_warnings}"
+
+
+# ---------------------------------------------------------------------------
+# Structural corruption markers (Check 9)
+# ---------------------------------------------------------------------------
+
+
+class TestStructuralCorruption:
+    """Garbled chapter/section headers embedded in explanation prose."""
+
+    # Simulates an explanation that was extracted from a chapter navigation
+    # page — OCR produced "Cliapter" and comma-in-word artifacts.
+    _GARBLED_STRUCTURAL = (
+        "Cliapter 3 How to retrieve data from a single table. "
+        "The WHERE clause filters rows based on a search condition. "
+        "You can use comparison operators such as =, <>, <, >, <=, >=. "
+        "The develop,nent tools provided by MySQL Workbench let you execute "
+        "individual SQL staten,ents interactively. "
+        "An introduction to the SELECT staten,ent to get you started quickly."
+    )
+
+    def test_structural_corruption_makes_status_fallback_only(self):
+        md = _make_md(
+            title="WHERE Clause",
+            definition="Filtering rows with comparison operators",
+            explanation=self._GARBLED_STRUCTURAL,
+        )
+        result = audit_concept_markdown(
+            md, "where-clause-murach",
+            "WHERE Clause", "Filtering rows with comparison operators",
+        )
+        assert result.readabilityStatus == "fallback_only", (
+            f"Garbled structural markers should produce fallback_only. "
+            f"Warnings: {result.readabilityWarnings}"
+        )
+
+    def test_structural_corruption_warning_mentions_structural(self):
+        md = _make_md(
+            title="WHERE Clause",
+            definition="Filtering rows with comparison operators",
+            explanation=self._GARBLED_STRUCTURAL,
+        )
+        result = audit_concept_markdown(
+            md, "where-clause-murach",
+            "WHERE Clause", "Filtering rows with comparison operators",
+        )
+        combined = " ".join(result.readabilityWarnings).lower()
+        assert "structural" in combined or "corruption" in combined, (
+            f"Warning should mention structural corruption. Got: {result.readabilityWarnings}"
+        )
+
+    def test_single_garbled_marker_is_not_flagged(self):
+        """One isolated garbled marker should NOT trigger the rule (threshold = 2)."""
+        one_garble = (
+            "Cliapter 3 introduces the WHERE clause. "
+            "The WHERE clause filters rows using a Boolean expression. "
+            "You can combine conditions with AND and OR operators. "
+            "NULL values require the IS NULL or IS NOT NULL predicates. "
+            "Comparison operators include equals, not-equals, less, and greater than."
+        )
+        md = _make_md(
+            title="WHERE Clause",
+            definition="Filtering rows with comparison operators",
+            explanation=one_garble,
+        )
+        result = audit_concept_markdown(
+            md, "where-clause-murach",
+            "WHERE Clause", "Filtering rows with comparison operators",
+        )
+        struct_warnings = [
+            w for w in result.readabilityWarnings if "structural_corruption" in w.lower()
+        ]
+        assert struct_warnings == [], (
+            f"One garbled marker should not trigger structural_corruption: {struct_warnings}"
+        )
+
+    def test_clean_explanation_not_flagged_by_structural_rule(self):
+        clean = (
+            "The WHERE clause filters rows using a search condition. "
+            "Conditions use comparison operators: =, <>, <, >, <=, >=. "
+            "Logical operators AND, OR, NOT combine multiple conditions. "
+            "The IN operator tests whether a value is in a list of values. "
+            "BETWEEN tests an inclusive range, LIKE tests a string pattern."
+        )
+        md = _make_md(
+            title="WHERE Clause",
+            definition="Filtering rows with comparison operators",
+            explanation=clean,
+        )
+        result = audit_concept_markdown(
+            md, "where-clause-murach",
+            "WHERE Clause", "Filtering rows with comparison operators",
+        )
+        struct_warnings = [
+            w for w in result.readabilityWarnings if "structural_corruption" in w.lower()
+        ]
+        assert struct_warnings == [], f"Clean text triggered structural_corruption: {struct_warnings}"
+
+
+# ---------------------------------------------------------------------------
+# Real-concept regression tests using built output from the two PDFs
+# ---------------------------------------------------------------------------
+
+
+class TestRealConceptRegressions:
+    """Regression tests against actual concept markdown files from the real build.
+
+    These tests require the textbook-static build to be present at
+    output/textbook-static/.  They are skipped if the build does not exist.
+    """
+
+    _TEXTBOOK_STATIC = "output/textbook-static"
+
+    def _read_concept(self, doc_id: str, concept_id: str) -> str | None:
+        import os
+        path = os.path.join(self._TEXTBOOK_STATIC, "concepts", doc_id, f"{concept_id}.md")
+        if not os.path.exists(path):
+            return None
+        return open(path, encoding="utf-8").read()
+
+    def _get_concept_meta(self, doc_id: str, concept_id: str) -> dict | None:
+        """Get title and definition from concept-map.json for a concept."""
+        import json, os
+        cm_path = os.path.join(self._TEXTBOOK_STATIC, "concept-map.json")
+        if not os.path.exists(cm_path):
+            return None
+        data = json.load(open(cm_path))
+        key = f"{doc_id}/{concept_id}"
+        entry = data.get("concepts", {}).get(key)
+        return entry  # may be None
+
+    @pytest.mark.skipif(
+        not __import__("os").path.exists("output/textbook-static/concepts"),
+        reason="Real build output not present",
+    )
+    def test_select_statement_murach_is_fallback_only(self):
+        """select-statement-murach has high UI artifact density → must be fallback_only."""
+        doc_id = "murachs-mysql-3rd-edition"
+        concept_id = "select-statement-murach"
+        md = self._read_concept(doc_id, concept_id)
+        if md is None:
+            pytest.skip(f"{concept_id}.md not in build output")
+        meta = self._get_concept_meta(doc_id, concept_id) or {}
+        title = meta.get("title", "SELECT Statement")
+        definition = meta.get("definition", "Retrieve rows from a table")
+        result = audit_concept_markdown(md, concept_id, title, definition)
+        assert result.readabilityStatus == "fallback_only", (
+            f"select-statement-murach should be fallback_only (UI artifact density). "
+            f"Got: {result.readabilityStatus}. Warnings: {result.readabilityWarnings}"
+        )
+
+    @pytest.mark.skipif(
+        not __import__("os").path.exists("output/textbook-static/concepts"),
+        reason="Real build output not present",
+    )
+    def test_inner_join_murach_is_ok(self):
+        """inner-join-murach has clean prose → must remain ok."""
+        doc_id = "murachs-mysql-3rd-edition"
+        concept_id = "inner-join-murach"
+        md = self._read_concept(doc_id, concept_id)
+        if md is None:
+            pytest.skip(f"{concept_id}.md not in build output")
+        meta = self._get_concept_meta(doc_id, concept_id) or {}
+        title = meta.get("title", "Inner Join")
+        definition = meta.get("definition", "Combine rows from two tables using a join condition")
+        result = audit_concept_markdown(md, concept_id, title, definition)
+        assert result.readabilityStatus == "ok", (
+            f"inner-join-murach should remain ok. "
+            f"Got: {result.readabilityStatus}. Warnings: {result.readabilityWarnings}"
+        )
+
+    @pytest.mark.skipif(
+        not __import__("os").path.exists("output/textbook-static/concepts"),
+        reason="Real build output not present",
+    )
+    def test_where_clause_murach_is_fallback_only(self):
+        """where-clause-murach has garbled structural markers → must be fallback_only."""
+        doc_id = "murachs-mysql-3rd-edition"
+        concept_id = "where-clause-murach"
+        md = self._read_concept(doc_id, concept_id)
+        if md is None:
+            pytest.skip(f"{concept_id}.md not in build output")
+        meta = self._get_concept_meta(doc_id, concept_id) or {}
+        title = meta.get("title", "WHERE Clause")
+        definition = meta.get("definition", "Filtering rows with comparison operators")
+        result = audit_concept_markdown(md, concept_id, title, definition)
+        assert result.readabilityStatus == "fallback_only", (
+            f"where-clause-murach should be fallback_only. "
+            f"Got: {result.readabilityStatus}. Warnings: {result.readabilityWarnings}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Concept-quality index (build_concept_quality_index)
 # ---------------------------------------------------------------------------
 

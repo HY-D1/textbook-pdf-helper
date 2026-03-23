@@ -315,13 +315,20 @@ def validate_handoff(
     # Per-sourceDoc breakdown
     per_doc_concepts = result.get("per_doc_concept_counts", {})
     per_doc_units = result.get("per_doc_unit_counts", {})
+    per_doc_fallback = result.get("per_doc_fallback_counts", {})
     all_doc_ids = sorted(set(list(per_doc_concepts.keys()) + list(per_doc_units.keys())))
     if all_doc_ids:
         typer.echo("  Per-source-doc summary:")
         for doc_id in all_doc_ids:
             concepts = per_doc_concepts.get(doc_id, 0)
             units = per_doc_units.get(doc_id, 0)
-            typer.echo(f"    {doc_id}: {concepts} concepts, {units} units")
+            fallback_doc = per_doc_fallback.get(doc_id, 0)
+            ok_doc = units - fallback_doc
+            fallback_pct = f"{fallback_doc / units:.0%}" if units else "n/a"
+            typer.echo(
+                f"    {doc_id}: {concepts} concepts, {units} units "
+                f"({ok_doc} ok / {fallback_doc} fallback_only = {fallback_pct} fallback)"
+            )
 
     # Learner quality summary
     fallback_count = result.get("fallback_only_count", 0)

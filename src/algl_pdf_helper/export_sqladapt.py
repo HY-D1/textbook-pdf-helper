@@ -1306,6 +1306,7 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
 
     # Aggregate quality counts for return payload
     fallback_only_total = 0
+    per_doc_fallback_counts: dict[str, int] = {}
     if units_catalog_file.exists():
         try:
             with open(units_catalog_file, "r", encoding="utf-8") as _fq:
@@ -1313,6 +1314,10 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
             for _u in _qdata.get("units", []):
                 if _u.get("readabilityStatus") == "fallback_only":
                     fallback_only_total += 1
+                    _nid = _u.get("namespacedId", "")
+                    if "/" in _nid:
+                        _did = _nid.split("/", 1)[0]
+                        per_doc_fallback_counts[_did] = per_doc_fallback_counts.get(_did, 0) + 1
         except Exception:
             pass
 
@@ -1354,4 +1359,5 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "concept_quality_key_count": concept_quality_key_count,
         "per_doc_concept_counts": per_doc_concept_counts,
         "per_doc_unit_counts": per_doc_unit_counts,
+        "per_doc_fallback_counts": per_doc_fallback_counts,
     }
