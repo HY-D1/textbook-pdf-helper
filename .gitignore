@@ -36,6 +36,7 @@ env/
 *.swp
 *.swo
 *~
+.claude
 
 # OS
 .DS_Store
@@ -153,3 +154,4 @@ start.sh
 code_analysis_report.py
 test_l3_coverage.py
 smart_process.sh
+.gstack/

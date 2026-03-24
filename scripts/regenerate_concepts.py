@@ -6,6 +6,7 @@ with the new pedagogical format.
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -226,12 +227,15 @@ def main():
     print(f"Total errors: {total_errors}")
     print(f"\nOutput location: {output_base}")
     
-    # Copy to SQL-Adapt
-    sql_adapt_target = Path("/Users/harrydai/Desktop/Personal Portfolio/adaptive-instructional-artifacts/apps/web/public/textbook-static")
-    
-    if sql_adapt_target.exists():
-        print(f"\n📤 To copy to SQL-Adapt, run:")
+    # Suggest copy to SQL-Adapt via env var
+    sql_adapt_public = os.environ.get("SQL_ADAPT_PUBLIC_DIR")
+    if sql_adapt_public:
+        sql_adapt_target = Path(sql_adapt_public) / "textbook-static"
+        print(f"\nTo copy to SQL-Adapt (SQL_ADAPT_PUBLIC_DIR is set), run:")
         print(f"   cp -r {output_base}/* {sql_adapt_target}/")
+    else:
+        print(f"\nTo copy to SQL-Adapt, set SQL_ADAPT_PUBLIC_DIR and run:")
+        print(f"   cp -r {output_base}/* $SQL_ADAPT_PUBLIC_DIR/textbook-static/")
     
     print("\n" + "="*70)
 

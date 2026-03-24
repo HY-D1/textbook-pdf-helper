@@ -73,6 +73,14 @@ from .reinforcement_bank import ReinforcementBank, ReinforcementConfig
 from .sql_validator import SQLValidator
 from .learning_quality_gates import LearningQualityGates, Severity
 from .ollama_repair import OllamaRepair
+from .structured_repair import (
+    StructuredRepairClient,
+    OllamaRepairBackend,
+    ClaudeLocalRepairBackend,
+    RepairOutcome,
+    create_repair_client,
+    get_failure_logger,
+)
 from .export_filters import (
     ExportFilterEngine, 
     PRODUCTION_FILTERS, 
@@ -188,7 +196,7 @@ class PipelineConfig:
     pdf_path: Path
     output_dir: Path = field(default_factory=lambda: Path("./output"))
     doc_id: str | None = None
-    llm_provider: Literal["kimi", "openai", "ollama", "grounded"] = os.getenv("ALGL_LLM_PROVIDER", "ollama")
+    llm_provider: Literal["kimi", "openai", "ollama", "claude_local", "grounded"] = os.getenv("ALGL_LLM_PROVIDER", "ollama")
     llm_model: str | None = None  # Will be resolved to provider-specific default
     concept_ontology_path: Path | None = None
     filter_level: Literal["strict", "production", "development"] = "production"
@@ -212,16 +220,23 @@ class PipelineConfig:
 
     # Ollama repair configuration
     use_ollama_repair: bool = True
-    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:3b"))
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen3.5:9b-q8_0"))
     ollama_repair_threshold: float = 0.6  # Confidence below this triggers repair
     ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     ollama_auto_fallback: bool = True  # Auto-fallback to available models
-    
+
+    # Claude local configuration (OpenAI-compatible local endpoint)
+    claude_local_base_url: str = field(default_factory=lambda: os.getenv("CLAUDE_LOCAL_BASE_URL", "http://localhost:8080"))
+    claude_local_api_key: str = field(default_factory=lambda: os.getenv("CLAUDE_LOCAL_API_KEY", ""))
+    claude_local_model: str = field(default_factory=lambda: os.getenv("CLAUDE_LOCAL_MODEL", "claude-sonnet-4-6"))
+
     # Provider-specific default models
     PROVIDER_DEFAULT_MODELS: ClassVar[dict[str, str]] = {
         "kimi": "kimi-k2-5",
         "openai": "gpt-4",
-        "ollama": "llama3.2:3b",
+        "ollama": "qwen3.5:9b-q8_0",
+        "claude_local": "claude-sonnet-4-6",
+        "grounded": "none",
     }
     
     # Range and caching configuration
@@ -1497,6 +1512,7 @@ class InstructionalPipeline:
         success: bool,
         duration_seconds: float | None = None,
         metadata: dict[str, Any] | None = None,
+        llm_model: str | None = None,
     ) -> None:
         """
         Record an LLM intervention for the interventions report.
@@ -1518,7 +1534,7 @@ class InstructionalPipeline:
             "target_type": target_type,
             "reason": reason,
             "llm_provider": self.config.llm_provider,
-            "llm_model": self.config.llm_model or "unknown",
+            "llm_model": llm_model or self.config.llm_model or "unknown",
             "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
             "outcome": outcome,
             "success": success,
@@ -1560,9 +1576,26 @@ class InstructionalPipeline:
             chunk_count = len(self._content_blocks) if hasattr(self, '_content_blocks') else 0
             section_count = len(self._teaching_blocks) if hasattr(self, '_teaching_blocks') else 0
 
-            # Get text coverage
+            # Calculate text coverage from actual content blocks
             text_coverage = 0.0
-            if hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+            average_page_density = 0.0
+            total_characters = 0
+            pages_with_text = 0
+
+            if hasattr(self, '_content_blocks') and self._content_blocks and page_count > 0:
+                # Count pages with text and total characters
+                pages_with_content = set()
+                for block in self._content_blocks:
+                    if block.text_content and len(block.text_content.strip()) > 0:
+                        total_characters += len(block.text_content)
+                        if hasattr(block, 'page_number') and block.page_number:
+                            pages_with_content.add(block.page_number)
+
+                pages_with_text = len(pages_with_content)
+                text_coverage = pages_with_text / page_count if page_count > 0 else 0.0
+                average_page_density = total_characters / page_count if page_count > 0 else 0.0
+            elif hasattr(self, '_extraction_metadata') and self._extraction_metadata:
+                # Fallback to metadata if blocks not available
                 text_coverage = self._extraction_metadata.get('text_coverage_score', 0.0)
 
             report = ExtractionReport(
@@ -1575,6 +1608,7 @@ class InstructionalPipeline:
                 use_pymupdf=use_pymupdf,
                 ocr_fallback_used=ocr_fallback_used,
                 text_coverage_score=text_coverage,
+                average_page_density=average_page_density,
                 warnings=self._extraction_metadata.get('warnings', []) if hasattr(self, '_extraction_metadata') else [],
                 errors=self._extraction_metadata.get('errors', []) if hasattr(self, '_extraction_metadata') else [],
                 repair_applied=self._extraction_metadata.get('repair_applied', {}) if hasattr(self, '_extraction_metadata') else {},
@@ -1617,10 +1651,17 @@ class InstructionalPipeline:
 
             successful = sum(1 for i in self._llm_interventions if i["success"])
 
+            # Use actual model from interventions if available, fallback to config
+            actual_model = self.config.llm_model
+            if not actual_model and self._llm_interventions:
+                # Try to get model from first intervention's metadata
+                first_intv = self._llm_interventions[0]
+                actual_model = first_intv.get("llm_model") or first_intv.get("metadata", {}).get("model_used")
+
             report_data = {
                 "schema_version": "1.0.0",
                 "llm_provider": self.config.llm_provider,
-                "llm_model": self.config.llm_model or "unknown",
+                "llm_model": actual_model or "unknown",
                 "ollama_host": self.config.ollama_host if self.config.llm_provider == "ollama" else None,
                 "total_interventions": len(self._llm_interventions),
                 "successful_interventions": successful,
@@ -2052,8 +2093,8 @@ class InstructionalPipeline:
         if self._misconception_bank is None:
             self._misconception_bank = MisconceptionBank.load_default()
         
-        # Initialize Ollama repair if enabled - ONE preflight check
-        ollama_repair = None
+        # Initialize structured repair client if enabled - ONE preflight check
+        repair_client = None
         self._repair_status = {
             "enabled": self.config.use_ollama_repair,
             "available": False,
@@ -2063,28 +2104,33 @@ class InstructionalPipeline:
             "failed_repairs": [],
             "repair_attempts": 0,
         }
-        
+
+        # Initialize failure logger for debug artifacts
+        get_failure_logger(self.config.output_dir)
+
         if self.config.use_ollama_repair:
-            from .ollama_repair import create_ollama_repair_if_enabled
-            
-            ollama_repair, repair_info = create_ollama_repair_if_enabled(
-                enabled=True,
-                model=self.config.ollama_model,
-                host=self.config.ollama_host,
-                auto_fallback=self.config.ollama_auto_fallback,
+            # Determine which provider to use for repair
+            repair_provider = self.config.llm_provider
+            if repair_provider == "grounded":
+                repair_provider = "ollama"  # Default to ollama for repair even if grounded
+
+            repair_client = create_repair_client(
+                provider=repair_provider,
+                model=self.config.llm_model or self.config.ollama_model,
+                output_dir=self.config.output_dir,
+                host=self.config.ollama_host if repair_provider == "ollama" else None,
+                base_url=self.config.claude_local_base_url if repair_provider == "claude_local" else None,
+                api_key=self.config.claude_local_api_key if repair_provider == "claude_local" else None,
             )
-            
-            # Update repair status with results
-            self._repair_status["available"] = repair_info["available"]
-            self._repair_status["disabled_reason"] = repair_info["disabled_reason"]
-            self._repair_status["model"] = repair_info["model"]
-            
-            if ollama_repair and ollama_repair.available:
-                self._logger.info(f"Ollama repair enabled with model: {repair_info['model']}")
-            elif repair_info["disabled_reason"]:
-                # Only log once that repair is unavailable - subsequent units skip silently
+
+            if repair_client and repair_client.is_available():
+                self._repair_status["available"] = True
+                self._repair_status["model"] = repair_client.model
+                self._logger.info(f"Structured repair enabled with {repair_client.provider}/{repair_client.model}")
+            else:
+                self._repair_status["disabled_reason"] = f"{repair_provider}_not_available"
                 self._logger.info(
-                    f"Ollama repair unavailable ({repair_info['disabled_reason']}), "
+                    f"Structured repair unavailable ({repair_provider} not available), "
                     "skipping repair pass"
                 )
         
@@ -2121,24 +2167,25 @@ class InstructionalPipeline:
                 # Add generated units with optional L3 repair
                 for variant_name, unit in variants.items():
                     if unit.target_stage in self.config.generate_variants:
-                        # Apply Ollama repair for weak L3 content
+                        # Apply structured repair for weak L3 content
                         if (
                             unit.target_stage == "L3_explanation"
-                            and ollama_repair
+                            and repair_client
                             and unit.content
                         ):
                             unit = self._repair_l3_if_needed(
-                                unit, concept_id, blocks, ollama_repair
+                                unit, concept_id, blocks, repair_client
                             )
-                        
+
                         self._instructional_units.append(unit)
-                        
+
                         # Track fallback units
                         if unit.content.get("_metadata", {}).get("is_fallback"):
                             self._fallback_unit_ids.append(unit.unit_id)
-                        
-                        # Track repaired units
-                        if unit.content.get("_repaired_by_ollama"):
+
+                        # Track repaired units (provider-agnostic check)
+                        content = unit.content or {}
+                        if content.get("_repaired_by_ollama") or content.get("_repaired_by_claude_local"):
                             self._repaired_unit_ids.append(unit.unit_id)
                             self._repair_status["repaired_units"].append(unit.unit_id)
                 
@@ -2262,27 +2309,27 @@ class InstructionalPipeline:
         unit: InstructionalUnit,
         concept_id: str,
         blocks: list[ContentBlock],
-        ollama_repair: Any,
+        repair_client: StructuredRepairClient,
     ) -> InstructionalUnit:
         """
-        Repair weak L3 content using Ollama if needed.
-        
-        Assesses the quality of L3 content and applies Ollama repair if
+        Repair weak L3 content using structured repair client if needed.
+
+        Assesses the quality of L3 content and applies structured repair if
         the content is below the configured quality threshold.
-        
+
         Args:
             unit: The L3 instructional unit to potentially repair
             concept_id: The concept identifier
             blocks: Source content blocks for evidence
-            ollama_repair: OllamaRepair instance
-            
+            repair_client: StructuredRepairClient instance
+
         Returns:
             The unit (potentially repaired with updated content)
         """
         content = unit.content
         if not isinstance(content, dict):
             return unit
-        
+
         # Check if already flagged as weak or has quality issues
         metadata = content.get("_metadata", {})
         needs_repair = (
@@ -2290,17 +2337,18 @@ class InstructionalPipeline:
             or metadata.get("content_quality") == "weak"
             or metadata.get("content_quality") == "needs_review"
         )
-        
+        quality_score = None
+
         # Assess content quality if not already flagged
-        if not needs_repair and ollama_repair:
-            quality_score = ollama_repair.assess_content_quality(content, blocks)
+        if not needs_repair and repair_client:
+            quality_score = repair_client.assess_content_quality(content, blocks)
             if quality_score < self.config.ollama_repair_threshold:
                 needs_repair = True
                 self._logger.debug(
                     f"L3 content for {concept_id} scored {quality_score:.2f}, "
                     f"below threshold {self.config.ollama_repair_threshold}"
                 )
-        
+
         if needs_repair:
             # Prepare weak content for repair
             weak_content = {
@@ -2308,53 +2356,132 @@ class InstructionalPipeline:
                 "why_it_matters": content.get("why_it_matters", ""),
                 "explanation": content.get("explanation", ""),
             }
-            
+
             # Gather source evidence
             source_evidence = "\n\n".join(
                 b.text_content for b in blocks if b.text_content
             )
-            
-            # Attempt repair
+
+            # Attempt repair using new structured repair client
+            repair_start_time = time.time()
             try:
-                repaired = ollama_repair.repair_l3_content(
+                result = repair_client.repair_l3_content(
                     concept_id=concept_id,
                     weak_content=weak_content,
                     source_evidence=source_evidence,
+                    unit_id=unit.unit_id,
                 )
-                
-                if repaired:
+
+                if result.success and result.repaired_content:
                     # Update unit content with repaired fields
                     new_content = dict(content)
+                    repaired = result.repaired_content
+
                     if "definition" in repaired and repaired["definition"]:
                         new_content["definition"] = repaired["definition"]
                     if "why_it_matters" in repaired and repaired["why_it_matters"]:
                         new_content["why_it_matters"] = repaired["why_it_matters"]
                     if "explanation" in repaired and repaired["explanation"]:
                         new_content["explanation"] = repaired["explanation"]
-                    
-                    # Add repair metadata
+
+                    # Add repair metadata (provider-agnostic)
                     if "_metadata" not in new_content:
                         new_content["_metadata"] = {}
+
+                    # Determine provider-specific repair key
+                    if result.provider == "claude_local":
+                        repair_key = "_repaired_by_claude_local"
+                    else:
+                        repair_key = "_repaired_by_ollama"
+
                     new_content["_metadata"].update({
-                        "_repaired_by_ollama": True,
-                        "_repair_model": repaired.get("_repair_model", "unknown"),
+                        repair_key: True,
+                        "_repair_provider": result.provider,
+                        "_repair_model": result.model_used,
                         "_repair_reason": metadata.get("review_reason", "quality_below_threshold"),
+                        "_repair_outcome": result.outcome.value,
                         "content_quality": "repaired",
                         "review_needed": False,  # Clear review flag after repair
                     })
-                    
+
                     # Create updated unit
                     from dataclasses import replace
                     unit = replace(unit, content=new_content)
-                    # Don't log per-unit success - only log summary at end
+
+                    # Record successful intervention with actual model used
+                    self._record_llm_intervention(
+                        phase="L3_repair",
+                        target_id=unit.unit_id,
+                        target_type="unit",
+                        reason="quality_below_threshold",
+                        outcome=result.outcome.value,
+                        success=True,
+                        duration_seconds=result.duration_seconds or (time.time() - repair_start_time),
+                        metadata={
+                            "concept_id": concept_id,
+                            "model_used": result.model_used,
+                            "provider": result.provider,
+                            "quality_score_before": quality_score,
+                            "confidence": result.metadata.get("confidence"),
+                        },
+                        llm_model=result.model_used,
+                    )
+                    self._repair_status["repaired_units"].append(concept_id)
                 else:
-                    # Track failed repair
+                    # Track failed repair with detailed reason
                     self._repair_status["failed_repairs"].append(concept_id)
-                    
+
+                    # Build detailed error metadata
+                    error_metadata = {
+                        "concept_id": concept_id,
+                        "model_used": result.model_used,
+                        "provider": result.provider,
+                        "error": result.error_message or result.outcome.value,
+                        "outcome": result.outcome.value,
+                    }
+
+                    # Include parse error details if available
+                    if result.parse_error_details:
+                        error_metadata["parse_error"] = result.parse_error_details
+                    if result.validation_errors:
+                        error_metadata["validation_errors"] = result.validation_errors
+
+                    # Record failed intervention with explicit outcome
+                    self._record_llm_intervention(
+                        phase="L3_repair",
+                        target_id=unit.unit_id,
+                        target_type="unit",
+                        reason="quality_below_threshold",
+                        outcome=result.outcome.value,
+                        success=False,
+                        duration_seconds=result.duration_seconds or (time.time() - repair_start_time),
+                        metadata=error_metadata,
+                        llm_model=result.model_used,
+                    )
+
             except Exception as e:
-                # Track failed repair but don't log (summary logged at end)
+                # Track failed repair with full error details
                 self._repair_status["failed_repairs"].append(concept_id)
-        
+
+                # Record failed intervention with exception info
+                self._record_llm_intervention(
+                    phase="L3_repair",
+                    target_id=unit.unit_id,
+                    target_type="unit",
+                    reason="quality_below_threshold",
+                    outcome="repair_exception",
+                    success=False,
+                    duration_seconds=time.time() - repair_start_time,
+                    metadata={
+                        "concept_id": concept_id,
+                        "model_used": repair_client.model if repair_client else "unknown",
+                        "provider": repair_client.provider if repair_client else "unknown",
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                    llm_model=repair_client.model if repair_client else "unknown",
+                )
+
         return unit
     
     def _get_error_subtypes_for_concept(self, concept_id: str) -> list[str]:

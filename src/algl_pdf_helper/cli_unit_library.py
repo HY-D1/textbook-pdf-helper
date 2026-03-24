@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -123,7 +124,7 @@ ExportModeCLI = typer.Option(
 
 LLMProviderCLI = typer.Option(
     "ollama",
-    help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER."
+    help="LLM provider: ollama (default, local), grounded (no LLM), kimi, openai, or claude_local. Falls back to env var ALGL_LLM_PROVIDER."
 )
 
 # Provider-specific default models
@@ -131,7 +132,8 @@ DEFAULT_MODELS: dict[str, str] = {
     "grounded": "none",
     "kimi": "kimi-k2-5",
     "openai": "gpt-4",
-    "ollama": "llama3.2:3b",
+    "ollama": "qwen3.5:9b-q8_0",
+    "claude_local": "claude-sonnet-4-6",
     "none": "none",
 }
 
@@ -276,6 +278,21 @@ def process_command(
         min=0.0,
         max=1.0,
         help="Quality threshold below which to trigger Ollama repair",
+    ),
+    claude_local_base_url: str | None = typer.Option(
+        None,
+        "--claude-base-url",
+        help="Base URL for Claude local endpoint (defaults to CLAUDE_LOCAL_BASE_URL env var or http://localhost:8080)",
+    ),
+    claude_local_model: str | None = typer.Option(
+        None,
+        "--claude-model",
+        help="Claude local model name (defaults to CLAUDE_LOCAL_MODEL env var)",
+    ),
+    claude_local_api_key: str | None = typer.Option(
+        None,
+        "--claude-api-key",
+        help="API key for Claude local endpoint (defaults to CLAUDE_LOCAL_API_KEY env var)",
     ),
     clear_repair_cache: bool = typer.Option(
         False,
@@ -428,6 +445,9 @@ def process_command(
         use_ollama_repair=use_ollama_repair,
         ollama_model=ollama_model,
         ollama_repair_threshold=ollama_repair_threshold,
+        claude_local_base_url=claude_local_base_url or os.getenv("CLAUDE_LOCAL_BASE_URL", "http://localhost:8080"),
+        claude_local_model=claude_local_model or os.getenv("CLAUDE_LOCAL_MODEL", "claude-sonnet-4-6"),
+        claude_local_api_key=claude_local_api_key or os.getenv("CLAUDE_LOCAL_API_KEY", ""),
         page_range=parsed_page_range,  # type: ignore
         chapter_range=parsed_chapter_range,  # type: ignore
         resume_from_checkpoint=resume,

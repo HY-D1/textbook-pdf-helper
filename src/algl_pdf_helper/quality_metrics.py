@@ -32,6 +32,14 @@ class QualityThresholds:
     # Column bleed threshold (ratio of page width that indicates potential bleed)
     COLUMN_BLEED_THRESHOLD: float = 0.85
 
+    # OCR floor for PDFs that do have embedded text.
+    # Coverage below this value (e.g. heavily corrupted encoding) warrants OCR
+    # even when embedded text was detected.  Digital PDFs with SQL code, tables,
+    # or figures will often score 0.30–0.70 on the readable-char heuristic but
+    # are perfectly extractable with direct extraction – they must NOT be pushed
+    # into the OCR path.
+    EMBEDDED_TEXT_OCR_FLOOR: float = 0.30
+
 
 class CoverageResult(NamedTuple):
     """Result of text coverage analysis."""

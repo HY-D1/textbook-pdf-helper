@@ -1,9 +1,13 @@
 #!/bin/bash
 # Process both PDFs with educational note generation
+# NOTE: This script uses the legacy educational pipeline.
+# For the canonical textbook-static adaptive export, use build_textbook_static.sh instead.
 
 set -e
 
-cd "/Users/harrydai/Desktop/Personal Portfolio/algl-pdf-helper"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 source .venv/bin/activate
 
 OUTPUT_DIR="./output/both-pdfs"

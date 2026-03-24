@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from .export_sqladapt import export_to_sqladapt
+from .export_sqladapt import export_to_sqladapt, validate_handoff_integrity
 from .extract import (
     check_extraction_quality,
     check_text_coverage,
@@ -285,6 +285,115 @@ def export(
     except Exception as e:
         typer.echo(f"❌ Export failed: {e}")
         raise typer.Exit(1)
+
+
+@app.command(name="validate-handoff")
+def validate_handoff(
+    output_dir: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="textbook-static export directory to validate",
+    ),
+):
+    """Validate a textbook-static export directory for adaptive app handoff.
+
+    Checks that concept-map.json, textbook-manifest.json, chunks-metadata.json,
+    and all concept .md files are internally consistent.  Exits with code 1 if
+    any fatal integrity violation is found.
+    """
+    result = validate_handoff_integrity(output_dir)
+
+    typer.echo(f"Validating: {output_dir}")
+    typer.echo(f"  Concept-map entries  : {result['concept_map_entries']}")
+    typer.echo(f"  Markdown files        : {result['markdown_files']}")
+    typer.echo(f"  Textbook units         : {result['units_count']}")
+    typer.echo(f"  Concept-quality keys   : {result.get('concept_quality_key_count', 0)}")
+    typer.echo(f"  Source docs (manifest) : {result['source_docs_count']}")
+    typer.echo(f"  Doc directories        : {result['doc_dirs_count']}")
+    typer.echo(f"  chunks-metadata docIds : {result['chunks_meta_doc_ids']}")
+
+    # Per-sourceDoc breakdown
+    per_doc_concepts = result.get("per_doc_concept_counts", {})
+    per_doc_units = result.get("per_doc_unit_counts", {})
+    per_doc_fallback = result.get("per_doc_fallback_counts", {})
+    all_doc_ids = sorted(set(list(per_doc_concepts.keys()) + list(per_doc_units.keys())))
+    if all_doc_ids:
+        typer.echo("  Per-source-doc summary:")
+        for doc_id in all_doc_ids:
+            concepts = per_doc_concepts.get(doc_id, 0)
+            units = per_doc_units.get(doc_id, 0)
+            fallback_doc = per_doc_fallback.get(doc_id, 0)
+            ok_doc = units - fallback_doc
+            fallback_pct = f"{fallback_doc / units:.0%}" if units else "n/a"
+            typer.echo(
+                f"    {doc_id}: {concepts} concepts, {units} units "
+                f"({ok_doc} ok / {fallback_doc} fallback_only = {fallback_pct} fallback)"
+            )
+
+    # Learner quality summary
+    fallback_count = result.get("fallback_only_count", 0)
+    fallback_enriched = result.get("fallback_enriched_count", 0)
+    fallback_with_examples = result.get("fallback_with_examples_count", 0)
+    total_units = result.get("units_count", 0)
+    if total_units > 0:
+        ok_count = total_units - fallback_count
+        typer.echo(
+            f"  Learner quality        : {ok_count} ok, "
+            f"{fallback_count} fallback_only"
+            f" ({fallback_count / total_units:.0%} fallback)"
+        )
+        if fallback_count > 0:
+            enriched_pct = fallback_enriched / fallback_count
+            examples_pct = fallback_with_examples / fallback_count if fallback_count else 0
+            typer.echo(
+                f"  Fallback enrichment    : {fallback_enriched}/{fallback_count} fallback_only "
+                f"concepts have learnerSafeKeyPoints ({enriched_pct:.0%} enriched)"
+            )
+            typer.echo(
+                f"  Fallback examples      : {fallback_with_examples}/{fallback_count} fallback_only "
+                f"concepts have learnerSafeExamples ({examples_pct:.0%} with examples)"
+            )
+
+            # Detailed example quality breakdown
+            fallback_valid = result.get("fallback_with_valid_examples", 0)
+            fallback_filtered = result.get("fallback_with_filtered_examples", 0)
+            fallback_hidden = result.get("fallback_with_hidden_examples", 0)
+            typer.echo(
+                f"  Fallback example quality: {fallback_valid} valid, "
+                f"{fallback_filtered} filtered, {fallback_hidden} hidden"
+            )
+
+            # Coverage thresholds
+            typer.echo("")
+            KEY_POINTS_THRESHOLD = 0.80  # 80% of fallback must have key points
+            EXAMPLES_THRESHOLD = 0.50    # 50% of fallback (with examples expected) must have examples
+
+            key_points_coverage_ok = enriched_pct >= KEY_POINTS_THRESHOLD
+            examples_coverage_ok = examples_pct >= EXAMPLES_THRESHOLD
+
+            if key_points_coverage_ok:
+                typer.echo(f"  ✅ Key points coverage  : {enriched_pct:.0%} (threshold: {KEY_POINTS_THRESHOLD:.0%})")
+            else:
+                typer.echo(f"  ⚠️  Key points coverage  : {enriched_pct:.0%} (threshold: {KEY_POINTS_THRESHOLD:.0%}) — BELOW TARGET")
+
+            if examples_coverage_ok:
+                typer.echo(f"  ✅ Examples coverage    : {examples_pct:.0%} (threshold: {EXAMPLES_THRESHOLD:.0%})")
+            else:
+                typer.echo(f"  ⚠️  Examples coverage    : {examples_pct:.0%} (threshold: {EXAMPLES_THRESHOLD:.0%}) — BELOW TARGET")
+
+    if result["warnings"]:
+        for w in result["warnings"]:
+            typer.echo(f"  ⚠️  {w}")
+
+    if result["errors"]:
+        for e in result["errors"]:
+            typer.echo(f"  ❌ {e}")
+        typer.echo("")
+        typer.echo("Handoff integrity: INVALID")
+        raise typer.Exit(1)
+
+    typer.echo("")
+    typer.echo("✅ Handoff integrity: VALID")
 
 
 @app.command()
@@ -1172,7 +1281,7 @@ try:
         llm_provider: str = typer.Option(
             os.getenv("ALGL_LLM_PROVIDER", "ollama"),
             "--llm-provider",
-            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, or openai. Falls back to env var ALGL_LLM_PROVIDER.",
+            help="LLM provider: ollama (default, local), grounded (no LLM), kimi, openai, or claude_local. Falls back to env var ALGL_LLM_PROVIDER.",
         ),
         llm_model: str | None = typer.Option(
             None,
@@ -1232,6 +1341,21 @@ try:
             min=0.0,
             max=1.0,
             help="Quality threshold below which to trigger Ollama repair",
+        ),
+        claude_local_base_url: str | None = typer.Option(
+            None,
+            "--claude-base-url",
+            help="Base URL for Claude local endpoint (defaults to CLAUDE_LOCAL_BASE_URL env var or http://localhost:8080)",
+        ),
+        claude_local_model: str | None = typer.Option(
+            None,
+            "--claude-model",
+            help="Claude local model name (defaults to CLAUDE_LOCAL_MODEL env var)",
+        ),
+        claude_local_api_key: str | None = typer.Option(
+            None,
+            "--claude-api-key",
+            help="API key for Claude local endpoint (defaults to CLAUDE_LOCAL_API_KEY env var)",
         ),
         page_range: str | None = typer.Option(
             None,
@@ -1314,6 +1438,9 @@ try:
             use_ollama_repair=use_ollama_repair,
             ollama_model=ollama_model,
             ollama_repair_threshold=ollama_repair_threshold,
+            claude_local_base_url=claude_local_base_url,
+            claude_local_model=claude_local_model,
+            claude_local_api_key=claude_local_api_key,
             page_range=page_range,
             chapter_range=chapter_range,
             resume=resume,
@@ -1666,3 +1793,149 @@ def replay(
         typer.echo(f"❌ Unexpected error: {e}", err=True)
         raise typer.Exit(1)
 
+
+# =============================================================================
+# HINTWISE COMMAND
+# =============================================================================
+
+
+@app.command(name="hintwise")
+def hintwise_command(
+    concept_units_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Path to concept_units.json (or any JSON with concept/unit dicts)",
+    ),
+    concept_id: str = typer.Option(
+        ...,
+        "--concept", "-c",
+        help="Concept ID to build the payload for",
+    ),
+    learner_id: str | None = typer.Option(
+        None,
+        "--learner-id",
+        help="Learner identifier (optional)",
+    ),
+    problem_id: str | None = typer.Option(
+        None,
+        "--problem-id",
+        help="Problem identifier (optional)",
+    ),
+    escalation_level: str = typer.Option(
+        "L1",
+        "--escalation-level",
+        help="Escalation level: L1 (default), L2, L3, or L4",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir", "-o",
+        help="Directory to save hintwise-results.jsonl (skipped if omitted)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Build payload and show eligibility, but do not call the endpoint",
+    ),
+):
+    """
+    Build a HintWise payload from an existing artifact and optionally call the live endpoint.
+
+    Reads concept_units.json, finds the specified concept, builds a HintwisePayload,
+    and calls the configured HintWise HTTP endpoint (HINTWISE_BASE_URL env var).
+    When HINTWISE_BASE_URL is not set the command runs in offline mode (payload
+    inspection only, no network call is made).
+
+    Results are appended to hintwise-results.jsonl in --output-dir (if specified).
+
+    Environment variables
+    ---------------------
+    HINTWISE_BASE_URL    Base URL of the HintWise service (optional)
+    HINTWISE_ENDPOINT    Endpoint path (default: /api/hint)
+    HINTWISE_API_KEY     Bearer token for the endpoint (optional)
+    HINTWISE_TIMEOUT     Request timeout in seconds (default: 10)
+
+    Examples
+    --------
+    # Inspect payload only (offline, no HTTP call)
+    algl-pdf hintwise ./output/concept_units.json --concept select-basic --dry-run
+
+    # Call live endpoint and save result
+    algl-pdf hintwise ./output/concept_units.json -c join-operations \\
+        --learner-id abc --problem-id p01 --output-dir ./outputs/hints/
+    """
+    import json as _json
+
+    from .hintwise_adapter import make_hintwise_payload
+    from .hintwise_client import HintwiseClient
+    from .hintwise_service import HintwiseService
+
+    # --- load units file ---
+    try:
+        raw = _json.loads(concept_units_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Error reading {concept_units_path}: {exc}", err=True)
+        raise typer.Exit(1)
+
+    units: list[dict] = raw if isinstance(raw, list) else raw.get("units", [])
+    unit_data = next((u for u in units if u.get("concept_id") == concept_id), None)
+    if unit_data is None:
+        typer.echo(f"Concept '{concept_id}' not found in {concept_units_path}.", err=True)
+        available = sorted({u.get("concept_id", "") for u in units})[:10]
+        if available:
+            typer.echo(f"Available (first 10): {', '.join(available)}", err=True)
+        raise typer.Exit(1)
+
+    learner_ctx = {
+        "escalation_level": escalation_level,
+        "learner_id": learner_id,
+        "problem_id": problem_id,
+    }
+    payload = make_hintwise_payload(unit_data, learner_context=learner_ctx)
+
+    # --- show payload summary ---
+    typer.echo(f"Concept: {payload.concept_context.concept_id}")
+    typer.echo(f"Unit ID: {payload.concept_context.unit_id or '(none)'}")
+    typer.echo(f"Escalation: {payload.learner_context.escalation_level}")
+    typer.echo(f"Supports HintWise: {payload.supports_hintwise}")
+    elig = payload.get_hint_eligibility()
+    typer.echo(f"Eligibility: eligible_for_hints={elig['eligible_for_hints']}")
+
+    if dry_run:
+        typer.echo("\n[dry-run] Payload built. No HTTP call made.")
+        typer.echo(_json.dumps(payload.to_dict(), indent=2))
+        return
+
+    # --- call endpoint ---
+    client = HintwiseClient.from_env()
+    if not client.is_configured:
+        typer.echo(
+            "\n[offline] HINTWISE_BASE_URL is not set — no HTTP call made.\n"
+            "Set HINTWISE_BASE_URL to enable live endpoint calls."
+        )
+        return
+
+    typer.echo(f"\nCalling {client._build_url()} ...")
+
+    out_path: Path | None = None
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / "hintwise-results.jsonl"
+
+    svc = HintwiseService(client=client, output_path=out_path)
+    result = svc.request(unit_data, learner_context=learner_ctx)
+
+    if result.succeeded():
+        typer.echo(f"Status: {result.status_code} OK")
+        if result.hint_id:
+            typer.echo(f"Hint ID: {result.hint_id}")
+        if result.hint_content:
+            typer.echo(f"Hint: {result.hint_content}")
+    elif result.error:
+        typer.echo(f"Error: {result.error}", err=True)
+        raise typer.Exit(1)
+    else:
+        typer.echo(f"Status: {result.status_code}")
+
+    if out_path:
+        typer.echo(f"Result saved to: {out_path}")

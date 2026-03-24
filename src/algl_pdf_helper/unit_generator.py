@@ -45,6 +45,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from algl_pdf_helper.concept_id_resolver import get_default_resolver
+
 # =============================================================================
 # HEADING DETECTION PATTERNS
 # =============================================================================
@@ -176,6 +178,9 @@ class ExampleMetadata(BaseModel):
     # SQL CLEANING AUDIT FIELDS:
     raw_sql_preview: str = Field(default="", description="Preview of raw SQL before cleaning (first 100 chars)")
     cleaning_changes: bool = Field(default=False, description="Whether cleaning modified the SQL")
+    # REJECTION/FALLBACK AUDIT FIELDS:
+    rejection_reason: str | None = Field(default=None, description="Reason for rejecting extracted candidates")
+    fallback_reason: str | None = Field(default=None, description="Reason for falling back to default example")
 
 
 class L2Content(BaseModel):
@@ -1577,29 +1582,38 @@ class UnitGenerator:
         
         # Build content dict and add metadata about example source
         content_dict = content.model_dump()
-        
+
+        # Resolve concept ID for metadata provenance
+        _res_meta = self._get_resolution_meta(concept_id)
+
         # Track if using default example for student-ready filtering
         if content.example_metadata and content.example_metadata.source_type == "default":
             content_dict["used_default_example"] = True
             content_dict["_metadata"] = {
                 "content_source": "default",
+                "content_source_type": "default",
                 "example_source": "default",
                 "review_needed": True,
                 "content_quality": "needs_improvement",
+                **_res_meta,
             }
         elif content.example_metadata and content.example_metadata.source_type == "extracted":
             content_dict["_metadata"] = {
                 "content_source": "extracted",
+                "content_source_type": "extracted",
                 "example_source": "extracted",
                 "review_needed": False,
                 "content_quality": "good",
+                **_res_meta,
             }
         elif content.example_metadata and content.example_metadata.source_type == "curated":
             content_dict["_metadata"] = {
                 "content_source": "curated",
+                "content_source_type": "curated",
                 "example_source": "curated",
                 "review_needed": False,
                 "content_quality": "curated",
+                **_res_meta,
             }
         
         # Get provenance information
@@ -1763,8 +1777,10 @@ class UnitGenerator:
                 # Curated content is high quality - mark as curated, not weak
                 content_dict["_metadata"] = {
                     "content_source": "curated",
+                    "content_source_type": "curated",
                     "review_needed": False,
                     "content_quality": "curated",
+                    **self._get_resolution_meta(concept_id),
                 }
             else:
                 # Using grounded defaults without curated - flag for review as content may be weak
@@ -5436,77 +5452,155 @@ class UnitGenerator:
         
         return "This SQL example demonstrates the concept with practical code that can be adapted for similar use cases."
 
+    def _get_resolution_meta(self, concept_id: str) -> dict:
+        """Return resolution metadata fields for embedding in unit ``_metadata``.
+
+        Adds ``requested_concept_id``, ``resolved_concept_id``, and
+        ``content_source_resolution`` so downstream consumers can trace
+        how a concept ID was matched to curated content.
+        """
+        resolver = get_default_resolver()
+        lookup_id, result = resolver.resolve_for_lookup(concept_id)
+        return {
+            "requested_concept_id": concept_id,
+            "resolved_concept_id": lookup_id,
+            "content_source_resolution": result.resolution,
+        }
+
     def _load_curated_examples(self, concept_id: str) -> list[dict] | None:
-        """Load curated examples for concepts that textbooks explain poorly."""
+        """Load curated examples for concepts that textbooks explain poorly.
+
+        Uses the concept-ID resolver so alias keys (e.g. ``stored-procedures``)
+        map transparently to their canonical registry IDs.
+        """
         # Path from unit_generator.py (src/algl_pdf_helper/) -> project root -> data/
         examples_path = Path(__file__).parent.parent.parent / "data" / "concept_examples.json"
-        
+
         if not examples_path.exists():
             return None
-        
+
         try:
             with open(examples_path) as f:
                 all_examples = json.load(f)
-            
-            concept_examples = all_examples.get(concept_id)
-            if not concept_examples:
-                return None
-            
-            return [
-                {
-                    "sql": ex["sql"],
-                    "explanation": ex["explanation"],
-                    "scenario": ex.get("scenario", "Example usage"),
-                    "page": 0,  # Curated examples have no page
-                    "from_source": True,  # Curated, not synthetic
-                    "is_curated": True,
-                }
-                for ex in concept_examples
-            ]
         except Exception:
             return None
 
+        # Resolve concept ID — try canonical first, then alias
+        resolver = get_default_resolver()
+        lookup_id, resolution = resolver.resolve_for_lookup(concept_id)
+
+        concept_examples = all_examples.get(concept_id) or all_examples.get(lookup_id)
+        if not concept_examples:
+            return None
+
+        if resolution.resolution != "exact":
+            logger.debug(
+                "_load_curated_examples: resolved %r → %r (%s)",
+                concept_id, lookup_id, resolution.resolution,
+            )
+
+        return [
+            {
+                "sql": ex["sql"],
+                "explanation": ex["explanation"],
+                "scenario": ex.get("scenario", "Example usage"),
+                "page": 0,  # Curated examples have no page
+                "from_source": True,  # Curated, not synthetic
+                "is_curated": True,
+                "_resolution": resolution.resolution,
+                "_resolved_concept_id": lookup_id,
+            }
+            for ex in concept_examples
+        ]
+
     def _load_curated_l3_content(self, concept_id: str) -> dict | None:
-        """Load curated L3 content for concepts missing good source material."""
+        """Load curated L3 content for concepts missing good source material.
+
+        Uses the concept-ID resolver so alias keys (e.g. ``having-clause``)
+        map transparently to their canonical registry IDs.
+        """
         curated_path = Path(__file__).parent.parent.parent / "data" / "concept_curated_l3.json"
-        
+
         if not curated_path.exists():
             return None
-        
+
         try:
             with open(curated_path) as f:
                 all_curated = json.load(f)
-            
-            return all_curated.get(concept_id)
         except Exception:
             return None
 
+        # Resolve concept ID — try canonical first, then alias
+        resolver = get_default_resolver()
+        lookup_id, resolution = resolver.resolve_for_lookup(concept_id)
+
+        content = all_curated.get(concept_id) or all_curated.get(lookup_id)
+        if content is None:
+            return None
+
+        if resolution.resolution != "exact":
+            logger.debug(
+                "_load_curated_l3_content: resolved %r → %r (%s)",
+                concept_id, lookup_id, resolution.resolution,
+            )
+
+        # Attach resolution metadata so callers can surface it in _metadata
+        if isinstance(content, dict):
+            content = dict(content)
+            content.setdefault("_resolution", resolution.resolution)
+            content.setdefault("_resolved_concept_id", lookup_id)
+            content.setdefault("_requested_concept_id", concept_id)
+
+        return content
+
     def _load_curated_unit_pack(self, concept_id: str) -> dict | None:
         """Load comprehensive curated unit pack (L2, L3, L4) for weak concepts.
-        
-        This method loads from concept_curated_units.json which contains
-        stage-specific overrides for concepts that underperform with
-        automatic extraction or generation.
-        
+
+        Loads from concept_curated_units.json which contains stage-specific
+        overrides for concepts that underperform with automatic extraction.
+        Uses the concept-ID resolver so alias keys (e.g. ``stored-procedures``)
+        map transparently to their canonical registry IDs.
+
         Args:
-            concept_id: The canonical concept ID
-            
+            concept_id: The concept ID (canonical or alias).
+
         Returns:
             Dictionary with L2_hint_plus_example, L3_explanation, L4_reflective_note
             keys, or None if no curated content exists for this concept.
         """
         curated_path = Path(__file__).parent.parent.parent / "data" / "concept_curated_units.json"
-        
+
         if not curated_path.exists():
             return None
-        
+
         try:
             with open(curated_path) as f:
                 all_curated = json.load(f)
-            
-            return all_curated.get(concept_id)
         except Exception:
             return None
+
+        # Resolve concept ID — try canonical first, then alias
+        resolver = get_default_resolver()
+        lookup_id, resolution = resolver.resolve_for_lookup(concept_id)
+
+        pack = all_curated.get(concept_id) or all_curated.get(lookup_id)
+        if pack is None:
+            return None
+
+        if resolution.resolution != "exact":
+            logger.debug(
+                "_load_curated_unit_pack: resolved %r → %r (%s)",
+                concept_id, lookup_id, resolution.resolution,
+            )
+
+        # Attach resolution metadata so callers can surface it in _metadata
+        if isinstance(pack, dict):
+            pack = dict(pack)
+            pack.setdefault("_resolution", resolution.resolution)
+            pack.setdefault("_resolved_concept_id", lookup_id)
+            pack.setdefault("_requested_concept_id", concept_id)
+
+        return pack
 
     def _load_curated_l2_content(self, concept_id: str) -> dict | None:
         """Load curated L2 content for concepts missing good source examples.
@@ -5675,11 +5769,13 @@ class UnitGenerator:
         content_dict["_used_curated_fallback"] = True
         content_dict["_metadata"] = {
             "content_source": "curated",
+            "content_source_type": "curated",
             "review_needed": source_mode == "curated_only_offbook",
             "content_quality": "curated",
             "source_mode": source_mode,
             "offbook_concept": source_mode == "curated_only_offbook",
             "exclude_from_coverage": source_mode == "curated_only_offbook",
+            **self._get_resolution_meta(concept_id),
         }
         
         # Create a synthetic evidence span for curated content to pass grounding checks
@@ -6227,6 +6323,7 @@ class UnitGenerator:
         # fail concept-fit validation. This prevents INNER JOIN examples from
         # being selected for outer-join concept.
         filtered_candidates = []
+        rejection_reasons = []  # Track why candidates were rejected
         for c in candidates:
             # Only validate extracted candidates (curated and default are assumed valid)
             if c['source_type'] == 'extracted':
@@ -6235,11 +6332,12 @@ class UnitGenerator:
                     filtered_candidates.append(c)
                     print(f"[L2 BUILD]   EXTRACTED PASSED concept-fit: {c['sql'][:50]}...")
                 else:
+                    rejection_reasons.append(f"concept_mismatch: {reason}")
                     print(f"[L2 BUILD]   EXTRACTED REJECTED concept-fit: {reason} - {c['sql'][:50]}...")
             else:
                 # Curated and default always pass (they're designed for this concept)
                 filtered_candidates.append(c)
-        
+
         # Update candidates to filtered list
         candidates = filtered_candidates
         print(f"[L2 BUILD] After concept-fit filtering: {len(candidates)} candidates remain")
@@ -6322,6 +6420,16 @@ class UnitGenerator:
         print(f"[L2 BUILD] SQL: {best_candidate['sql'][:80]}...")
         print(f"{'='*60}\n")
         
+        # Determine fallback reason if using default
+        fallback_reason = None
+        if best_candidate['source_type'] == 'default':
+            if rejection_reasons:
+                fallback_reason = f"all_extracted_rejected; first_reason: {rejection_reasons[0]}"
+            elif not sql_examples:
+                fallback_reason = "no_sql_candidates_found"
+            else:
+                fallback_reason = "no_candidate_met_threshold"
+
         # Determine source and practice SQL with validation
         source_sql_raw = best_candidate['sql']
         page = best_candidate.get('page', 0)
@@ -6408,6 +6516,9 @@ class UnitGenerator:
             # NEW: SQL cleaning audit fields
             raw_sql_preview=raw_sql[:100] if len(raw_sql) > 100 else raw_sql,
             cleaning_changes=cleaning_applied,
+            # NEW: Rejection/fallback audit fields
+            rejection_reason=rejection_reasons[0] if rejection_reasons else None,
+            fallback_reason=fallback_reason,
         )
         
         return L2Content(
