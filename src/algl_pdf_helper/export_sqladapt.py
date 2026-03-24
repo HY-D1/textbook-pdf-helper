@@ -624,7 +624,11 @@ def enrich_units_with_learner_quality(
         # Safe SQL examples: extract prose-free individual blocks.
         # When exampleQuality is "hidden" there are no SQL blocks at all.
         if result.exampleQuality != "hidden":
-            unit["learnerSafeExamples"] = extract_learner_safe_sql_blocks(md_text)
+            safe_examples = extract_learner_safe_sql_blocks(md_text)
+            unit["learnerSafeExamples"] = safe_examples
+            # If no examples survived filtering, update exampleQuality to "hidden"
+            if not safe_examples and result.exampleQuality == "valid":
+                unit["exampleQuality"] = "hidden"
         else:
             unit["learnerSafeExamples"] = []
 
@@ -1342,9 +1346,17 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
     fallback_only_total = 0
     fallback_enriched_total = 0   # fallback_only units that have learnerSafeKeyPoints
     fallback_with_examples_total = 0  # fallback_only units that have learnerSafeExamples
+    # Detailed example quality breakdown for fallback_only concepts
+    fallback_with_valid_examples = 0      # exampleQuality="valid" with non-empty examples
+    fallback_with_filtered_examples = 0   # exampleQuality="filtered" with non-empty examples
+    fallback_with_hidden_examples = 0     # exampleQuality="hidden" or no examples
     per_doc_fallback_counts: dict[str, int] = {}
     per_doc_fallback_enriched: dict[str, int] = {}  # per-doc enrichment counts
     per_doc_fallback_examples: dict[str, int] = {}  # per-doc examples counts
+    # Per-doc breakdown by example quality
+    per_doc_fallback_valid_examples: dict[str, int] = {}
+    per_doc_fallback_filtered_examples: dict[str, int] = {}
+    per_doc_fallback_hidden_examples: dict[str, int] = {}
     if units_catalog_file.exists():
         try:
             with open(units_catalog_file, "r", encoding="utf-8") as _fq:
@@ -1371,6 +1383,23 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
                         if "/" in _nid:
                             _did = _nid.split("/", 1)[0]
                             per_doc_fallback_examples[_did] = per_doc_fallback_examples.get(_did, 0) + 1
+                    # Detailed breakdown by exampleQuality
+                    if _example_quality == "valid" and _examples and len(_examples) > 0:
+                        fallback_with_valid_examples += 1
+                        if "/" in _nid:
+                            _did = _nid.split("/", 1)[0]
+                            per_doc_fallback_valid_examples[_did] = per_doc_fallback_valid_examples.get(_did, 0) + 1
+                    elif _example_quality == "filtered" and _examples and len(_examples) > 0:
+                        fallback_with_filtered_examples += 1
+                        if "/" in _nid:
+                            _did = _nid.split("/", 1)[0]
+                            per_doc_fallback_filtered_examples[_did] = per_doc_fallback_filtered_examples.get(_did, 0) + 1
+                    else:
+                        # exampleQuality="hidden" or no examples
+                        fallback_with_hidden_examples += 1
+                        if "/" in _nid:
+                            _did = _nid.split("/", 1)[0]
+                            per_doc_fallback_hidden_examples[_did] = per_doc_fallback_hidden_examples.get(_did, 0) + 1
         except Exception:
             pass
 
@@ -1411,10 +1440,16 @@ def validate_handoff_integrity(output_dir: Path) -> dict[str, Any]:
         "fallback_only_count": fallback_only_total,
         "fallback_enriched_count": fallback_enriched_total,
         "fallback_with_examples_count": fallback_with_examples_total,
+        "fallback_with_valid_examples": fallback_with_valid_examples,
+        "fallback_with_filtered_examples": fallback_with_filtered_examples,
+        "fallback_with_hidden_examples": fallback_with_hidden_examples,
         "concept_quality_key_count": concept_quality_key_count,
         "per_doc_concept_counts": per_doc_concept_counts,
         "per_doc_unit_counts": per_doc_unit_counts,
         "per_doc_fallback_counts": per_doc_fallback_counts,
         "per_doc_fallback_enriched": per_doc_fallback_enriched,
         "per_doc_fallback_examples": per_doc_fallback_examples,
+        "per_doc_fallback_valid_examples": per_doc_fallback_valid_examples,
+        "per_doc_fallback_filtered_examples": per_doc_fallback_filtered_examples,
+        "per_doc_fallback_hidden_examples": per_doc_fallback_hidden_examples,
     }

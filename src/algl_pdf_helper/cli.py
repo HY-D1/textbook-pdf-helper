@@ -354,6 +354,15 @@ def validate_handoff(
                 f"concepts have learnerSafeExamples ({examples_pct:.0%} with examples)"
             )
 
+            # Detailed example quality breakdown
+            fallback_valid = result.get("fallback_with_valid_examples", 0)
+            fallback_filtered = result.get("fallback_with_filtered_examples", 0)
+            fallback_hidden = result.get("fallback_with_hidden_examples", 0)
+            typer.echo(
+                f"  Fallback example quality: {fallback_valid} valid, "
+                f"{fallback_filtered} filtered, {fallback_hidden} hidden"
+            )
+
             # Coverage thresholds
             typer.echo("")
             KEY_POINTS_THRESHOLD = 0.80  # 80% of fallback must have key points

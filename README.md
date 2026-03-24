@@ -70,6 +70,39 @@ The two newest rules (`ui_artifact_density`, `structural_corruption`) catch **bo
 If quality fields are absent from an older export, `validate-handoff` prints a
 warning and asks you to re-run the build.
 
+#### Example Quality Expectations
+
+The `exampleQuality` field indicates the usability of SQL examples extracted for learner consumption:
+
+| State | Meaning | When to Use |
+|-------|---------|-------------|
+| `valid` | SQL examples passed all validation checks | Examples are prose-free, have no OCR corruption, and have valid SQL structure |
+| `filtered` | SQL examples contain prose contamination or OCR artifacts but are still extractable | Examples have some noise but core SQL is usable with caution |
+| `hidden` | No usable SQL examples found | Either no examples existed in source or all were filtered out due to corruption |
+
+**Validation Pipeline**
+
+SQL examples undergo multi-layer validation in `extract_learner_safe_sql_blocks()`:
+
+1. **Prose contamination detection** — Blocks with >40% English function words (the, and, is, of, etc.) are flagged as contaminated
+2. **OCR corruption detection** — Garbled tokens (e.g., `se1ec`, `fr@m`) and punctuation inside words trigger filtering
+3. **Navigation/index text filtering** — TOC entries, chapter references, and page numbers are excluded
+4. **SQL structure validation** — Examples must start with valid SQL keywords (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, WITH, etc.)
+5. **Minimum complexity check** — Examples must have ≥3 tokens to be considered meaningful
+6. **Clause structure validation** — Multi-word SQL constructs must be properly formed
+
+**Quality Targets**
+
+- At least 50% of fallback concepts should have some form of examples (`valid` + `filtered`)
+- Valid examples are preferred over filtered (aim for >80% of examples to be `valid`)
+- Empty arrays are exported when no examples survive (never export corrupted examples)
+
+`validate-handoff` reports the detailed breakdown:
+
+```text
+  Fallback example quality: 2 valid, 4 filtered, 37 hidden
+```
+
 ### Concept-level quality index (`concept-quality.json`)
 
 The export pipeline also writes a standalone **`concept-quality.json`** keyed

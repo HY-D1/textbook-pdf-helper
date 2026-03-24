@@ -124,6 +124,59 @@ _ENGLISH_FUNCTION_WORDS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# OCR corruption patterns inside SQL blocks
+# These catch garbled tokens, incomplete words, and encoding artifacts
+# NOTE: We intentionally DON'T match table.column patterns (valid SQL)
+_SQL_OCR_CORRUPTION_RE = re.compile(
+    r"(?:"
+    r"\b[a-z]{2,},[a-z]{2,}\b|"                   # comma inside word: "develop,nent" (not "a,b")
+    r"\b[a-z]*\*[a-z]+\b|"                        # asterisk inside word: "incLcount" (not "*" alone)
+    r"\b[a-z]+'[a-z]+\b|"                         # apostrophe inside word: "Develop'ment"
+    r"\b[a-z]+\d[a-z]+\b|"                        # digit inside word: "E2I"
+    r"\bE2[lI]\b|"                                # OCR artifact for checkbox
+    r"\b[a-zA-Z]*[^\x00-\x7F\s]+[a-zA-Z]*"        # non-ASCII chars
+    r")",
+    re.IGNORECASE,
+)
+
+# Mixed programming language indicators in SQL blocks
+# Catches Java, C++, PL/SQL artifacts that shouldn't be in pure SQL examples
+_SQL_MIXED_LANGUAGE_RE = re.compile(
+    r"(?:"
+    r"\b(?:public|private|protected|static|void|class|interface|extends|implements)\b|"
+    r"\b(?:String|Integer|Boolean|int|boolean|char|float|double)\s+[a-zA-Z_]\w*\s*[=;:]\b|"
+    r"\b(?:DECLARE|BEGIN|END|EXCEPTION|WHEN)\s+(?!.*\b(?:SELECT|INSERT|UPDATE|DELETE)\b)|"
+    r"\b[a-zA-Z_]+\.[a-zA-Z_]+\s*\([^)]*\)\s*\{[^}]*\}|"  # method calls with braces
+    r"\bnew\s+[A-Z][a-zA-Z]*\s*\(|"                        # Java-style object creation
+    r"System\s*\.\s*(?:out|err|in)\s*\."                   # System.out.println etc
+    r")",
+    re.IGNORECASE,
+)
+
+# Navigation/index text patterns - not valid SQL
+_SQL_NAVIGATION_TEXT_RE = re.compile(
+    r"(?:"
+    r"\b(?:insert|delete|update|select|create|drop)\s+(?:operation|statement|query|versus|vs)\b|"
+    r"\b(?:node splits?|merge|redistribution|minimum occupancy|index)\b[^;]*$|"
+    r"\b(?:page|chapter|section)\s+\d+|"
+    r"\.{3,}\s*\d+\s*$|"                                    # ellipsis with page number
+    r"^\s*[\-\u2022\u25E6]\s*[a-z]+\s*,\s*[a-z]+"            # bullet list of keywords
+    r")",
+    re.IGNORECASE,
+)
+
+# Placeholder/no-example patterns
+_SQL_PLACEHOLDER_RE = re.compile(
+    r"^\s*--\s*No specific example available",
+    re.IGNORECASE,
+)
+
+# Valid SQL statement starters (for structure validation)
+_SQL_VALID_STARTERS_RE = re.compile(
+    r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXPLAIN|DESCRIBE|SHOW|USE|SET)",
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -533,16 +586,18 @@ def build_learner_safe_key_points(
 
 
 def extract_learner_safe_sql_blocks(md_text: str) -> list[dict[str, str]]:
-    """Extract SQL code blocks that are free of prose contamination.
+    """Extract SQL code blocks that are free of corruption and safe for learners.
 
-    A block is "safe" if ≤ 40 % of its non-empty lines contain three or more
-    common English function words (the same threshold used by
-    :func:`_prose_contamination_ratio`).  Blocks above that threshold are
-    contaminated with embedded prose and are excluded.
+    A block is "safe" only if it passes ALL of these checks:
+    1. ≤ 40% of lines contain embedded English prose (3+ function words)
+    2. No OCR corruption (garbled tokens like "staternents", punctuation inside words)
+    3. No mixed programming languages (Java, PL/SQL artifacts, method calls with braces)
+    4. No navigation/index text ("insert operation, node splits", chapter references)
+    5. Not a placeholder ("-- No specific example available")
+    6. Must start with a valid SQL keyword or be a recognizable SQL fragment
 
-    Use this to build ``learnerSafeExamples`` for ``fallback_only`` concepts
-    whose ``exampleQuality`` is ``'filtered'``: even though the bulk of the
-    SQL section is dirty, individual blocks may still be clean enough to show.
+    This is intentionally strict: we prefer fewer clean examples over many
+    contaminated ones. Corrupted examples teach wrong patterns.
 
     Parameters
     ----------
@@ -560,17 +615,78 @@ def extract_learner_safe_sql_blocks(md_text: str) -> list[dict[str, str]]:
         block = m.group(1).strip()
         if not block:
             continue
+
+        # Skip placeholder examples
+        if _SQL_PLACEHOLDER_RE.search(block):
+            continue
+
         lines = block.splitlines()
         non_empty = [ln.strip() for ln in lines if ln.strip()]
         if not non_empty:
             continue
+
+        # Check 1: Prose contamination (existing logic)
         prose_lines = sum(
             1
             for ln in non_empty
             if len(_ENGLISH_FUNCTION_WORDS_RE.findall(ln)) >= 3
         )
-        if prose_lines / len(non_empty) <= 0.40:
-            safe.append({"title": f"SQL Example {i}", "sql": block})
+        if prose_lines / len(non_empty) > 0.40:
+            continue
+
+        # Check 2: OCR corruption (garbled tokens)
+        if _SQL_OCR_CORRUPTION_RE.search(block):
+            continue
+
+        # Check 3: Mixed programming languages
+        if _SQL_MIXED_LANGUAGE_RE.search(block):
+            continue
+
+        # Check 4: Navigation/index text (not actual SQL)
+        if _SQL_NAVIGATION_TEXT_RE.search(block):
+            continue
+
+        # Check 5: Must look like valid SQL structure
+        # Either starts with a SQL keyword, or contains recognizable SQL patterns
+        first_line = non_empty[0] if non_empty else ""
+        has_valid_start = _SQL_VALID_STARTERS_RE.match(first_line) is not None
+        has_sql_pattern = bool(re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|VALUES|CREATE|TABLE)\b", block, re.IGNORECASE))
+
+        # If it doesn't start with SQL keyword, check if it's at least a SQL fragment
+        # (e.g., a WHERE clause continuation)
+        if not has_valid_start and not has_sql_pattern:
+            continue
+
+        # Check 6: Minimum complexity - reject trivial SQL fragments
+        # A meaningful example should have enough tokens to demonstrate a pattern
+        # Count SQL keywords, identifiers, and operators like *
+        tokens = re.findall(r"\b[a-zA-Z_]+\b|\*|,|;|=|<|>|\+|\-|\/", block)
+        if len(tokens) < 3:  # e.g., "SELECT tags" = 2 tokens, too trivial
+            continue
+
+        # Check 7: Must have proper SQL clause structure
+        # A valid example should have at least one clause beyond just the verb
+        # e.g., "SELECT foo FROM bar" not just "SELECT foo"
+        has_from_clause = bool(re.search(r"\bFROM\b", block, re.IGNORECASE))
+        has_where_clause = bool(re.search(r"\bWHERE\b", block, re.IGNORECASE))
+        has_values_clause = bool(re.search(r"\bVALUES\b", block, re.IGNORECASE))
+        has_set_clause = bool(re.search(r"\bSET\b", block, re.IGNORECASE))
+        has_into_clause = bool(re.search(r"\bINTO\b", block, re.IGNORECASE))
+
+        # For SELECT/INSERT/UPDATE/DELETE, require at least one clause
+        starts_with_verb = bool(re.match(r"\s*(?:SELECT|INSERT|UPDATE|DELETE)", first_line, re.IGNORECASE))
+        if starts_with_verb:
+            has_clause = has_from_clause or has_where_clause or has_values_clause or has_set_clause or has_into_clause
+            if not has_clause:
+                continue
+
+        # Check 8: Sentence-like structure detection
+        # If block contains periods followed by spaces (sentence endings), it's likely prose
+        sentence_endings = len(re.findall(r'\.[\s]*[A-Z]', block))
+        if sentence_endings >= 2:
+            continue
+
+        safe.append({"title": f"SQL Example {i}", "sql": block})
         if len(safe) >= 3:
             break
     return safe
