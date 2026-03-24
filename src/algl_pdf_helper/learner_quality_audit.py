@@ -153,6 +153,22 @@ _SQL_MIXED_LANGUAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# PL/SQL host variable patterns (not valid in pure SQL)
+_SQL_PLSQL_HOST_VARS_RE = re.compile(
+    r"\:[a-zA-Z_][a-zA-Z0-9_]*\b",  # :title, :price, :author
+)
+
+# Trailing garbage detection - catches punctuation after SQL should end
+_SQL_TRAILING_GARBAGE_RE = re.compile(
+    r"(?:"
+    r'[;}"\']\s*["\'\}]\s*$'  # }; or )" or "} at end
+    r"|\)\s*\"\s*$"           # )" at end (unmatched quote)
+    r"|\}\s*$"                # lone } at end
+    r"|\)\s*\}\s*$"           # )} at end
+    r")",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 # Navigation/index text patterns - not valid SQL
 _SQL_NAVIGATION_TEXT_RE = re.compile(
     r"(?:"
@@ -168,6 +184,12 @@ _SQL_NAVIGATION_TEXT_RE = re.compile(
 # Placeholder/no-example patterns
 _SQL_PLACEHOLDER_RE = re.compile(
     r"^\s*--\s*No specific example available",
+    re.IGNORECASE,
+)
+
+# Placeholder/synthetic data detection (all same value, not meaningful)
+_SQL_PLACEHOLDER_DATA_RE = re.compile(
+    r"VALUES\s*\(\s*(\d+|\?|'[^']*')\s*(,\s*\1\s*){2,}",
     re.IGNORECASE,
 )
 
@@ -634,16 +656,20 @@ def extract_learner_safe_sql_blocks(md_text: str) -> list[dict[str, str]]:
         if prose_lines / len(non_empty) > 0.40:
             continue
 
-        # Check 2: OCR corruption (garbled tokens)
-        if _SQL_OCR_CORRUPTION_RE.search(block):
+        # Check 2: OCR corruption (garbled tokens) or trailing garbage
+        if _SQL_OCR_CORRUPTION_RE.search(block) or _SQL_TRAILING_GARBAGE_RE.search(block):
             continue
 
-        # Check 3: Mixed programming languages
-        if _SQL_MIXED_LANGUAGE_RE.search(block):
+        # Check 3: Mixed programming languages or PL/SQL host variables
+        if _SQL_MIXED_LANGUAGE_RE.search(block) or _SQL_PLSQL_HOST_VARS_RE.search(block):
             continue
 
         # Check 4: Navigation/index text (not actual SQL)
         if _SQL_NAVIGATION_TEXT_RE.search(block):
+            continue
+
+        # Check 5: Placeholder/synthetic data (all same values like 7,7,7)
+        if _SQL_PLACEHOLDER_DATA_RE.search(block):
             continue
 
         # Check 5: Must look like valid SQL structure
