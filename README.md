@@ -226,7 +226,7 @@ Run the dedicated tests:
 PYTHONPATH=src python -m pytest tests/test_learner_quality_audit.py -v
 ```
 
-### Build → Validate → Sync runbook
+### Build → Validate → Report → Sync runbook
 
 Complete sequence to produce a sync-ready bundle and hand it off to the adaptive app:
 
@@ -264,7 +264,12 @@ Validating: ./output/textbook-static
 The bundle is ready for direct sync when `validate-handoff` exits 0 and prints `VALID`.
 
 ```bash
-# 3. Sync — copy the bundle into the adaptive app's public directory
+# 3. Report — generate student learning quality summary
+PYTHONPATH=src python scripts/report_student_learning_quality.py ./output/textbook-static
+```
+
+```bash
+# 4. Sync — copy the bundle into the adaptive app's public directory
 #    (adjust DST to your adaptive app's static asset path)
 DST=../adaptive-app/public/textbook-static
 rsync -av --delete ./output/textbook-static/ "$DST/"
@@ -283,7 +288,7 @@ Files that must be present before the sync script is run:
 | `concepts/<docId>/*.md` | individual concept pages |
 
 ```bash
-# 4. Smoke-test the bundle (no PDFs required once output/ exists)
+# 5. Smoke-test the bundle (no PDFs required once output/ exists)
 PYTHONPATH=src python -m pytest tests/test_adaptive_handoff_smoke.py -v
 ```
 
